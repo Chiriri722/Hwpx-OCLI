@@ -1,0 +1,40 @@
+[package]
+name = "officecli-hwpx"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+description = "OfficeCLI dump-reader plugin for HWPX (OWPML) documents"
+license = "MIT"
+repository = "https://github.com/Chiriri722/Hwpx-OCLI"
+
+# 메인 바이너리 이름은 프로토콜 §3의 PATH 탐색 규약
+# (`officecli-<kind>-<ext>`)과 일치시킨다.
+[[bin]]
+name = "officecli-dump-reader-hwpx"
+path = "src/main.rs"
+
+[lib]
+name = "officecli_hwpx"
+path = "src/lib.rs"
+
+[dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# CFB(OLE) 컨테이너 판독. HWP 5.x 판별에만 쓴다.
+# `.doc`/`.xls`도 같은 컨테이너이므로 시그니처만으로는 구분할 수 없다.
+cfb = "0.14.0"
+quick-xml = "0.41.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+base64 = "0.23.0"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
+tempfile = "3.27.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

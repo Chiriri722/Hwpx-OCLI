@@ -1,0 +1,21 @@
+{"command":"add","parent":"/body","type":"paragraph","props":{"align":"center","text":"2026년 분기 보고서","bold":"true","color":"#000000","size":"16pt","font":"함초롬돋움"}}
+{"command":"add","parent":"/body","type":"paragraph","props":{"firstLineIndent":"200","spaceAfter":"120","lineSpacing":"1.6x"}}
+{"command":"add","parent":"/body/p[last()]","type":"run","props":{"text":"이번 분기 매출은 ","color":"#000000","size":"10pt"}}
+{"command":"add","parent":"/body/p[last()]","type":"run","props":{"text":"전년 대비 12% 증가","italic":"true","underline":"true","color":"#C00000","size":"10pt"}}
+{"command":"add","parent":"/body/p[last()]","type":"run","props":{"text":"했습니다.","color":"#000000","size":"10pt"}}
+{"command":"add","parent":"/body","type":"paragraph","props":{"text":"첫 번째 줄\u000b같은 문단의 둘째 줄","color":"#000000","size":"10pt"}}
+{"command":"add","parent":"/body","type":"table","props":{"rows":"3","cols":"3","colWidths":"800,800,800"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[1]","props":{"fill":"#EDEDED"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[1]/p[1]","props":{"text":"구분","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[2]","props":{"fill":"#EDEDED"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[2]/p[1]","props":{"text":"1분기","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[3]","props":{"fill":"#EDEDED"}}
+{"command":"set","path":"/body/tbl[last()]/tr[1]/tc[3]/p[1]","props":{"text":"2분기","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[2]/tc[1]/p[1]","props":{"text":"매출","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[2]/tc[2]/p[1]","props":{"text":"1,200","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[2]/tc[3]/p[1]","props":{"text":"1,344","color":"#000000","size":"10pt"}}
+{"command":"set","path":"/body/tbl[last()]/tr[3]/tc[1]","props":{"colspan":"3"}}
+{"command":"set","path":"/body/tbl[last()]/tr[3]/tc[1]/p[1]","props":{"text":"비고","color":"#000000","size":"10pt"}}
+{"command":"add","parent":"/body","type":"paragraph"}
+{"command":"add","parent":"/body/p[last()]","type":"picture","props":{"src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==","alt":"분기 매출 추이","width":"72pt","height":"36pt"}}
+{"command":"add","parent":"/body","type":"paragraph","props":{"text":"각주 & 참고 <자료> \"인용\"","color":"#000000","size":"10pt"}}

@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# 로컬 실험용 산출물
+/tmp/
+*.hwpx
+!tests/fixtures/*.hwpx
+
+.DS_Store

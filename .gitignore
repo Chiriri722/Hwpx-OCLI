@@ -1,0 +1,16 @@
+# Project-local SDKs and caches
+.dotnet/
+.dotnet-cli-home/
+.nuget/
+
+# .NET build output
+src/officecli/bin/
+src/officecli/obj/
+/bin/
+publish/
+*.user
+*.suo
+
+# Local editor and OS files
+.DS_Store
+.idea/
