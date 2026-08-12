@@ -448,7 +448,7 @@ fn dump_accepts_a_real_non_utf8_source_path() {
     assert!(
         std::str::from_utf8(&output.stderr)
             .expect("diagnostics stay UTF-8")
-            .contains("non-utf8-\\u{fffd}.hwpx"),
+            .contains("non-utf8-\u{fffd}.hwpx"),
         "lossy diagnostic must stay printable: {:?}",
         output.stderr
     );

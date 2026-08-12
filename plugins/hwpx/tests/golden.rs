@@ -133,6 +133,10 @@ fn canonical_document_matches_golden_output() {
             path.display()
         )
     });
+    // Git may leave an existing Windows worktree copy as CRLF even after the
+    // fixture is pinned to LF in .gitattributes. Output EOLs are checked below;
+    // this comparison is only about the JSONL contents.
+    let expected = expected.replace("\r\n", "\n");
 
     if actual != expected {
         // 어느 줄이 달라졌는지 바로 보이게 한다.
