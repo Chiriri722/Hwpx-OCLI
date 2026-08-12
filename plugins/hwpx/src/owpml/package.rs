@@ -9,8 +9,9 @@
 //! BinData/...                → 이미지 등 바이너리
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
+use std::sync::Arc;
 
 use crate::error::{PluginError, Result};
 
@@ -21,41 +22,90 @@ pub const HEADER_ENTRY: &str = "Contents/header.xml";
 pub const SECTION_PREFIX: &str = "Contents/section";
 pub const BINDATA_PREFIX: &str = "BinData/";
 
+pub const MAX_MIMETYPE_BYTES: u64 = 4 * 1024;
+const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_BINARY_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_TOTAL_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 4096;
+const MAX_MANIFEST_ITEMS: usize = 4096;
+const MAX_SPINE_ITEMS: usize = 2048;
+const MAX_SECTION_COUNT: usize = 1024;
+const MAX_COMPRESSION_RATIO: u64 = 1000;
+
 pub struct Package<R: Read + Seek> {
     archive: zip::ZipArchive<R>,
     /// content.hpf manifest의 `id` → `href`.
     manifest: HashMap<String, String>,
     /// spine 순서로 정렬된 섹션 XML 경로.
     section_paths: Vec<String>,
+    /// 확장자를 뺀 소문자 stem → BinData ZIP 경로 목록.
+    bin_items_by_stem: HashMap<String, Vec<String>>,
+    /// 이미 압축 해제한 BinData. 같은 그림을 반복 참조할 때 다시 읽지 않는다.
+    bin_cache: HashMap<String, (Arc<[u8]>, String)>,
+    /// 실제로 읽은 압축 해제 바이트의 문서 전체 잔여 예산.
+    remaining_expanded_bytes: u64,
 }
 
 impl<R: Read + Seek> Package<R> {
     pub fn open(reader: R) -> Result<Self> {
         let mut archive = zip::ZipArchive::new(reader)?;
+        validate_archive(&mut archive)?;
+        let mut remaining_expanded_bytes = MAX_TOTAL_EXPANDED_BYTES;
 
         // mimetype은 있으면 검증하고, 없으면 통과시킨다. 일부 생성기가 빠뜨린다.
-        if let Ok(mut f) = archive.by_name(MIMETYPE_ENTRY) {
-            let mut s = String::new();
-            if f.read_to_string(&mut s).is_ok() {
-                let s = s.trim();
-                if !s.is_empty() && s != MIMETYPE_VALUE {
-                    return Err(PluginError::corrupt(format!(
-                        "unexpected mimetype: {s:?} (expected {MIMETYPE_VALUE:?})"
-                    )));
-                }
+        if let Some(s) = read_entry_to_string_limited(
+            &mut archive,
+            MIMETYPE_ENTRY,
+            MAX_MIMETYPE_BYTES,
+            &mut remaining_expanded_bytes,
+        )? {
+            let s = s.trim();
+            if !s.is_empty() && s != MIMETYPE_VALUE {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected mimetype: {s:?} (expected {MIMETYPE_VALUE:?})"
+                )));
             }
         }
 
-        let hpf = read_entry_to_string(&mut archive, HPF_ENTRY).unwrap_or_default();
+        let hpf = read_entry_to_string_limited(
+            &mut archive,
+            HPF_ENTRY,
+            MAX_HPF_BYTES,
+            &mut remaining_expanded_bytes,
+        )?
+        .unwrap_or_default();
         let manifest = parse_hpf_manifest(&hpf);
         let spine_order = parse_hpf_spine(&hpf);
 
         let section_paths = resolve_section_paths(&mut archive, &manifest, &spine_order)?;
+        let mut bin_items_by_stem: HashMap<String, Vec<String>> = HashMap::new();
+        for name in archive
+            .file_names()
+            .filter(|name| name.starts_with(BINDATA_PREFIX))
+        {
+            let stem = name
+                .rsplit('/')
+                .next()
+                .unwrap_or(name)
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .unwrap_or(name)
+                .to_ascii_lowercase();
+            bin_items_by_stem
+                .entry(stem)
+                .or_default()
+                .push(name.to_string());
+        }
 
         Ok(Self {
             archive,
             manifest,
             section_paths,
+            bin_items_by_stem,
+            bin_cache: HashMap::new(),
+            remaining_expanded_bytes,
         })
     }
 
@@ -63,20 +113,30 @@ impl<R: Read + Seek> Package<R> {
         &self.section_paths
     }
 
-    pub fn read_header_xml(&mut self) -> Option<String> {
-        read_entry_to_string(&mut self.archive, HEADER_ENTRY)
+    pub fn read_header_xml(&mut self) -> Result<Option<String>> {
+        read_entry_to_string_limited(
+            &mut self.archive,
+            HEADER_ENTRY,
+            MAX_XML_ENTRY_BYTES,
+            &mut self.remaining_expanded_bytes,
+        )
     }
 
     pub fn read_section_xml(&mut self, path: &str) -> Result<String> {
-        read_entry_to_string(&mut self.archive, path)
-            .ok_or_else(|| PluginError::corrupt(format!("cannot read section: {path}")))
+        read_entry_to_string_limited(
+            &mut self.archive,
+            path,
+            MAX_XML_ENTRY_BYTES,
+            &mut self.remaining_expanded_bytes,
+        )?
+        .ok_or_else(|| PluginError::corrupt(format!("cannot read section: {path}")))
     }
 
     /// `binaryItemIDRef` → BinData 바이트.
     ///
     /// 우선 content.hpf manifest에서 id로 href를 찾고, 실패하면 BinData 안에서
     /// 확장자를 뺀 파일명이 일치하는 항목을 찾는다.
-    pub fn read_bin_item(&mut self, id: &str) -> Option<(Vec<u8>, String)> {
+    pub fn read_bin_item(&mut self, id: &str) -> Result<Option<(Arc<[u8]>, String)>> {
         let mut candidates: Vec<String> = Vec::new();
 
         if let Some(href) = self.manifest.get(id) {
@@ -86,48 +146,135 @@ impl<R: Read + Seek> Package<R> {
             }
         }
 
-        // BinData 안에서 stem이 일치하는 항목을 후보에 추가.
-        let names: Vec<String> = self
-            .archive
-            .file_names()
-            .filter(|n| n.starts_with(BINDATA_PREFIX))
-            .map(|n| n.to_string())
-            .collect();
-        for n in names {
-            let stem = n
-                .rsplit('/')
-                .next()
-                .unwrap_or(&n)
-                .rsplit_once('.')
-                .map(|(s, _)| s)
-                .unwrap_or(&n);
-            if stem.eq_ignore_ascii_case(id) {
-                candidates.push(n);
-            }
+        if let Some(names) = self.bin_items_by_stem.get(&id.to_ascii_lowercase()) {
+            candidates.extend(names.iter().cloned());
         }
 
-        for name in candidates {
-            if let Ok(mut f) = self.archive.by_name(&name) {
-                let mut buf = Vec::new();
-                if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                    return Some((buf, guess_content_type(&name).to_string()));
+        let mut seen = HashSet::new();
+        for name in candidates
+            .into_iter()
+            .filter(|name| seen.insert(name.clone()))
+        {
+            if let Some((bytes, content_type)) = self.bin_cache.get(&name) {
+                return Ok(Some((Arc::clone(bytes), content_type.clone())));
+            }
+            if let Some(buf) = read_entry_bytes_limited(
+                &mut self.archive,
+                &name,
+                MAX_BINARY_ENTRY_BYTES,
+                &mut self.remaining_expanded_bytes,
+            )? {
+                if !buf.is_empty() {
+                    let bytes: Arc<[u8]> = buf.into();
+                    let content_type = guess_content_type(&name).to_string();
+                    self.bin_cache
+                        .insert(name, (Arc::clone(&bytes), content_type.clone()));
+                    return Ok(Some((bytes, content_type)));
                 }
             }
         }
-        None
+        Ok(None)
     }
 }
 
-fn read_entry_to_string<R: Read + Seek>(
+fn read_entry_to_string_limited<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     name: &str,
-) -> Option<String> {
-    let mut f = archive.by_name(name).ok()?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf).ok()?;
+    max_bytes: u64,
+    remaining_bytes: &mut u64,
+) -> Result<Option<String>> {
+    let Some(buf) = read_entry_bytes_limited(archive, name, max_bytes, remaining_bytes)? else {
+        return Ok(None);
+    };
     // BOM이 붙어 있으면 제거한다.
     let s = String::from_utf8_lossy(&buf).into_owned();
-    Some(s.trim_start_matches('\u{feff}').to_string())
+    Ok(Some(s.trim_start_matches('\u{feff}').to_string()))
+}
+
+fn read_entry_bytes_limited<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    name: &str,
+    max_bytes: u64,
+    remaining_bytes: &mut u64,
+) -> Result<Option<Vec<u8>>> {
+    let mut file = match archive.by_name(name) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if file.size() > max_bytes {
+        return Err(resource_limit(format!(
+            "entry {name:?} declares {} expanded bytes (maximum {max_bytes})",
+            file.size()
+        )));
+    }
+    let read_limit = max_bytes.min(*remaining_bytes);
+    let mut buf = Vec::new();
+    file.by_ref()
+        .take(read_limit.saturating_add(1))
+        .read_to_end(&mut buf)?;
+    let actual = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+    if actual > max_bytes {
+        return Err(resource_limit(format!(
+            "entry {name:?} exceeded {max_bytes} expanded bytes while reading"
+        )));
+    }
+    if actual > *remaining_bytes {
+        return Err(resource_limit(format!(
+            "document exceeded {MAX_TOTAL_EXPANDED_BYTES} cumulative expanded bytes"
+        )));
+    }
+    *remaining_bytes -= actual;
+    Ok(Some(buf))
+}
+
+fn validate_archive<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> Result<()> {
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(resource_limit(format!(
+            "archive entry count {} exceeds maximum {MAX_ARCHIVE_ENTRIES}",
+            archive.len()
+        )));
+    }
+
+    let mut total = 0u64;
+    let mut names = HashSet::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        let name = file.name().to_string();
+        if !names.insert(name.clone()) {
+            return Err(PluginError::corrupt(format!(
+                "duplicate archive entry name: {name:?}"
+            )));
+        }
+        if file.size() > MAX_ARCHIVE_ENTRY_BYTES {
+            return Err(resource_limit(format!(
+                "entry {name:?} declares {} expanded bytes (maximum {MAX_ARCHIVE_ENTRY_BYTES})",
+                file.size()
+            )));
+        }
+        total = total
+            .checked_add(file.size())
+            .ok_or_else(|| resource_limit("archive expanded-size total overflowed".to_string()))?;
+        if total > MAX_TOTAL_EXPANDED_BYTES {
+            return Err(resource_limit(format!(
+                "archive declares {total} cumulative expanded bytes (maximum {MAX_TOTAL_EXPANDED_BYTES})"
+            )));
+        }
+        if file.size() > 1024 * 1024
+            && file.compressed_size() > 0
+            && file.size() / file.compressed_size() > MAX_COMPRESSION_RATIO
+        {
+            return Err(resource_limit(format!(
+                "entry {name:?} expansion ratio exceeds {MAX_COMPRESSION_RATIO}:1"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn resource_limit(message: String) -> PluginError {
+    PluginError::corrupt(format!("resource limit exceeded: {message}"))
 }
 
 /// spine 순서를 우선 쓰고, 없으면 `Contents/section*.xml`을 정렬해서 쓴다.
@@ -136,15 +283,28 @@ fn resolve_section_paths<R: Read + Seek>(
     manifest: &HashMap<String, String>,
     spine: &[String],
 ) -> Result<Vec<String>> {
-    let existing: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
+    if manifest.len() > MAX_MANIFEST_ITEMS {
+        return Err(resource_limit(format!(
+            "manifest item count {} exceeds maximum {MAX_MANIFEST_ITEMS}",
+            manifest.len()
+        )));
+    }
+    if spine.len() > MAX_SPINE_ITEMS {
+        return Err(resource_limit(format!(
+            "spine item count {} exceeds maximum {MAX_SPINE_ITEMS}",
+            spine.len()
+        )));
+    }
+
+    let existing: HashSet<String> = archive.file_names().map(|s| s.to_string()).collect();
+    let mut seen = HashSet::new();
 
     let mut ordered: Vec<String> = spine
         .iter()
         .filter_map(|idref| manifest.get(idref).cloned())
-        .filter(|href| {
-            href.ends_with(".xml") && href.to_ascii_lowercase().contains("section")
-        })
-        .filter(|href| existing.iter().any(|e| e == href))
+        .filter(|href| href.ends_with(".xml") && href.to_ascii_lowercase().contains("section"))
+        .filter(|href| existing.contains(href))
+        .filter(|href| seen.insert(href.clone()))
         .collect();
 
     if ordered.is_empty() {
@@ -156,6 +316,13 @@ fn resolve_section_paths<R: Read + Seek>(
             .collect();
         found.sort_by_key(|n| section_index(n));
         ordered = found;
+    }
+
+    if ordered.len() > MAX_SECTION_COUNT {
+        return Err(resource_limit(format!(
+            "section count {} exceeds maximum {MAX_SECTION_COUNT}",
+            ordered.len()
+        )));
     }
 
     if ordered.is_empty() {

@@ -15,6 +15,46 @@ use model::{Block, Document, Inline};
 use package::Package;
 use styles::StyleTable;
 
+const MAX_IMAGE_REFERENCES: usize = 512;
+const MAX_EMBEDDED_IMAGE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct ImageBudget {
+    references: usize,
+    output_bytes: u64,
+}
+
+impl ImageBudget {
+    fn record_reference(&mut self) -> Result<()> {
+        self.references = self
+            .references
+            .checked_add(1)
+            .ok_or_else(|| image_resource_limit("image reference count overflow"))?;
+        if self.references > MAX_IMAGE_REFERENCES {
+            return Err(image_resource_limit(format!(
+                "image reference count {} exceeds maximum {MAX_IMAGE_REFERENCES}",
+                self.references
+            )));
+        }
+        Ok(())
+    }
+
+    fn record_output_bytes(&mut self, bytes: usize) -> Result<()> {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        self.output_bytes = self
+            .output_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| image_resource_limit("embedded image output size overflow"))?;
+        if self.output_bytes > MAX_EMBEDDED_IMAGE_OUTPUT_BYTES {
+            return Err(image_resource_limit(format!(
+                "embedded image bytes {} exceed maximum {MAX_EMBEDDED_IMAGE_OUTPUT_BYTES}",
+                self.output_bytes
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// HWPX 파일을 열어 문서 모델로 만든다.
 pub fn read_document(path: &Path) -> Result<Document> {
     let file = File::open(path).map_err(|e| {
@@ -26,7 +66,7 @@ pub fn read_document(path: &Path) -> Result<Document> {
 pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
     let mut pkg = Package::open(reader)?;
 
-    let styles = match pkg.read_header_xml() {
+    let styles = match pkg.read_header_xml()? {
         Some(xml) => StyleTable::parse(&xml)?,
         // header.xml이 없으면 서식 없이 진행한다. 텍스트라도 살리는 편이 낫다.
         None => StyleTable::default(),
@@ -40,41 +80,59 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
     }
 
     let mut doc = Document { blocks };
-    resolve_images(&mut pkg, &mut doc);
+    resolve_images(&mut pkg, &mut doc)?;
     Ok(doc)
 }
 
 /// 문서 안의 이미지 참조를 BinData 실제 바이트로 채운다.
 ///
 /// 찾지 못한 참조는 `data`가 `None`으로 남고, emitter가 그 이미지를 건너뛴다.
-fn resolve_images<R: Read + Seek>(pkg: &mut Package<R>, doc: &mut Document) {
-    resolve_in_blocks(pkg, &mut doc.blocks);
+fn resolve_images<R: Read + Seek>(pkg: &mut Package<R>, doc: &mut Document) -> Result<()> {
+    let mut budget = ImageBudget::default();
+    resolve_in_blocks(pkg, &mut doc.blocks, &mut budget)
 }
 
 /// 블록 목록을 재귀로 훑는다. 셀 안 중첩표도 따라간다.
-fn resolve_in_blocks<R: Read + Seek>(pkg: &mut Package<R>, blocks: &mut [Block]) {
+fn resolve_in_blocks<R: Read + Seek>(
+    pkg: &mut Package<R>,
+    blocks: &mut [Block],
+    budget: &mut ImageBudget,
+) -> Result<()> {
     for block in blocks {
         match block {
-            Block::Paragraph(p) => resolve_in_inlines(pkg, &mut p.inlines),
+            Block::Paragraph(p) => resolve_in_inlines(pkg, &mut p.inlines, budget)?,
             Block::Table(t) => {
                 for cell in &mut t.cells {
-                    resolve_in_blocks(pkg, &mut cell.blocks);
+                    resolve_in_blocks(pkg, &mut cell.blocks, budget)?;
                 }
             }
         }
     }
+    Ok(())
 }
 
-fn resolve_in_inlines<R: Read + Seek>(pkg: &mut Package<R>, inlines: &mut [Inline]) {
+fn resolve_in_inlines<R: Read + Seek>(
+    pkg: &mut Package<R>,
+    inlines: &mut [Inline],
+    budget: &mut ImageBudget,
+) -> Result<()> {
     for inline in inlines {
         if let Inline::Image(img) = inline {
-            if img.data.is_some() {
+            budget.record_reference()?;
+            if let Some(bytes) = img.data.as_ref() {
+                budget.record_output_bytes(bytes.len())?;
                 continue;
             }
-            if let Some((bytes, ctype)) = pkg.read_bin_item(&img.bin_item_id) {
+            if let Some((bytes, ctype)) = pkg.read_bin_item(&img.bin_item_id)? {
+                budget.record_output_bytes(bytes.len())?;
                 img.data = Some(bytes);
                 img.content_type = Some(ctype);
             }
         }
     }
+    Ok(())
+}
+
+fn image_resource_limit(message: impl Into<String>) -> PluginError {
+    PluginError::corrupt(format!("image resource limit exceeded: {}", message.into()))
 }

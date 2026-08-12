@@ -367,6 +367,134 @@ fn log_file_receives_diagnostics_instead_of_stderr() {
 }
 
 #[test]
+fn log_file_cannot_overwrite_the_source() {
+    let (_dir, path) = simple_doc(&["원본 보존"]).write_to_temp("source.hwpx");
+    let before = std::fs::read(&path).expect("read source before");
+
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .arg("--log-file")
+        .arg(&path)
+        .output()
+        .expect("run plugin");
+
+    assert!(!output.status.success(), "source/log alias must reject");
+    assert_eq!(
+        std::fs::read(&path).expect("read source after"),
+        before,
+        "the read-only source must remain byte-for-byte unchanged"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn log_file_symlink_to_source_is_rejected() {
+    let (dir, path) = simple_doc(&["원본 보존"]).write_to_temp("source.hwpx");
+    let log = dir.path().join("source.log");
+    std::os::unix::fs::symlink(&path, &log).expect("create symlink");
+    let before = std::fs::read(&path).expect("read source before");
+
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .arg("--log-file")
+        .arg(&log)
+        .output()
+        .expect("run plugin");
+
+    assert!(!output.status.success(), "symlink alias must reject");
+    assert_eq!(std::fs::read(&path).expect("read source after"), before);
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn log_file_hard_link_to_source_is_rejected() {
+    let (dir, path) = simple_doc(&["원본 보존"]).write_to_temp("source.hwpx");
+    let log = dir.path().join("source.log");
+    std::fs::hard_link(&path, &log).expect("create hard link");
+    let before = std::fs::read(&path).expect("read source before");
+
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .arg("--log-file")
+        .arg(&log)
+        .output()
+        .expect("run plugin");
+
+    assert!(!output.status.success(), "hard-link alias must reject");
+    assert_eq!(std::fs::read(&path).expect("read source after"), before);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn dump_accepts_a_real_non_utf8_source_path() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let name = std::ffi::OsString::from_vec(b"non-utf8-\xff.hwpx".to_vec());
+    let path = dir.path().join(name);
+    std::fs::write(&path, simple_doc(&["비 UTF-8 경로"]).build()).expect("write HWPX");
+
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .output()
+        .expect("run plugin");
+
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    assert!(!output.stdout.is_empty(), "valid JSONL must be emitted");
+    assert!(
+        std::str::from_utf8(&output.stderr)
+            .expect("diagnostics stay UTF-8")
+            .contains("non-utf8-\\u{fffd}.hwpx"),
+        "lossy diagnostic must stay printable: {:?}",
+        output.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn diagnostic_path_control_characters_are_escaped() {
+    let (_dir, path) = simple_doc(&["문단"]).write_to_temp("safe\nforged.hwpx");
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .output()
+        .expect("run plugin");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert_eq!(
+        stderr.lines().count(),
+        1,
+        "diagnostic must stay on one line"
+    );
+    assert!(stderr.contains("safe\\nforged.hwpx"), "got: {stderr:?}");
+}
+
+#[test]
+fn log_file_open_failure_is_reported_on_stderr() {
+    let (dir, path) = simple_doc(&["문단"]).write_to_temp("source.hwpx");
+    let log = dir.path().join("missing").join("plugin.log");
+    let output = plugin()
+        .arg("dump")
+        .arg(&path)
+        .arg("--log-file")
+        .arg(&log)
+        .output()
+        .expect("run plugin");
+
+    assert!(
+        output.status.success(),
+        "diagnostic delivery failure must not discard valid JSONL"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.contains("cannot write log file"), "got: {stderr:?}");
+}
+
+#[test]
 fn media_dir_option_is_accepted() {
     // §5.1: `--media-dir <dir>`
     let (dir, path) = simple_doc(&["문단"]).write_to_temp("a.hwpx");

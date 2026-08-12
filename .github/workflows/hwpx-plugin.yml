@@ -1,0 +1,66 @@
+name: HWPX plugin
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'plugins/hwpx/**'
+      - 'plugins/plugin-protocol.md'
+      - '.github/workflows/hwpx-plugin.yml'
+  push:
+    paths:
+      - 'plugins/hwpx/**'
+      - 'plugins/plugin-protocol.md'
+      - '.github/workflows/hwpx-plugin.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+          - name: Windows x64
+            os: windows-latest
+
+    defaults:
+      run:
+        working-directory: plugins/hwpx
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build release plugin
+        run: cargo build --release --locked
+
+      - name: Verify Windows native installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/install.ps1 -NoBuild
+          $plugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
+          if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
+            throw "plugin.exe was not installed at $plugin"
+          }
+          & $plugin --info | ConvertFrom-Json | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "installed plugin manifest check failed"
+          }
+          ./scripts/install.ps1 -Uninstall

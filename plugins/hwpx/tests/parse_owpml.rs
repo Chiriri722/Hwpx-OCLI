@@ -458,6 +458,81 @@ fn image_without_bindata_leaves_data_none() {
 }
 
 #[test]
+fn repeated_image_references_share_resolved_bytes() {
+    let mut b = HwpxBuilder::new();
+    b.char_pr(CharPr::plain());
+    b.para_pr(ParaPr::default());
+    let body = [
+        picture("shared", 7200, 7200, Some("첫 번째")),
+        picture("shared", 7200, 7200, Some("두 번째")),
+    ]
+    .concat();
+    b.section(body);
+    b.bindata("shared", "shared.png", tiny_png(), "image/png");
+
+    let doc = parse(&b);
+    let images: Vec<_> = doc
+        .paragraphs()
+        .flat_map(|p| p.inlines.iter())
+        .filter_map(|inline| match inline {
+            Inline::Image(image) => Some(image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 2);
+
+    let first = images[0].data.as_deref().expect("first image data");
+    let second = images[1].data.as_deref().expect("second image data");
+    assert_eq!(
+        first.as_ptr(),
+        second.as_ptr(),
+        "repeated references must share one resolved allocation"
+    );
+}
+
+#[test]
+fn rejects_excessive_image_reference_count() {
+    let mut b = HwpxBuilder::new();
+    b.char_pr(CharPr::plain());
+    b.para_pr(ParaPr::default());
+    let body: String = (0..513)
+        .map(|_| picture("shared", 7200, 7200, None))
+        .collect();
+    b.section(body);
+    b.bindata("shared", "shared.png", tiny_png(), "image/png");
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("image count must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("image"), "{}", err.message);
+}
+
+#[test]
+fn rejects_excessive_embedded_image_output_bytes() {
+    let mut state = 0x9e37_79b9_u32;
+    let image_bytes: Vec<u8> = (0..1024 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect();
+
+    let mut b = HwpxBuilder::new();
+    b.char_pr(CharPr::plain());
+    b.para_pr(ParaPr::default());
+    let body: String = (0..65)
+        .map(|_| picture("large", 7200, 7200, None))
+        .collect();
+    b.section(body);
+    b.bindata("large", "large.png", image_bytes, "image/png");
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("image bytes must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("image"), "{}", err.message);
+}
+
+#[test]
 fn concatenates_multiple_sections_in_spine_order() {
     let mut b = HwpxBuilder::new();
     let cp = b.char_pr(CharPr::plain());
@@ -527,6 +602,82 @@ fn rejects_zip_without_sections() {
     // 섹션을 하나도 넣지 않는다.
     let err = read_document_from(Cursor::new(b.build())).expect_err("must reject");
     assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+}
+
+#[test]
+fn rejects_section_xml_larger_than_resource_budget() {
+    let mut b = HwpxBuilder::new();
+    b.section("x".repeat(17 * 1024 * 1024));
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("oversized XML must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("resource limit"), "{}", err.message);
+}
+
+#[test]
+fn rejects_excessive_archive_entry_count() {
+    let mut b = simple_doc(&["본문"]);
+    for i in 0..4093 {
+        b.extra_entry(format!("Meta/extra{i}.bin"), Vec::new());
+    }
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("entry budget must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("entry count"), "{}", err.message);
+}
+
+#[test]
+fn rejects_table_dimensions_above_grid_budget() {
+    let mut b = HwpxBuilder::new();
+    b.char_pr(CharPr::plain());
+    b.para_pr(ParaPr::default());
+    b.section(wrap_para(
+        "0",
+        r#"<hp:run charPrIDRef="0"><hp:tbl rowCnt="2000" colCnt="1000"></hp:tbl></hp:run>"#,
+    ));
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("table budget must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("table"), "{}", err.message);
+}
+
+#[test]
+fn oversized_cell_span_returns_error_instead_of_panicking() {
+    let mut b = HwpxBuilder::new();
+    b.char_pr(CharPr::plain());
+    b.para_pr(ParaPr::default());
+    b.section(table(
+        2,
+        2,
+        &[CellSpec::new(1, 1, "overflow").span(usize::MAX, usize::MAX)],
+    ));
+
+    let outcome = std::panic::catch_unwind(|| read_document_from(Cursor::new(b.build())));
+    assert!(outcome.is_ok(), "malformed span must not panic");
+    let err = outcome
+        .expect("checked above")
+        .expect_err("oversized span must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+}
+
+#[test]
+fn duplicate_spine_references_are_parsed_once() {
+    let mut b = simple_doc(&["한 번만"]);
+    b.repeat_section_in_spine(0, 2);
+
+    let doc = parse(&b);
+    let texts: Vec<_> = doc.paragraphs().map(|p| p.plain_text()).collect();
+    assert_eq!(texts, vec!["한 번만"]);
+}
+
+#[test]
+fn rejects_excessive_spine_reference_count() {
+    let mut b = simple_doc(&["본문"]);
+    b.repeat_section_in_spine(0, 2048);
+
+    let err = read_document_from(Cursor::new(b.build())).expect_err("spine budget must reject");
+    assert_eq!(err.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(err.message.contains("spine"), "{}", err.message);
 }
 
 #[test]

@@ -17,10 +17,14 @@ use quick_xml::Reader;
 use super::model::{Block, Cell, Image, Inline, Paragraph, Table, TextField, TextRun};
 use super::styles::{normalize_color, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name};
-use crate::error::Result;
+use crate::error::{PluginError, Result};
 
 /// 셀 안에 또 표가 나오는 등 재귀가 깊어질 때의 상한. 악의적 입력 방어.
 const MAX_DEPTH: usize = 32;
+const MAX_TABLE_ROWS: usize = 32_768;
+const MAX_TABLE_COLS: usize = 512;
+const MAX_TABLE_CELLS: usize = 100_000;
+const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
 
 pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Vec<Block>> {
     let mut reader = Reader::from_str(xml);
@@ -252,7 +256,16 @@ fn parse_table(
                             cell.inner.row = row_cursor;
                             cell.inner.col = col_cursor;
                         }
-                        col_cursor = cell.inner.col + cell.inner.col_span.max(1);
+                        col_cursor = checked_table_add(
+                            cell.inner.col,
+                            cell.inner.col_span.max(1),
+                            "cell column span",
+                        )?;
+                        if cells.len() >= MAX_TABLE_CELLS {
+                            return Err(table_limit(format!(
+                                "cell count exceeds maximum {MAX_TABLE_CELLS}"
+                            )));
+                        }
                         cells.push(cell.inner);
                     }
                     _ => {}
@@ -261,7 +274,11 @@ fn parse_table(
             Event::End(e) => {
                 let name_owned = e.name();
                 match local_name(name_owned.as_ref()).as_str() {
-                    "tr" => row_cursor += 1,
+                    "tr" => {
+                        row_cursor = row_cursor
+                            .checked_add(1)
+                            .ok_or_else(|| table_limit("row cursor overflowed".to_string()))?;
+                    }
                     "tbl" => break,
                     _ => {}
                 }
@@ -272,19 +289,24 @@ fn parse_table(
     }
 
     // 선언값이 없거나 실제보다 작으면 셀 주소에서 유도한다.
-    let derived_rows = cells
-        .iter()
-        .map(|c| c.row + c.row_span.max(1))
-        .max()
-        .unwrap_or(0);
-    let derived_cols = cells
-        .iter()
-        .map(|c| c.col + c.col_span.max(1))
-        .max()
-        .unwrap_or(0);
+    let mut derived_rows = 0usize;
+    let mut derived_cols = 0usize;
+    for cell in &cells {
+        derived_rows = derived_rows.max(checked_table_add(
+            cell.row,
+            cell.row_span.max(1),
+            "cell row span",
+        )?);
+        derived_cols = derived_cols.max(checked_table_add(
+            cell.col,
+            cell.col_span.max(1),
+            "cell column span",
+        )?);
+    }
 
     let rows = declared_rows.unwrap_or(0).max(derived_rows);
     let cols = declared_cols.unwrap_or(0).max(derived_cols);
+    validate_table_dimensions(rows, cols, cells.len())?;
 
     // 열 너비는 병합 셀 제약까지 써서 유도한다 (`model::derive_col_widths`).
     let col_widths_twip = super::model::derive_col_widths(&cells, cols);
@@ -295,6 +317,42 @@ fn parse_table(
         col_widths_twip,
         cells,
     })
+}
+
+fn checked_table_add(left: usize, right: usize, label: &str) -> Result<usize> {
+    left.checked_add(right)
+        .ok_or_else(|| table_limit(format!("{label} overflowed")))
+}
+
+fn validate_table_dimensions(rows: usize, cols: usize, cells: usize) -> Result<()> {
+    if rows > MAX_TABLE_ROWS {
+        return Err(table_limit(format!(
+            "row count {rows} exceeds maximum {MAX_TABLE_ROWS}"
+        )));
+    }
+    if cols > MAX_TABLE_COLS {
+        return Err(table_limit(format!(
+            "column count {cols} exceeds maximum {MAX_TABLE_COLS}"
+        )));
+    }
+    if cells > MAX_TABLE_CELLS {
+        return Err(table_limit(format!(
+            "cell count {cells} exceeds maximum {MAX_TABLE_CELLS}"
+        )));
+    }
+    let slots = rows
+        .checked_mul(cols)
+        .ok_or_else(|| table_limit("row-by-column grid size overflowed".to_string()))?;
+    if slots > MAX_TABLE_GRID_SLOTS {
+        return Err(table_limit(format!(
+            "grid size {slots} exceeds maximum {MAX_TABLE_GRID_SLOTS}"
+        )));
+    }
+    Ok(())
+}
+
+fn table_limit(message: String) -> PluginError {
+    PluginError::corrupt(format!("table resource limit exceeded: {message}"))
 }
 
 struct ParsedCell {
@@ -371,7 +429,6 @@ fn parse_cell(
         addr_missing,
     })
 }
-
 
 fn parse_picture(
     reader: &mut Reader<&[u8]>,

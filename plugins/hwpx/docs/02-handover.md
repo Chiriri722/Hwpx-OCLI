@@ -39,7 +39,7 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 
 ### 1-b. 우리 테스트로 검증됨
 
-`cargo test` 167개, `cargo clippy --all-targets -- -D warnings` 무경고.
+`cargo test` 202개, `cargo clippy --all-targets -- -D warnings` 무경고.
 
 | 항목 | 방법 |
 |---|---|
@@ -52,7 +52,7 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 | 호스트 예약 코드 6을 절대 내지 않음 | `never_exits_with_host_reserved_code_six` |
 | stdout 오염 없음 (도움말·진단·에러) | `help_does_not_pollute_stdout`, `dump_keeps_diagnostics_off_stdout` |
 | `--quiet` / `--log-file` / `--media-dir` | 각 동명 테스트 |
-| OWPML 파싱 (문단·런·서식·표·병합·이미지·다중섹션) | `parse_owpml.rs` 21개 |
+| OWPML 파싱 (문단·런·서식·표·병합·이미지·다중섹션·자원 경계) | `parse_owpml.rs` 34개 |
 | 병합 격자 인덱싱 (가로/세로/복합/빈칸) | `word.rs::horizontal_merge_mid_row_*` 외 4개 |
 | 단위 변환 (HWPUNIT→twip/pt, twip→pt) | `model.rs`, `word.rs::twip_to_pt_divides_by_twenty` |
 | 엔티티 해제 (텍스트·속성 양쪽) | `preserves_korean_and_special_characters`, `unescapes_entities_in_attribute_values` |
@@ -64,7 +64,7 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 실제 문서 **5건**으로 검증(버그 7건 발견). 구청 공고·양식에 치우쳤다. 보고서·논문·통계자료 계열은 미검증 |
 | 이미지·각주·수식·도형·머리말 | 낮음~미상 | 코퍼스 5건에 **하나도 없었다**. 이미지는 합성 픽스처로만 검증됨. 나머지는 미구현 (`03-work-plan.md` 3절) |
-| Windows / Linux 동작 | 낮음 | 플랫폼 의존 코드가 없고 `\n`·UTF-8을 강제하지만 실행은 macOS arm64에서만 확인 |
+| Windows / Linux 동작 | 낮음 | Windows 크로스 타깃 컴파일과 네이티브 CI 검사를 추가했다. 첫 원격 workflow 실행 결과 확인은 남음 |
 | 대용량 파일 성능 | 낮음 | 섹션 단위로 읽고 행별 flush하므로 감시견에는 안전. 실측은 없음 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
@@ -210,8 +210,8 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
 
 12. **중첩표를 평문으로 낮추면 체크박스·이미지가 사라진다.** 8개 중 4개가
     중첩표 깊이 2에 있었고, `plain_text()`로 평탄화하는 코드가 그 4개를 버렸다.
-    → 인라인을 그대로 옮기고 셀 사이는 `Inline::Tab`, 문단 사이는
-    `Inline::LineBreak`로 잇는다.
+    → 중첩 `Table`을 셀 블록에 그대로 보존하고 OfficeCLI의 셀 아래 table 경로로
+    실제 docx 중첩표를 만든다.
     테스트: `preserves_checkboxes_inside_nested_tables`
 
 13. **열 너비를 첫 행에서만 유도하면 양식 문서에서 통째로 버려진다.** 그 문서의
@@ -229,10 +229,8 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
 
 ## 4. 알려진 설계 한계
 
-- **중첩표는 평탄화된다.** 셀 안의 표는 행마다 탭 구분 텍스트 문단이 된다.
-  docx 중첩표를 만들 수도 있지만 `cell` 아래에 `table`을 넣는 경로가 어휘
-  스키마에 명시돼 있지 않다. 확인 안 된 경로를 추측하는 대신 내용을 보존했다.
-  → `section.rs::flatten_table_to_paragraphs`
+- **중첩표는 실제 중첩표로 보존되지만 깊이 32를 넘으면 거부한다.** 악성 입력의
+  재귀 스택 고갈을 막기 위한 의도적인 자원 경계다.
 - **`color`/`size`가 거의 모든 항목에 붙는다.** HWPX는 charPr에 크기·색을
   항상 명시하므로 충실히 옮기면 그렇게 된다. 노이즈로 보이지만 정보 손실이
   없는 쪽을 택했다. docDefaults와 비교해 생략하는 최적화는 추후 과제.

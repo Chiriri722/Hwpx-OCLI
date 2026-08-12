@@ -28,6 +28,8 @@ pub struct HwpxBuilder {
     sections: Vec<String>,
     bindata: Vec<(String, Vec<u8>)>,
     manifest_extra: Vec<(String, String, String)>, // (id, href, media-type)
+    spine_extra: Vec<usize>,
+    extra_entries: Vec<(String, Vec<u8>)>,
     include_mimetype: bool,
     include_hpf: bool,
     include_header: bool,
@@ -42,6 +44,8 @@ impl Default for HwpxBuilder {
             sections: Vec::new(),
             bindata: Vec::new(),
             manifest_extra: Vec::new(),
+            spine_extra: Vec::new(),
+            extra_entries: Vec::new(),
             include_mimetype: true,
             include_hpf: true,
             include_header: true,
@@ -108,6 +112,18 @@ impl HwpxBuilder {
         self
     }
 
+    /// 이미 선언된 section을 spine에 추가로 참조한다.
+    pub fn repeat_section_in_spine(&mut self, index: usize, times: usize) -> &mut Self {
+        self.spine_extra.extend(std::iter::repeat_n(index, times));
+        self
+    }
+
+    /// 패키지 자원 제한 테스트용 임의 ZIP 엔트리를 추가한다.
+    pub fn extra_entry(&mut self, name: impl Into<String>, bytes: Vec<u8>) -> &mut Self {
+        self.extra_entries.push((name.into(), bytes));
+        self
+    }
+
     /// 실제 ZIP 바이트를 만든다.
     pub fn build(&self) -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());
@@ -153,6 +169,12 @@ impl HwpxBuilder {
                 zip.write_all(bytes).expect("write bindata");
             }
 
+            for (name, bytes) in &self.extra_entries {
+                zip.start_file(name.clone(), opts)
+                    .expect("start extra entry");
+                zip.write_all(bytes).expect("write extra entry");
+            }
+
             zip.finish().expect("finish zip");
         }
         cursor.into_inner()
@@ -183,6 +205,11 @@ impl HwpxBuilder {
             items.push_str(&format!(
                 r#"<opf:item id="section{i}" href="Contents/section{i}.xml" media-type="application/xml"/>"#
             ));
+            spine.push_str(&format!(
+                r#"<opf:itemref idref="section{i}" linear="yes"/>"#
+            ));
+        }
+        for i in &self.spine_extra {
             spine.push_str(&format!(
                 r#"<opf:itemref idref="section{i}" linear="yes"/>"#
             ));

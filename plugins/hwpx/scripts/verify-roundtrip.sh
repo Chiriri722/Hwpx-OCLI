@@ -64,7 +64,7 @@ fi
 echo "using officecli: ${OFFICECLI} ($("${OFFICECLI}" --version))"
 
 # ── 플러그인이 설치되어 있어야 한다 ──
-PLUGIN="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
+PLUGIN="${OFFICECLI_PLUGIN_DUMP_READER_HWPX:-${HOME}/.officecli/plugins/dump-reader/hwpx/plugin}"
 if [[ ! -x "${PLUGIN}" ]]; then
   echo "plugin not installed. running scripts/install.sh ..." >&2
   "${REPO_ROOT}/scripts/install.sh"

@@ -76,13 +76,36 @@ const LAST_PARAGRAPH: &str = "/body/p[last()]";
 /// 문서 전체를 BatchItem 목록으로 변환한다.
 pub fn emit_document(doc: &Document) -> Vec<BatchItem> {
     let mut out = Vec::new();
+    try_emit_document(doc, |item| {
+        out.push(item);
+        Ok::<(), std::convert::Infallible>(())
+    })
+    .expect("infallible BatchItem collector");
+    out
+}
+
+/// 문서를 최상위 블록 단위로 변환하여 sink에 전달한다.
+///
+/// 전체 문서의 BatchItem을 미리 보관하지 않으므로 dump 경로는 첫 블록부터
+/// JSONL을 내보낼 수 있다. 기존 `emit_document`는 골든/단위 테스트 호환성을
+/// 위해 이 함수 위에 Vec 수집기로 유지한다.
+pub fn try_emit_document<E>(
+    doc: &Document,
+    mut sink: impl FnMut(BatchItem) -> std::result::Result<(), E>,
+) -> std::result::Result<usize, E> {
+    let mut count = 0usize;
     for block in &doc.blocks {
+        let mut items = Vec::new();
         match block {
-            Block::Paragraph(p) => emit_paragraph(p, &mut out),
-            Block::Table(t) => emit_table(t, "/body", &mut out),
+            Block::Paragraph(p) => emit_paragraph(p, &mut items),
+            Block::Table(t) => emit_table(t, "/body", &mut items),
+        }
+        for item in items {
+            sink(item)?;
+            count += 1;
         }
     }
-    out
+    Ok(count)
 }
 
 fn emit_paragraph(p: &Paragraph, out: &mut Vec<BatchItem>) {
@@ -332,7 +355,7 @@ fn image_item(para_path: &str, img: &Image) -> Option<BatchItem> {
         .content_type
         .as_deref()
         .unwrap_or("application/octet-stream");
-    let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(data.as_ref());
 
     let mut item = BatchItem::add(para_path, TYPE_PICTURE).prop("src", format!("data:{ctype};base64,{b64}"));
     item = item.prop_opt("alt", img.alt.clone());
@@ -442,8 +465,8 @@ fn build_occupancy_grid(t: &Table) -> Vec<Vec<Option<usize>>> {
         if cell.row >= t.rows || cell.col >= t.cols {
             continue;
         }
-        let row_end = (cell.row + cell.row_span.max(1)).min(t.rows);
-        let col_end = (cell.col + cell.col_span.max(1)).min(t.cols);
+        let row_end = cell.row.saturating_add(cell.row_span.max(1)).min(t.rows);
+        let col_end = cell.col.saturating_add(cell.col_span.max(1)).min(t.cols);
 
         for row in &mut grid[cell.row..row_end] {
             for slot in &mut row[cell.col..col_end] {
@@ -1547,7 +1570,7 @@ mod tests {
                     width_twip: Some(1440),
                     height_twip: Some(720),
                     alt: Some("그림".into()),
-                    data: Some(vec![0x89, 0x50, 0x4E, 0x47]),
+                    data: Some(vec![0x89, 0x50, 0x4E, 0x47].into()),
                     content_type: Some("image/png".into()),
                 })],
             })],
@@ -1578,7 +1601,7 @@ mod tests {
                     width_twip: Some(2880),
                     height_twip: Some(1000),
                     alt: None,
-                    data: Some(vec![1, 2, 3]),
+                    data: Some(vec![1, 2, 3].into()),
                     content_type: Some("image/png".into()),
                 })],
             })],

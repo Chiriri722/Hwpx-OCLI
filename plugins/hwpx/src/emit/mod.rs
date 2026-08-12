@@ -14,14 +14,11 @@ use crate::owpml::model::Document;
 /// individually." — 행마다 flush해야 호스트 감시견이 활동 신호를 받는다.
 /// §5.5 개행은 `\n`. `writeln!`은 플랫폼 무관하게 `\n`만 쓴다.
 pub fn stream_document<W: Write>(doc: &Document, out: &mut W) -> Result<usize> {
-    let items = word::emit_document(doc);
-    let mut count = 0usize;
-    for item in &items {
+    word::try_emit_document(doc, |item| -> Result<()> {
         writeln!(out, "{}", item.to_json_line())?;
         out.flush()?;
-        count += 1;
-    }
-    Ok(count)
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -89,5 +86,18 @@ mod tests {
         let n = stream_document(&Document::default(), &mut buf).expect("streams");
         assert_eq!(n, 0);
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn block_sink_stops_before_emitting_later_items_after_an_error() {
+        let mut calls = 0usize;
+        let error = word::try_emit_document(&sample(), |_item| {
+            calls += 1;
+            Err("stop")
+        })
+        .expect_err("sink failure must stop emission");
+
+        assert_eq!(error, "stop");
+        assert_eq!(calls, 1, "later blocks must not be materialized after failure");
     }
 }

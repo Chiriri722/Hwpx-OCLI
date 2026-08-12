@@ -3,6 +3,8 @@
 //! 파서는 OWPML을 이 모델로 옮기고, emitter는 이 모델만 보고 BatchItem을 만든다.
 //! 두 단계를 분리해야 각각을 독립적으로 테스트할 수 있다.
 
+use std::sync::Arc;
+
 /// HWPUNIT은 1/7200 inch.
 ///
 /// 근거: `unhwp-0.7.0/src/hwpx/styles.rs:107` — "HWPML uses height in
@@ -152,8 +154,8 @@ pub struct Image {
     pub width_twip: Option<i64>,
     pub height_twip: Option<i64>,
     pub alt: Option<String>,
-    /// BinData에서 읽어낸 원본 바이트. data URI로 인라인할 때 쓴다.
-    pub data: Option<Vec<u8>>,
+    /// BinData에서 읽어낸 원본 바이트. 반복 참조는 같은 할당을 공유한다.
+    pub data: Option<Arc<[u8]>>,
     /// `image/png` 등. 파일 확장자에서 추론한다.
     pub content_type: Option<String>,
 }
@@ -378,7 +380,7 @@ pub fn derive_col_widths(cells: &[Cell], cols: usize) -> Vec<i64> {
             let Some(total) = cell.width_twip.filter(|w| *w > 0) else {
                 continue;
             };
-            let end = (cell.col + span).min(cols);
+            let end = cell.col.saturating_add(span).min(cols);
             let unknown: Vec<usize> = (cell.col..end).filter(|&i| known[i].is_none()).collect();
             if unknown.is_empty() {
                 continue;

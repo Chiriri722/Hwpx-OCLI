@@ -219,18 +219,25 @@ fn detect_zip<R: Read + Seek>(reader: R) -> Result<SourceFormat> {
 
     // mimetype이 있으면 그것이 가장 확실하다.
     if let Ok(mut f) = archive.by_name(crate::owpml::package::MIMETYPE_ENTRY) {
-        let mut s = String::new();
-        if f.read_to_string(&mut s).is_ok() {
-            let s = s.trim();
-            if s == crate::owpml::package::MIMETYPE_VALUE {
-                return Ok(SourceFormat::Hwpx);
-            }
-            if !s.is_empty() {
-                return Err(PluginError::corrupt(format!(
-                    "zip container with unexpected mimetype {s:?} (expected {:?})",
-                    crate::owpml::package::MIMETYPE_VALUE
-                )));
-            }
+        let mut bytes = Vec::new();
+        f.by_ref()
+            .take(crate::owpml::package::MAX_MIMETYPE_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > crate::owpml::package::MAX_MIMETYPE_BYTES {
+            return Err(PluginError::corrupt(
+                "resource limit exceeded: mimetype entry is too large",
+            ));
+        }
+        let s = String::from_utf8_lossy(&bytes);
+        let s = s.trim();
+        if s == crate::owpml::package::MIMETYPE_VALUE {
+            return Ok(SourceFormat::Hwpx);
+        }
+        if !s.is_empty() {
+            return Err(PluginError::corrupt(format!(
+                "zip container with unexpected mimetype {s:?} (expected {:?})",
+                crate::owpml::package::MIMETYPE_VALUE
+            )));
         }
     }
 

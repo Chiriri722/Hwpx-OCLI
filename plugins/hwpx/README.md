@@ -36,6 +36,17 @@ scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 officecli plugins list
 ```
 
+Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로에 설치한다.
+
+```powershell
+.\scripts\install.ps1
+.\scripts\install.ps1 -NoBuild
+.\scripts\install.ps1 -Uninstall
+.\scripts\install.ps1 -PrintEnv
+```
+
+설치 위치는 `$HOME\.officecli\plugins\dump-reader\hwpx\plugin.exe`다.
+
 ## 포맷 판별
 
 확장자를 믿지 않고 매직 바이트로 판별한다. `.hwp`인데 실제로는 HWPX인 파일이
@@ -115,10 +126,10 @@ officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
 ## 개발
 
 ```bash
-cargo test                          # 전체 184개
-cargo test --lib                    # 단위 122개
-cargo test --test parse_owpml       # OWPML 파싱 25개
-cargo test --test protocol_contract # 프로토콜 계약 E2E 34개
+cargo test                          # 전체 202개
+cargo test --lib                    # 단위 125개
+cargo test --test parse_owpml       # OWPML 파싱 34개
+cargo test --test protocol_contract # 프로토콜 계약 E2E 39개(macOS) + 플랫폼별 전용 검사
 cargo test --test golden            # 골든파일 회귀 3개
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -184,6 +195,7 @@ tests/
   golden/canonical.jsonl
 scripts/
   install.sh            디스커버리 경로에 설치
+  install.ps1           Windows 사용자 플러그인 경로에 plugin.exe 설치
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
   verify-roundtrip.sh   실제 officecli로 43개 항목 왕복 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증
