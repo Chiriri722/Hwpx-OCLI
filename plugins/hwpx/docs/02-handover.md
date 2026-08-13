@@ -39,7 +39,8 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 
 ### 1-b. 우리 테스트로 검증됨
 
-`cargo test` 202개, `cargo clippy --all-targets -- -D warnings` 무경고.
+Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 통과했다.
+테스트 수는 플랫폼 전용 항목 때문에 OS별로 다르므로 명령 결과를 기준으로 본다.
 
 | 항목 | 방법 |
 |---|---|
@@ -64,11 +65,26 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 실제 문서 **5건**으로 검증(버그 7건 발견). 구청 공고·양식에 치우쳤다. 보고서·논문·통계자료 계열은 미검증 |
 | 이미지·각주·수식·도형·머리말 | 낮음~미상 | 코퍼스 5건에 **하나도 없었다**. 이미지는 합성 픽스처로만 검증됨. 나머지는 미구현 (`03-work-plan.md` 3절) |
-| Windows / Linux 동작 | 낮음 | Windows 크로스 타깃 컴파일과 네이티브 CI 검사를 추가했다. 첫 원격 workflow 실행 결과 확인은 남음 |
-| 대용량 파일 성능 | 낮음 | 섹션 단위로 읽고 행별 flush하므로 감시견에는 안전. 실측은 없음 |
+| Windows / Linux 동작 | 부분 검증 | GitHub Actions run `31572303544`에서 기존 네이티브 test·clippy·release build와 Windows 설치 무결성은 성공. 새 HWP 브리지·Windows Job Object·MSRV 1.88·OfficeCLI discovery CI의 첫 결과는 대기 중 |
+| 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. OfficeCLI 30초 watchdog lint 0.771초 성공. 10초보다 빨라 heartbeat reset 자체는 관찰하지 못함 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
+
+H3 변환 경계와 H4/H5의 로컬 검증은 끝났다. 가장 먼저 새 workflow의 Linux/
+Windows 결과를 확인한다. 확인 대상은 MSRV 1.88, Windows `plugins list`, 양 OS의
+fake converter 계약, Linux 비 UTF-8 staging, Windows Job Object process-tree
+종료다. 전부 통과하면 H1에서 매니페스트·설치 경로에 `.hwp`를 별도 원자 변경으로
+등록하고 실제 RHWP/OfficeCLI HWP smoke를 추가한다. 그전에는 `.hwpx`만 광고한다.
+
+`scripts/verify-hwp-pairs.py`는 NFC 정규화로 동명 HWP/HWPX를 찾고 두 JSONL,
+unknown prop, OfficeCLI batch/validate 및 문단·표·셀·폼필드 구조를 대조한다.
+로컬의 독립 HWP/HWPX 1쌍은 34개 JSONL이 byte-for-byte 일치했고, RHWP 공식
+HWP5 3종·HWP3 1종에서 만든 쌍도 19/48/712/467개 항목이 정확히 일치했다.
+이는 브리지와 직접 HWPX 경로의 동등성 근거이며, 서로 독립 편집된 더 다양한
+실문서 쌍을 계속 모아야 한다.
+
+그 다음 장기 품질 작업은 실제 문서 표본 확대다.
 
 **실제 문서를 더 모아서 돌린다.** 1건으로 버그 5개가 나왔다. 표본을 늘리는 것이
 가장 효율이 높다.
@@ -102,7 +118,7 @@ officecli view 실제문서.docx screenshot --out /tmp/check.png
 |---|---|---|
 | "unhwp의 .NET 바인딩으로 통신" | 바인딩 불필요 | dump-reader의 IPC는 **없음**. stdout JSONL + exit 0이 전부 (§2.1) |
 | "플러그인 디스커버리 메커니즘 구현" | 구현 불필요 | 메인이 이미 함. 정해진 경로에 두면 끝 (§3) |
-| `unhwp`로 파싱 | `zip` + `quick-xml` 직접 파싱 | `unhwp` 출력(Markdown)은 런 서식·셀 병합·색상을 표현 못 함. 손실 중간표현 (ADR-2) |
+| `unhwp`로 파싱 | HWPX는 `zip` + `quick-xml` 직접 파싱, 바이너리 HWP는 선택적 RHWP→HWPX 브리지 | `unhwp`도 구조화 모델은 제공한다. 다만 폼 컨트롤 보존 경계를 검증하지 못했고 별도 매핑을 중복 유지해야 한다 (정정된 ADR-2, ADR-5) |
 | `unhwp = "0.5"` | 최신은 0.7.0 | 확인 안 된 버전 |
 | `edition = "2024"` | `2021` | unhwp 0.7이 2021. 2024로 올릴 이유 없음 |
 | dump-reader (근거 없이) | dump-reader (근거 명시) | 프로토콜은 `.hwpx`를 format-handler 예시로 든다. 쓰기 구현체가 없어 dump-reader가 맞다 (ADR-1) |
@@ -110,6 +126,24 @@ officecli view 실제문서.docx screenshot --out /tmp/check.png
 시드 `main.rs`의 문제 9가지도 같은 문서 3절에 정리했다. 핵심은
 `read_to_string`으로 ZIP을 읽으려 한 것, `TempDir`이 즉시 drop돼 테스트가
 파일 부재로 실패한 것, 테스트 안에서 `cargo run`을 호출한 것이다.
+
+### 설명만 보고 판단해서 틀린 다섯 번째 사례
+
+Rust 쪽에서 `OsStr` 인자를 보존하면 Linux 비 UTF-8 HWP 경로도 안전하다고
+생각했지만, 실제 RHWP v0.8.4는 `std::env::args()`로 UTF-8 `String`을 강제한다.
+또 직접 child에 120초 제한을 두면 충분하다고 봤지만 background helper가 stderr를
+상속하면 reader join이 무기한 남았다. 독립 리뷰와 실패 테스트로 둘 다 재현했다.
+
+해결은 원본을 UTF-8 고정명의 private `source.hwp`로 복사해 RHWP에는 staging
+경로만 넘기고, stderr drain을 bounded로 만들며 Unix process group과 Windows
+Job Object로 자손까지 정리하는 것이다. API 표면의 설명이 아니라 실제 의존성
+구현과 프로세스 트리를 확인해야 했던 사례다.
+
+후속 검토에서는 상속된 `SIGCHLD=SIG_IGN`/blocked mask, 정상 종료 자손, 공개
+scratch 권한까지 재현됐다. Unix는 signal-handler 비의존 `waitid(WNOWAIT)` polling과
+`0700`/`0600`, Windows는 protected DACL의 atomic `NtCreateFile`, no-delete-share
+handle, Job active-process drain으로 경계를 닫았다. 변환기 자체 경로도 RHWP의
+`argv[0]` 수집 때문에 Unicode가 아니면 exit 3으로 거절한다.
 
 ## 3. 개발 중 실제로 잡힌 버그
 
@@ -243,14 +277,14 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 실제 한글 저장 파일 검증 (위 1번) — 다른 모든 것의 전제
-2. 스타일 이름 매핑 (`styleIDRef` → docx `style`). 제목 계층이 살아나므로
+1. 새 Linux/Windows MSRV·브리지·OfficeCLI discovery CI를 확인하고, 전부
+   통과하면 H1 `.hwp` 매니페스트·설치 경로를 활성화한다 (`04-hwp-support-plan.md`).
+2. 실제 한글 저장 파일 검증 (위 1번) — 장기 품질 작업의 전제
+3. 스타일 이름 매핑 (`styleIDRef` → docx `style`). 제목 계층이 살아나므로
    문서 구조 파악에 가장 크게 기여
-3. 각주/미주 — 학술·공문서에서 빈도가 높다
-4. 목록 번호 매기기 (`numbering`)
-5. 머리말/꼬리말
-6. `.hwp` 5.0 (바이너리 OLE) 지원. 이때는 `unhwp`를 쓰는 게 맞다.
-   별도 `dump-reader/hwp` 플러그인으로 분리한다.
+4. 각주/미주 — 학술·공문서에서 빈도가 높다
+5. 목록 번호 매기기 (`numbering`)
+6. 머리말/꼬리말
 7. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
 
 ## 6. 참고 자료 위치

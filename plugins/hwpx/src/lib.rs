@@ -2,6 +2,7 @@
 //!
 //! 계약: `docs/01-protocol-contract.md`
 
+mod converter;
 pub mod emit;
 pub mod error;
 pub mod format;
@@ -264,7 +265,8 @@ fn unsupported_binary_hwp(detected: &format::SourceFormat) -> PluginError {
     }
 
     msg.push_str(
-        ". This build reads HWPX only. Convert it first, e.g.:\n  \
+        ". Binary HWP support needs the optional RHWP converter. Install RHWP v0.8.4+ \
+         on PATH or set OFFICECLI_HWPX_CONVERTER to its absolute path. Manual conversion:\n  \
          rhwp export-hwpx <source> <target>.hwpx\n\
          (https://github.com/edwardkim/rhwp — MIT, prebuilt binaries available)",
     );
@@ -304,7 +306,7 @@ pub fn run<O: Write, E: Write>(cmd: Command, stdout: &mut O, stderr: &mut E) -> 
         }
         Command::Dump {
             source,
-            media_dir: _,
+            media_dir,
             log_file,
             quiet,
         } => {
@@ -335,13 +337,19 @@ pub fn run<O: Write, E: Write>(cmd: Command, stdout: &mut O, stderr: &mut E) -> 
             // `.hwp`인데 실제로는 HWPX인 파일이 흔하고 반대도 있다.
             let detected = format::detect_path(&source)?;
 
-            if detected.needs_conversion() {
-                // HWP(바이너리)는 HWPX로 변환한 뒤에야 읽을 수 있다.
-                // 변환기 브리지는 아직 없다 → §6.5의 3번(이 빌드에서 미지원).
-                return Err(unsupported_binary_hwp(&detected));
-            }
+            let converted = if detected.needs_conversion() {
+                match converter::convert_hwp_to_hwpx(&source, media_dir.as_deref())? {
+                    Some(converted) => Some(converted),
+                    None => return Err(unsupported_binary_hwp(&detected)),
+                }
+            } else {
+                None
+            };
+            let readable_source = converted
+                .as_ref()
+                .map_or(source.as_path(), converter::ConvertedHwpx::path);
 
-            let doc = owpml::read_document(&source)?;
+            let doc = owpml::read_document(readable_source)?;
             let count = emit::stream_document(&doc, stdout)?;
 
             // 진단은 stderr 또는 --log-file로. stdout은 JSONL 전용이다(§5.1).

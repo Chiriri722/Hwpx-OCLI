@@ -87,3 +87,59 @@
 - OfficeCLI 1.0.143 실제 왕복: 43 checks passed.
 - workflow YAML syntax 및 `git diff --check`: passed.
 - 로컬에 PowerShell과 Linux Podman VM이 없어 두 OS의 네이티브 테스트는 실행하지 못했다. workflow 첫 실행 결과가 최종 플랫폼 증거다.
+
+### 2026-08-13 Phase 5 플랫폼 게이트 완료
+- HEAD와 `origin/feat/hwpx-plugin`은 `2d8b909de3311e9b44b42fd88788e208732db977`로 일치했고 worktree는 clean이었다.
+- GitHub Actions `HWPX plugin` run `31572303544`가 성공했다.
+- Linux x64 test/clippy/release build와 Linux 비 UTF-8 실파일 회귀가 성공했다.
+- Windows x64 test/clippy/release build, 하드 링크 회귀, PowerShell 네이티브 설치 검증이 성공했다.
+- 이 결과로 Phase 5의 네이티브 플랫폼 게이트를 닫았다.
+
+### Phase 5 잔여 호환성 감사
+- Windows workflow는 설치 위치와 `--info`만 확인했으며 실제 OfficeCLI discovery는 아니었다.
+- `cargo +1.87.0 check --locked --all-targets`는 `zip 8.6.0 requires rustc 1.88`로 실패해 선언 MSRV가 사실과 달랐다.
+- MSRV를 1.88로 바로잡아 전용 CI를 추가하고, Windows job은 체크섬 고정 OfficeCLI 1.0.143의 `plugins list`까지 확인하도록 확장한다.
+- 합성 48MiB 문서와 실제 OfficeCLI 30초 watchdog의 빠른 경로는 아래에서 실측했다. 다만 10초를 넘기는 실제 dump가 heartbeat로 host idle timer를 갱신하는 통합 경로는 아직 미실측이다.
+- 새 CI의 첫 원격 결과 전에는 Phase 5 전체를 완료로 승격하지 않는다.
+
+### Phase 6 선택
+- 다음 기능은 `docs/04-hwp-support-plan.md` H3의 선택적 RHWP HWP→HWPX 브리지로 정했다.
+- 현재 포맷 판별과 `needs_conversion()` 분기점이 이미 있어 새 파서를 만들지 않고 기존 HWPX 파이프라인을 재사용할 수 있다.
+- 먼저 H3 변환 경계를 구현하고, 성공 전에는 `.hwp` 확장자를 매니페스트·설치 경로에 광고하지 않는다.
+- 보안 게이트: shell 금지, `OsStr` 인자 보존, 환경변수 경로 절대경로 제한, 임시 산출물 정리, 원본 불변, 변환 출력 HWPX 재판별, 변환기 부재 exit 3·변환 실패 exit 2.
+- 기존 계획의 RHWP v0.8.2 근거는 최신 v0.8.4 CLI와 체크섬으로 재실측해야 한다. 아래 H3 기록에서 완료했다.
+
+### Phase 5 대용량/idle 실측
+- macOS arm64에서 독립 생성한 48.0MiB 저장형 HWPX 단일 실행: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB, JSONL 4행/48.0MiB, 원본 불변.
+- OfficeCLI 1.0.143의 30초 watchdog 아래 `plugins lint`: 0.771초, unknown prop 0, success.
+- 10초 안에 종료돼 heartbeat frame은 관찰되지 않았다. helper 단위 테스트는 계속 통과한다.
+- 첫 구현의 `read(1MiB)`가 첫 바이트가 아니라 버퍼 충전/EOF 시각을 기록하던 문제를 `os.read`로 수정했다. 합성 표본 1회 결과로 범위를 제한한다.
+
+### Phase 6 H3 실행 경계
+- RHWP v0.8.4 macOS arm64 공식 자산의 SHA-256 `6a5e6a7104a2ce40fd4235d1c95cc86b0291652f30f6d1bf1efd3708419ac176`이 `SHA256SUMS.txt`와 일치했다.
+- CLI 계약은 `rhwp export-hwpx <입력> [출력] [--verify] [--verify-pages] [--json]`이다. `--help`는 지원하지 않고 사용법 오류(exit 2)와 함께 계약 문자열을 출력한다.
+- 공식 HWP5 3종(영문/복합표/필드)과 HWP3 1종이 변환 및 플러그인 브리지에서 각각 19/712/48/467 JSONL 행으로 성공했다.
+- `--verify`는 복합표 1종만 동일했고 나머지 3종은 RHWP 상류 IR 차이를 보고해 런타임 브리지에서는 사용하지 않는다.
+- RED: 구성된 fake converter 성공 테스트가 구현 전 기존 exit 3으로 실패했다.
+- GREEN: 변환기 부재 exit 3, 성공 JSONL, 원본 불변, private scratch 정리, 비정상 종료/출력 누락/비 HWPX exit 2, 절대 env path, timeout, stderr cap을 검증했다.
+- 후속 리뷰에서 RHWP의 비 UTF-8 argv 제약과 background helper의 stderr pipe 상속 hang을 재현했다. UTF-8 고정명 staging, bounded drain, Unix process group, Windows Job Object로 보강했다.
+- stderr를 닫은 정상 converter가 조용한 자손을 남기는 경로도 별도 RED 테스트로 재현했다. 직접 child의 성공 여부와 무관하게 Unix process group/Windows Job 전체를 정리하며, private scratch를 만들 수 없는 런타임은 exit 3으로 분류한다.
+- 상속된 `SIGCHLD=SIG_IGN` crash와 blocked-mask hang을 RED로 고정하고 signal-handler 기반 runtime wait를 제거했다. Unix는 `waitid(WNOWAIT)`로 reap 전 group을 정리하고, Windows는 Job active-process 0을 기다린다.
+- Unix scratch/source는 `0700`/`0600`, Windows는 owner+SYSTEM protected DACL의 상대 `NtCreateFile` create+handle과 no-delete-share로 원자 보호한다. 비 Unicode RHWP 실행파일 경로도 exit 3으로 거절한다.
+- Windows의 임의 `--media-dir`은 mutable junction 위험 때문에 binary HWP staging에 쓰지 않고 canonical user-temp root로 한정한다.
+- staging copy는 256MiB 예산을 두고 실제 읽기에도 `limit + 1` 상한을 적용해 파일 성장/디스크 소진 경계를 고정했다.
+- 양 OS fake converter 계약, Linux 비 UTF-8 원본·media 경로, Windows descendant 종료 테스트를 추가했다. 새 네이티브 CI의 첫 결과는 대기 중이다.
+
+### Phase 6 H4/H5
+- `scripts/verify-hwp-pairs.py`를 추가했다. NFC 동명 쌍의 JSONL/요약, unknown prop, OfficeCLI batch/validate, 문단·표·셀·폼필드 구조와 원본 불변을 검사한다.
+- 실제 독립 HWP/HWPX 1쌍은 34개 JSONL byte exact, unknown prop 0, OfficeCLI validate/구조 일치였다.
+- RHWP 공식 HWP5 3종·HWP3 1종과 v0.8.4가 만든 HWPX 쌍은 19/48/712/467개 JSONL exact, unknown prop 0, OfficeCLI validate/구조 일치였다.
+- README의 선택적 HWP 사용법, ADR-2 정정/ADR-5, 인수인계를 갱신했다. H1 `.hwp` 광고는 새 Linux/Windows 원격 CI가 성공한 뒤 진행한다.
+
+### Phase 6 최종 로컬 검증
+- `cargo +1.88.0 test --locked`: macOS 218 passed (lib 135 + binary 1 + golden 3 + parser 34 + protocol 45).
+- `cargo +1.88.0 check --locked --all-targets`와 같은 toolchain의 Windows GNU all-target check: passed.
+- stable `cargo clippy --locked --all-targets -- -D warnings`와 Windows GNU target clippy: passed.
+- `cargo +1.88.0 build --release --locked`, workflow YAML parse, 두 Python verifier `--help`, `git diff --check`: passed.
+- OfficeCLI 1.0.143 `verify-roundtrip.sh`: 43 checks passed.
+- Windows/Linux 네이티브 테스트, 새 MSRV matrix, Windows OfficeCLI discovery는 변경을 원격에 올린 뒤 확인해야 한다.

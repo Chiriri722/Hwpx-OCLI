@@ -17,6 +17,30 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: Rust 1.88 MSRV (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+          - name: Windows x64
+            os: windows-latest
+    defaults:
+      run:
+        working-directory: plugins/hwpx
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install minimum supported Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Check all targets on the declared MSRV
+        run: cargo check --locked --all-targets
+
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -62,5 +86,24 @@ jobs:
           & $plugin --info | ConvertFrom-Json | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "installed plugin manifest check failed"
+          }
+
+          $version = 'v1.0.143'
+          $asset = 'officecli-win-x64.exe'
+          $officecli = Join-Path $env:RUNNER_TEMP $asset
+          $url = "https://github.com/iOfficeAI/OfficeCLI/releases/download/$version/$asset"
+          Invoke-WebRequest -Uri $url -OutFile $officecli
+          $actual = (Get-FileHash -LiteralPath $officecli -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = 'd4d4c10fced307e209744cf98a56b003a6e613424fd651b08469274704afd2c6'
+          if ($actual -ne $expected) {
+            throw "OfficeCLI checksum mismatch: expected $expected, got $actual"
+          }
+
+          $plugins = (& $officecli plugins list 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "officecli plugins list failed: $plugins"
+          }
+          if ($plugins -notmatch 'officecli-hwpx') {
+            throw "installed HWPX plugin was not discovered: $plugins"
           }
           ./scripts/install.ps1 -Uninstall

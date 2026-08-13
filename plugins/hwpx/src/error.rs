@@ -68,6 +68,13 @@ impl PluginError {
         }
     }
 
+    pub fn unsupported_feature(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::UnsupportedFeature,
+            message: message.into(),
+        }
+    }
+
     pub fn unsupported_command(message: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::UnsupportedCommand,

@@ -2,7 +2,7 @@
 name = "officecli-hwpx"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.88"
 description = "OfficeCLI dump-reader plugin for HWPX (OWPML) documents"
 license = "MIT"
 repository = "https://github.com/Chiriri722/Hwpx-OCLI"
@@ -26,14 +26,28 @@ quick-xml = "0.41.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 base64 = "0.23.0"
+tempfile = "3.27.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.177"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_JobObjects",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
-tempfile = "3.27.0"
 
 [profile.release]
 opt-level = "z"

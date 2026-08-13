@@ -3,12 +3,14 @@
 [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **HWPX(한글 문서) dump-reader
 플러그인**. `.hwpx` 파일을 읽어 OfficeCLI의 docx 명령(JSONL)으로 변환한다.
 
-Rust 단일 바이너리, 런타임 의존성 없음. 507KB, 시작 3ms.
+Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 바이너리 HWP는
+선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
 
 ## 무엇을 하는가
 
 ```
 .hwpx  ──[이 플러그인]──▶  BatchItem JSONL  ──[officecli]──▶  .docx
+.hwp   ──[RHWP, 선택]──▶  임시 .hwpx ──[이 플러그인]──────▶  .docx
 ```
 
 OfficeCLI가 `.hwpx` 파일을 열면 이 플러그인을 `dump` 서브커맨드로 실행하고,
@@ -55,11 +57,31 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 | 포맷 | 처리 |
 |---|---|
 | HWPX (ZIP + OWPML) | 직접 읽는다 |
-| HWP 5.x (CFB) | **미지원** — exit 3과 변환 안내 |
-| HWP 3.0 | **미지원** — exit 3과 변환 안내 |
+| HWP 5.x (CFB) | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
+| HWP 3.0 | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
 | 그 밖 (`.docx` 등) | exit 2와 원인 명시 |
 
 바이너리 HWP 지원 계획은 `docs/04-hwp-support-plan.md`.
+
+RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. 현재 매니페스트는 H3
+브리지의 크로스 플랫폼 CI가 끝날 때까지 `.hwpx`만 광고하므로, `.hwp` 파일은
+플러그인을 직접 실행해 검증한다.
+
+```bash
+rhwp --version  # v0.8.4 이상
+export OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp
+officecli-dump-reader-hwpx dump 문서.hwp
+```
+
+RHWP 바이너리는 [공식 릴리스](https://github.com/edwardkim/rhwp/releases)에서
+받고 함께 제공되는 SHA-256 체크섬을 확인한다. 플러그인은 shell을 쓰지 않으며,
+원본을 private scratch의 UTF-8 고정명으로 staging한 뒤 결과를 HWPX로 다시
+판별한다. staging copy는 256MiB로 제한한다. 변환기 부재는 exit 3,
+변환 실패·잘못된 산출물은 exit 2다. Unix scratch는 `0700`/staged source는
+`0600`이고, Windows scratch는 owner와 LocalSystem만 허용하는 protected DACL로
+원자 생성한다. RHWP v0.8.4 제약상 변환기 실행파일 경로도 Unicode여야 한다.
+Windows에서는 공유 junction/재지정 공격을 피하기 위해 `--media-dir` 대신 사용자별
+OS 임시 루트의 보호된 하위 디렉터리를 사용한다.
 
 진단:
 
@@ -126,10 +148,10 @@ officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
 ## 개발
 
 ```bash
-cargo test                          # 전체 202개
-cargo test --lib                    # 단위 125개
+cargo test                          # 전체(플랫폼별 전용 검사 포함)
+cargo test --lib                    # 단위 검사
 cargo test --test parse_owpml       # OWPML 파싱 34개
-cargo test --test protocol_contract # 프로토콜 계약 E2E 39개(macOS) + 플랫폼별 전용 검사
+cargo test --test protocol_contract # 프로토콜 계약 E2E + 플랫폼별 전용 검사
 cargo test --test golden            # 골든파일 회귀 3개
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -199,6 +221,9 @@ scripts/
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
   verify-roundtrip.sh   실제 officecli로 43개 항목 왕복 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증
+  verify-hwp-pairs.py   HWP/HWPX 쌍 JSONL·OfficeCLI 구조 동등성 검증
+  verify-large-file.py  합성 대용량 HWPX wall-time/RSS/watchdog 실측
+                        (Windows는 RSS를 null/unsupported로 보고)
 docs/
   00-seed-review.md      시드 재검토 + 사실검증
   01-protocol-contract.md 확정 계약 + ADR

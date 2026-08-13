@@ -11,6 +11,8 @@ mod common;
 use assert_cmd::Command;
 use common::*;
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const BIN: &str = "officecli-dump-reader-hwpx";
 
@@ -535,6 +537,83 @@ fn minimal_hwp5(major: u8, minor: u8, flags: u32) -> Vec<u8> {
     comp.into_inner().into_inner()
 }
 
+#[cfg(unix)]
+fn fake_converter(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("fake rhwp converter");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+set -eu
+case "${MOCK_MODE:-}" in
+  copy)
+    printf '%s\0%s\0%s\0' "$1" "$2" "$3" > "$MOCK_ARGS"
+    /bin/cp "$MOCK_HWPX" "$3"
+    ;;
+  nonzero)
+    printf 'converter exploded\n' >&2
+    exit 9
+    ;;
+  invalid)
+    printf 'not hwpx' > "$3"
+    ;;
+  missing)
+    exit 0
+    ;;
+  *)
+    printf 'unknown fake converter mode\n' >&2
+    exit 10
+    ;;
+esac
+"#,
+    )
+    .expect("write script");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("script metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&path, permissions).expect("chmod script");
+    path
+}
+
+#[cfg(windows)]
+fn fake_converter(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("fake rhwp converter.exe");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("support")
+        .join("fake_converter.rs");
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let status = std::process::Command::new(rustc)
+        .arg("--edition=2021")
+        .arg(source)
+        .arg("-o")
+        .arg(&path)
+        .status()
+        .expect("run rustc for fake converter");
+    assert!(status.success(), "compile fake converter");
+    path
+}
+
+#[cfg(unix)]
+fn read_converter_args(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+    use std::os::unix::ffi::OsStringExt;
+    std::fs::read(path)
+        .expect("converter args")
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| std::ffi::OsString::from_vec(field.to_vec()))
+        .collect()
+}
+
+#[cfg(windows)]
+fn read_converter_args(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+    std::fs::read_to_string(path)
+        .expect("converter args")
+        .lines()
+        .map(std::ffi::OsString::from)
+        .collect()
+}
+
 #[test]
 fn binary_hwp5_exits_three_with_actionable_message() {
     // §6.5: 3 = "Feature unsupported in this build".
@@ -543,15 +622,267 @@ fn binary_hwp5_exits_three_with_actionable_message() {
     let path = dir.path().join("binary.hwp");
     std::fs::write(&path, minimal_hwp5(5, 1, 0x01)).expect("write");
 
-    let out = plugin().arg("dump").arg(&path).assert().code(3);
+    let out = plugin()
+        .arg("dump")
+        .arg(&path)
+        .env_remove("OFFICECLI_HWPX_CONVERTER")
+        .env("PATH", "")
+        .env("HOME", dir.path())
+        .assert()
+        .code(3);
     assert!(
         out.get_output().stdout.is_empty(),
         "no JSONL for an unreadable format"
     );
     let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8");
     assert!(stderr.contains("HWP 5"), "got: {stderr}");
-    assert!(stderr.contains("5.1.0.0"), "version must be reported: {stderr}");
+    assert!(
+        stderr.contains("5.1.0.0"),
+        "version must be reported: {stderr}"
+    );
     assert!(stderr.contains("rhwp"), "must say how to convert: {stderr}");
+}
+
+#[test]
+fn configured_converter_turns_binary_hwp_into_jsonl_and_cleans_scratch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary source with spaces.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    let source_before = std::fs::read(&source).expect("read source");
+    let modified_before = std::fs::metadata(&source)
+        .expect("source metadata")
+        .modified()
+        .expect("source mtime");
+
+    let (_fixture_dir, converted) =
+        simple_doc(&["변환기 경유 성공"]).write_to_temp("converted fixture.hwpx");
+    let args_log = dir.path().join("converter-args");
+    let media_dir = dir.path().join("scratch");
+    std::fs::create_dir(&media_dir).expect("scratch dir");
+    let converter = fake_converter(dir.path());
+
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .arg("--media-dir")
+        .arg(&media_dir)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "copy")
+        .env("MOCK_HWPX", &converted)
+        .env("MOCK_ARGS", &args_log)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).expect("utf-8 JSONL");
+    assert!(stdout.contains("변환기 경유 성공"), "got: {stdout}");
+    assert_eq!(std::fs::read(&source).expect("source after"), source_before);
+    assert_eq!(
+        std::fs::metadata(&source)
+            .expect("source metadata after")
+            .modified()
+            .expect("source mtime after"),
+        modified_before,
+        "converter bridge must not write the source"
+    );
+    assert_eq!(
+        std::fs::read_dir(&media_dir).expect("read scratch").count(),
+        0,
+        "temporary conversion output must be removed"
+    );
+
+    let args = read_converter_args(&args_log);
+    assert_eq!(args.len(), 3, "one subcommand and two path arguments");
+    assert_eq!(args[0], "export-hwpx");
+    assert_eq!(
+        std::path::Path::new(&args[1]).file_name().unwrap(),
+        "source.hwp"
+    );
+    assert_ne!(
+        std::path::Path::new(&args[1]),
+        source,
+        "the converter must receive a private staged copy, not the source"
+    );
+    assert_eq!(
+        std::path::Path::new(&args[2]).file_name().unwrap(),
+        "converted.hwpx"
+    );
+    assert!(
+        args.iter().all(|arg| arg.to_str().is_some()),
+        "RHWP v0.8.4 requires UTF-8 argv"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn converter_wait_is_independent_of_an_ignored_sigchld() {
+    use std::os::unix::process::CommandExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    let (_fixture_dir, converted) =
+        simple_doc(&["SIGCHLD 무시 환경 성공"]).write_to_temp("converted.hwpx");
+    let args_log = dir.path().join("converter-args");
+    let converter = fake_converter(dir.path());
+    let executable = plugin().get_program().to_os_string();
+    let mut command = std::process::Command::new(executable);
+    command
+        .arg("dump")
+        .arg(&source)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "copy")
+        .env("MOCK_HWPX", &converted)
+        .env("MOCK_ARGS", &args_log);
+    // SAFETY: this closure runs after fork and before exec in the new child.
+    // `signal` is the only operation and changes only that child process.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::signal(libc::SIGCHLD, libc::SIG_IGN) == libc::SIG_ERR {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+
+    let output = command.output().expect("run plugin with SIGCHLD ignored");
+    assert!(
+        output.status.success(),
+        "plugin must not crash when SIGCHLD is inherited as ignored: {output:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("SIGCHLD 무시 환경 성공"),
+        "got: {output:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn binary_hwp_bridge_stages_non_utf8_source_and_media_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir
+        .path()
+        .join(std::ffi::OsString::from_vec(b"binary-\xff.hwp".to_vec()));
+    let media_dir = dir
+        .path()
+        .join(std::ffi::OsString::from_vec(b"scratch-\xfe".to_vec()));
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    std::fs::create_dir(&media_dir).expect("create non-UTF-8 media dir");
+    let source_before = std::fs::read(&source).expect("source before");
+
+    let (_fixture_dir, converted) =
+        simple_doc(&["비 UTF-8 브리지 성공"]).write_to_temp("converted.hwpx");
+    let args_log = dir.path().join("converter-args");
+    let converter = fake_converter(dir.path());
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .arg("--media-dir")
+        .arg(&media_dir)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "copy")
+        .env("MOCK_HWPX", &converted)
+        .env("MOCK_ARGS", &args_log)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).expect("utf-8 JSONL");
+    assert!(stdout.contains("비 UTF-8 브리지 성공"), "got: {stdout}");
+    assert_eq!(std::fs::read(&source).expect("source after"), source_before);
+    assert_eq!(
+        std::fs::read_dir(&media_dir)
+            .expect("read non-UTF-8 media dir")
+            .count(),
+        0,
+        "an unsafe media path must be left clean when system temp is used"
+    );
+    let args = read_converter_args(&args_log);
+    assert!(
+        args.iter().all(|arg| arg.to_str().is_some()),
+        "RHWP must receive only UTF-8 staged paths: {args:?}"
+    );
+}
+
+#[test]
+fn converter_nonzero_exit_is_corrupt_input_and_keeps_stdout_empty() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    let converter = fake_converter(dir.path());
+
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "nonzero")
+        .assert()
+        .code(2);
+    assert!(out.get_output().stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("converter exploded"), "got: {stderr}");
+    assert!(stderr.contains("status 9"), "got: {stderr}");
+}
+
+#[test]
+fn converter_output_is_revalidated_as_hwpx() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    let converter = fake_converter(dir.path());
+
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "invalid")
+        .assert()
+        .code(2);
+    assert!(out.get_output().stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("not HWPX"), "got: {stderr}");
+}
+
+#[test]
+fn converter_success_without_an_output_is_corrupt_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+    let converter = fake_converter(dir.path());
+
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .env("OFFICECLI_HWPX_CONVERTER", &converter)
+        .env("MOCK_MODE", "missing")
+        .assert()
+        .code(2);
+    assert!(out.get_output().stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(
+        stderr.contains("did not create its output"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn configured_converter_path_must_be_absolute() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("binary.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write source");
+
+    let out = plugin()
+        .arg("dump")
+        .arg(&source)
+        .env("OFFICECLI_HWPX_CONVERTER", "relative-rhwp")
+        .env("PATH", "")
+        .env("HOME", dir.path())
+        .assert()
+        .code(3);
+    assert!(out.get_output().stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("must be an absolute path"), "got: {stderr}");
 }
 
 #[test]
@@ -562,7 +893,15 @@ fn protected_hwp5_reports_the_protection() {
     // 0x01 compressed | 0x02 encrypted
     std::fs::write(&path, minimal_hwp5(5, 0, 0x03)).expect("write");
 
-    let out = plugin().arg("dump").arg(&path).assert().code(3);
+    let out = plugin()
+        .arg("dump")
+        .arg(&path)
+        .env_remove("OFFICECLI_HWPX_CONVERTER")
+        .env("PATH", "")
+        .env("HOME", dir.path())
+        .env("USERPROFILE", dir.path())
+        .assert()
+        .code(3);
     let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8");
     assert!(stderr.contains("password-encrypted"), "got: {stderr}");
 }
@@ -640,7 +979,11 @@ fn never_exits_with_host_reserved_code_six() {
         vec!["dump".into(), broken.display().to_string()],
         vec!["dump".into()],
         vec!["bogus-subcommand".into()],
-        vec!["dump".into(), broken.display().to_string(), "--turbo".into()],
+        vec![
+            "dump".into(),
+            broken.display().to_string(),
+            "--turbo".into(),
+        ],
         vec![],
     ];
     for args in cases {
@@ -657,7 +1000,10 @@ fn unknown_subcommand_fails_without_polluting_stdout() {
         out.get_output().stdout.is_empty(),
         "errors must not write to stdout"
     );
-    assert!(!out.get_output().stderr.is_empty(), "error must be reported");
+    assert!(
+        !out.get_output().stderr.is_empty(),
+        "error must be reported"
+    );
 }
 
 #[test]

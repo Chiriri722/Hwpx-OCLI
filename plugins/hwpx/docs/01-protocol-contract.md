@@ -57,7 +57,7 @@
 |---|---|---|
 | 0 | 성공 | 정상 dump |
 | 2 | Corrupt input file | ZIP 아님 / OWPML 파싱 실패 / 필수 파트 없음 |
-| 3 | Feature unsupported in this build | (예약) |
+| 3 | Feature unsupported in this build | 바이너리 HWP인데 선택적 RHWP 변환기가 없거나 안전하게 실행할 수 없음 |
 | 5 | Protocol mismatch | (메인이 판정) |
 | 6 | Idle timeout | **호스트가 부과. 플러그인이 직접 내지 않는다** |
 
@@ -131,10 +131,12 @@
 쓰기 능력을 확보하면 format-handler로 승격한다.
 
 ### ADR-2: `unhwp`를 파싱에 쓰지 않는다
-`unhwp`의 출력(Markdown/text/JSON)은 런 단위 서식·셀 병합·색상을 표현하지 못한다.
-dump-reader는 이 정보를 담은 명령을 emit해야 하므로, 손실 있는 중간표현을 거치면
-안 된다. HWPX는 ZIP+XML이므로 `zip` + `quick-xml`로 직접 파싱한다.
-`unhwp`는 `.hwp` 5.0 바이너리 지원이 필요해질 때 별도 플러그인에서 채택한다.
+초기 기록은 `unhwp`가 구조화된 모델을 노출하지 않는다고 잘못 전제했다.
+결론은 유지하지만 근거를 정정한다. HWPX는 ZIP+XML을 직접 읽어 폼 컨트롤과
+HWPUNIT 값을 이미 정확히 보존한다. 바이너리 HWP에서는 이 프로젝트의 핵심인
+폼 컨트롤 보존을 `unhwp` 경계로 검증하지 못했고, 별도 중간모델을 추가하면 같은
+매핑을 두 번 유지해야 한다. 따라서 HWPX는 `zip` + `quick-xml`로 직접 파싱하고,
+바이너리 HWP는 ADR-5의 RHWP→HWPX 브리지로 같은 파이프라인을 재사용한다.
 
 ### ADR-3: 대상은 `docx`
 HWPX는 워드프로세서 포맷이다. `target`은 `docx`/`xlsx`/`pptx` 중 하나여야 하며(§4.1),
@@ -160,3 +162,19 @@ HWPX는 워드프로세서 포맷이다. `target`은 `docx`/`xlsx`/`pptx` 중 �
 두 번째 인용이 결정적이다. 네이티브 dump가 같은 문제를 같은 방법으로 푼다.
 
 부수 효과로 emitter에서 인덱스 카운터가 사라져 코드가 단순해졌다.
+
+### ADR-5: 바이너리 HWP는 선택적 RHWP 프로세스 브리지로 읽는다
+RHWP v0.8.4+의 `export-hwpx`를 선택적 외부 변환기로 사용한다. 라이브러리를
+링크하거나 HWP 파서를 새로 만들지 않아 기존 HWPX 검증·자원 예산·emitter를
+그대로 재사용할 수 있다. 변환기가 없으면 exit 3을 유지한다.
+
+외부 프로세스는 shell 없이 고정 subcommand와 두 경로 인자를 분리해 받는다.
+RHWP v0.8.4의 UTF-8 argv 제약 때문에 원본은 private scratch의 `source.hwp`로
+복사하며, `converted.hwpx` 산출물을 매직 바이트로 재판별한 뒤 파싱한다. 원본
+옆에는 쓰지 않고 RAII로 scratch를 정리하며 staging copy를 256MiB로 제한한다.
+Unix scratch/source는 `0700`/`0600`, Windows scratch는 protected owner+SYSTEM
+DACL과 원자 create+handle 경계로 보호한다. 총 120초 제한, bounded stderr,
+Unix process group, Windows Job Object와 active-process drain을 적용한다. `.hwp`
+매니페스트 광고는 이 경계의 Linux/Windows 원격 검증을 통과한 뒤 별도 변경으로
+활성화한다. Windows의 `--media-dir`은 신뢰할 수 없는 junction이 될 수 있어
+바이너리 HWP staging에는 쓰지 않고 사용자별 OS 임시 루트를 사용한다.

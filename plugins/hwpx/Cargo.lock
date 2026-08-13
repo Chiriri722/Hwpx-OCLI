@@ -276,6 +276,7 @@ dependencies = [
  "assert_cmd",
  "base64",
  "cfb",
+ "libc",
  "predicates",
  "quick-xml",
  "serde",
