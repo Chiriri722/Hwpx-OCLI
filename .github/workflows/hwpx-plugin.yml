@@ -50,8 +50,22 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-latest
+            officecli_asset: officecli-linux-x64
+            officecli_sha256: '6a29c598a789b57c92c03e560907d3f131a4bd0a068785b1d338a86fc31a58a7'
+            rhwp_asset: rhwp-v0.8.4-linux-x86_64.tar.gz
+            rhwp_sha256: 'd2f015447147a840b3a587e8e9bedd75973fb2e0a60eac37b08cad9e34cdac54'
           - name: Windows x64
             os: windows-latest
+            officecli_asset: officecli-win-x64.exe
+            officecli_sha256: 'd4d4c10fced307e209744cf98a56b003a6e613424fd651b08469274704afd2c6'
+            rhwp_asset: rhwp-v0.8.4-windows-x86_64.zip
+            rhwp_sha256: 'e65b3e220573b18e1588768c5a16684eb89b2daf2488768575444cb83cd1b8c6'
+
+    env:
+      OFFICECLI_VERSION: v1.0.143
+      RHWP_VERSION: v0.8.4
+      HWP_FIXTURE_URL: https://raw.githubusercontent.com/edwardkim/rhwp/496333b27d21ddb9114ba9ae340bcb895870c9a7/samples/basic/english.hwp
+      HWP_FIXTURE_SHA256: 'ee72c16067013e110528375f04b2d123a8c4b0eaa9fee35fb39983614791e7e9'
 
     defaults:
       run:
@@ -74,36 +88,262 @@ jobs:
       - name: Build release plugin
         run: cargo build --release --locked
 
-      - name: Verify Windows native installation
+      - name: Verify Linux native HWP discovery and view
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OFFICECLI_ASSET: ${{ matrix.officecli_asset }}
+          OFFICECLI_SHA256: ${{ matrix.officecli_sha256 }}
+          RHWP_ASSET: ${{ matrix.rhwp_asset }}
+          RHWP_SHA256: ${{ matrix.rhwp_sha256 }}
+        run: |
+          set -euo pipefail
+
+          asset_dir="${RUNNER_TEMP}/hwpx-h1-assets"
+          smoke_dir="${RUNNER_TEMP}/hwpx-h1-smoke"
+          mkdir -p "${asset_dir}" "${smoke_dir}"
+
+          officecli="${asset_dir}/officecli"
+          rhwp_archive="${asset_dir}/${RHWP_ASSET}"
+          fixture="${smoke_dir}/english.hwp"
+
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+            --output "${officecli}" \
+            "https://github.com/iOfficeAI/OfficeCLI/releases/download/${OFFICECLI_VERSION}/${OFFICECLI_ASSET}"
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+            --output "${rhwp_archive}" \
+            "https://github.com/edwardkim/rhwp/releases/download/${RHWP_VERSION}/${RHWP_ASSET}"
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+            --output "${fixture}" "${HWP_FIXTURE_URL}"
+
+          verify_sha256() {
+            local label="$1" expected="$2" path="$3" actual
+            actual="$(sha256sum "${path}" | awk '{print $1}')"
+            if [[ "${actual}" != "${expected}" ]]; then
+              echo "${label} checksum mismatch: expected ${expected}, got ${actual}" >&2
+              return 1
+            fi
+          }
+
+          verify_sha256 OfficeCLI "${OFFICECLI_SHA256}" "${officecli}"
+          verify_sha256 RHWP "${RHWP_SHA256}" "${rhwp_archive}"
+          verify_sha256 fixture "${HWP_FIXTURE_SHA256}" "${fixture}"
+
+          tar -xzf "${rhwp_archive}" -C "${asset_dir}"
+          rhwp="${asset_dir}/rhwp/rhwp"
+          chmod +x "${officecli}" "${rhwp}"
+          [[ "${rhwp}" == /* ]] || { echo "RHWP path is not absolute: ${rhwp}" >&2; exit 1; }
+          [[ "$("${officecli}" --version)" == "1.0.143" ]]
+          [[ "$("${rhwp}" --version)" == "rhwp v0.8.4" ]]
+
+          ./scripts/install.sh --no-build
+          hwp_plugin="${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
+          hwpx_plugin="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
+          [[ -x "${hwp_plugin}" && -x "${hwpx_plugin}" ]]
+
+          unset OFFICECLI_PLUGIN_DUMP_READER_HWP OFFICECLI_PLUGIN_DUMP_READER_HWPX
+          "${officecli}" plugins list --json | python3 -c '
+          import json
+          import pathlib
+          import sys
+
+          payload = json.load(sys.stdin)
+          assert payload.get("success") is True, payload
+          matches = [
+              plugin
+              for plugin in payload.get("data", [])
+              if plugin.get("name") == "officecli-hwpx"
+              and {".hwp", ".hwpx"}.issubset(set(plugin.get("extensions", [])))
+          ]
+          assert matches, payload
+          assert any(
+              tuple(pathlib.Path(plugin["path"]).parts[-3:])
+              == ("dump-reader", "hwp", "plugin")
+              for plugin in matches
+          ), matches
+          '
+
+          before_hash="$(sha256sum "${fixture}" | awk '{print $1}')"
+          before_mtime="$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${fixture}")"
+          export OFFICECLI_HWPX_CONVERTER="${rhwp}"
+          view_output="$("${officecli}" view "${fixture}" text)"
+          if [[ "${view_output}" != *"They have been married for fifty years."* ]]; then
+            echo "OfficeCLI HWP view did not contain the expected text" >&2
+            exit 1
+          fi
+          [[ -s "${smoke_dir}/english.docx" ]]
+          if compgen -G "${smoke_dir}/*.hwpx" >/dev/null; then
+            echo "HWP conversion left an intermediate HWPX beside the source" >&2
+            exit 1
+          fi
+          [[ "$(sha256sum "${fixture}" | awk '{print $1}')" == "${before_hash}" ]]
+          [[ "$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${fixture}")" == "${before_mtime}" ]]
+
+          direct_hwpx="${smoke_dir}/english-direct.hwpx"
+          "${rhwp}" export-hwpx "${fixture}" "${direct_hwpx}"
+          [[ -s "${direct_hwpx}" ]]
+          direct_output="$("${officecli}" view "${direct_hwpx}" text)"
+          if [[ "${direct_output}" != *"They have been married for fifty years."* ]]; then
+            echo "OfficeCLI direct HWPX view did not contain the expected text" >&2
+            exit 1
+          fi
+          [[ -s "${smoke_dir}/english-direct.docx" ]]
+
+      - name: Verify Windows native HWP discovery and view
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          OFFICECLI_ASSET: ${{ matrix.officecli_asset }}
+          OFFICECLI_SHA256: ${{ matrix.officecli_sha256 }}
+          RHWP_ASSET: ${{ matrix.rhwp_asset }}
+          RHWP_SHA256: ${{ matrix.rhwp_sha256 }}
         run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP 'hwpx-h1-assets'
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'hwpx-h1-smoke'
+          New-Item -ItemType Directory -Force -Path $assetDir, $smokeDir | Out-Null
+
+          $officecli = Join-Path $assetDir $env:OFFICECLI_ASSET
+          $rhwpArchive = Join-Path $assetDir $env:RHWP_ASSET
+          $fixture = Join-Path $smokeDir 'english.hwp'
+
+          $officecliUrl = "https://github.com/iOfficeAI/OfficeCLI/releases/download/$env:OFFICECLI_VERSION/$env:OFFICECLI_ASSET"
+          $rhwpUrl = "https://github.com/edwardkim/rhwp/releases/download/$env:RHWP_VERSION/$env:RHWP_ASSET"
+          Invoke-WebRequest -Uri $officecliUrl -OutFile $officecli
+          Invoke-WebRequest -Uri $rhwpUrl -OutFile $rhwpArchive
+          Invoke-WebRequest -Uri $env:HWP_FIXTURE_URL -OutFile $fixture
+
+          function Assert-Sha256([string]$Label, [string]$Expected, [string]$Path) {
+            $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $Expected) {
+              throw "$Label checksum mismatch: expected $Expected, got $actual"
+            }
+          }
+
+          Assert-Sha256 'OfficeCLI' $env:OFFICECLI_SHA256 $officecli
+          Assert-Sha256 'RHWP' $env:RHWP_SHA256 $rhwpArchive
+          Assert-Sha256 'fixture' $env:HWP_FIXTURE_SHA256 $fixture
+
+          Expand-Archive -LiteralPath $rhwpArchive -DestinationPath $assetDir -Force
+          $rhwp = Join-Path $assetDir 'rhwp\rhwp.exe'
+          if (-not [IO.Path]::IsPathFullyQualified($rhwp)) {
+            throw "RHWP path is not absolute: $rhwp"
+          }
+          $officecliVersion = (& $officecli --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $officecliVersion -ne '1.0.143') {
+            throw "unexpected OfficeCLI version: $officecliVersion"
+          }
+          $rhwpVersion = (& $rhwp --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $rhwpVersion -ne 'rhwp v0.8.4') {
+            throw "unexpected RHWP version: $rhwpVersion"
+          }
+
           ./scripts/install.ps1 -NoBuild
-          $plugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
-          if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
-            throw "plugin.exe was not installed at $plugin"
-          }
-          & $plugin --info | ConvertFrom-Json | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            throw "installed plugin manifest check failed"
-          }
-
-          $version = 'v1.0.143'
-          $asset = 'officecli-win-x64.exe'
-          $officecli = Join-Path $env:RUNNER_TEMP $asset
-          $url = "https://github.com/iOfficeAI/OfficeCLI/releases/download/$version/$asset"
-          Invoke-WebRequest -Uri $url -OutFile $officecli
-          $actual = (Get-FileHash -LiteralPath $officecli -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = 'd4d4c10fced307e209744cf98a56b003a6e613424fd651b08469274704afd2c6'
-          if ($actual -ne $expected) {
-            throw "OfficeCLI checksum mismatch: expected $expected, got $actual"
+          $hwpPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwp\plugin.exe'
+          $hwpxPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
+          foreach ($plugin in @($hwpPlugin, $hwpxPlugin)) {
+            if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
+              throw "plugin.exe was not installed at $plugin"
+            }
           }
 
-          $plugins = (& $officecli plugins list 2>&1 | Out-String)
+          Remove-Item Env:OFFICECLI_PLUGIN_DUMP_READER_HWP -ErrorAction SilentlyContinue
+          Remove-Item Env:OFFICECLI_PLUGIN_DUMP_READER_HWPX -ErrorAction SilentlyContinue
+          $pluginsRaw = (& $officecli plugins list --json 2>&1 | Out-String)
           if ($LASTEXITCODE -ne 0) {
-            throw "officecli plugins list failed: $plugins"
+            throw "officecli plugins list failed: $pluginsRaw"
           }
-          if ($plugins -notmatch 'officecli-hwpx') {
-            throw "installed HWPX plugin was not discovered: $plugins"
+          $plugins = $pluginsRaw | ConvertFrom-Json
+          if (-not $plugins.success) {
+            throw "officecli plugins list returned an unsuccessful envelope: $pluginsRaw"
           }
-          ./scripts/install.ps1 -Uninstall
+          $matches = @($plugins.data | Where-Object {
+            ($_.name -eq 'officecli-hwpx') -and
+            ($_.extensions -contains '.hwp') -and
+            ($_.extensions -contains '.hwpx')
+          })
+          if ($matches.Count -eq 0) {
+            throw "installed plugin did not declare both HWP extensions: $pluginsRaw"
+          }
+          $hwpPathMatch = @($matches | Where-Object {
+            [StringComparer]::OrdinalIgnoreCase.Equals(
+              [IO.Path]::GetFullPath($_.path),
+              [IO.Path]::GetFullPath($hwpPlugin)
+            )
+          })
+          if ($hwpPathMatch.Count -eq 0) {
+            throw "plugins list did not enumerate the HWP user path: $pluginsRaw"
+          }
+
+          $beforeHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $beforeMtime = (Get-Item -LiteralPath $fixture).LastWriteTimeUtc.Ticks
+          $env:OFFICECLI_HWPX_CONVERTER = $rhwp
+          $viewOutput = (& $officecli view $fixture text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWP view failed: $viewOutput"
+          }
+          if (-not $viewOutput.Contains('They have been married for fifty years.')) {
+            throw "OfficeCLI HWP view did not contain the expected text: $viewOutput"
+          }
+          $docx = Join-Path $smokeDir 'english.docx'
+          if (-not (Test-Path -LiteralPath $docx -PathType Leaf)) {
+            throw "OfficeCLI HWP view did not create a sibling DOCX"
+          }
+          if ((Get-Item -LiteralPath $docx).Length -le 0) {
+            throw "OfficeCLI HWP view did not create a non-empty sibling DOCX"
+          }
+          $intermediateHwpx = @(Get-ChildItem -LiteralPath $smokeDir -Filter '*.hwpx' -File)
+          if ($intermediateHwpx.Count -ne 0) {
+            throw "HWP conversion left an intermediate HWPX beside the source"
+          }
+          $afterHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $afterMtime = (Get-Item -LiteralPath $fixture).LastWriteTimeUtc.Ticks
+          if ($afterHash -ne $beforeHash -or $afterMtime -ne $beforeMtime) {
+            throw "OfficeCLI HWP view modified the source fixture"
+          }
+
+          $directHwpx = Join-Path $smokeDir 'english-direct.hwpx'
+          & $rhwp export-hwpx $fixture $directHwpx
+          if ($LASTEXITCODE -ne 0 -or
+              -not (Test-Path -LiteralPath $directHwpx -PathType Leaf) -or
+              (Get-Item -LiteralPath $directHwpx).Length -le 0) {
+            throw "RHWP did not create the direct HWPX regression fixture"
+          }
+          $directOutput = (& $officecli view $directHwpx text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or
+              -not $directOutput.Contains('They have been married for fifty years.')) {
+            throw "OfficeCLI direct HWPX view failed: $directOutput"
+          }
+          $directDocx = Join-Path $smokeDir 'english-direct.docx'
+          if (-not (Test-Path -LiteralPath $directDocx -PathType Leaf) -or
+              (Get-Item -LiteralPath $directDocx).Length -le 0) {
+            throw "OfficeCLI direct HWPX view did not create a non-empty sibling DOCX"
+          }
+
+      - name: Uninstall HWP/HWPX plugin on Linux
+        if: ${{ always() && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          if [[ -x ./scripts/install.sh ]]; then
+            ./scripts/install.sh --uninstall
+            hwp_plugin="${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
+            hwpx_plugin="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
+            if [[ -e "${hwp_plugin}" || -L "${hwp_plugin}" ||
+                  -e "${hwpx_plugin}" || -L "${hwpx_plugin}" ]]; then
+              echo "HWP/HWPX plugin remained after uninstall" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Uninstall HWP/HWPX plugin on Windows
+        if: ${{ always() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath ./scripts/install.ps1 -PathType Leaf) {
+            ./scripts/install.ps1 -Uninstall
+            $hwpPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwp\plugin.exe'
+            $hwpxPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
+            if ((Test-Path -LiteralPath $hwpPlugin) -or
+                (Test-Path -LiteralPath $hwpxPlugin)) {
+              throw "HWP/HWPX plugin remained after uninstall"
+            }
+          }

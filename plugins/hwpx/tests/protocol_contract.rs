@@ -67,7 +67,7 @@ fn info_declares_protocol_one() {
 }
 
 #[test]
-fn info_declares_dump_reader_kind_and_hwpx_extension() {
+fn info_declares_dump_reader_kind_and_hwp_extensions() {
     let m = info_manifest();
     let kinds: Vec<&str> = m["kinds"]
         .as_array()
@@ -83,7 +83,11 @@ fn info_declares_dump_reader_kind_and_hwpx_extension() {
         .iter()
         .map(|v| v.as_str().expect("string"))
         .collect();
-    assert_eq!(exts, vec![".hwpx"], "extension must include leading dot");
+    assert_eq!(
+        exts,
+        vec![".hwpx", ".hwp"],
+        "both advertised extensions must include a leading dot"
+    );
 }
 
 #[test]

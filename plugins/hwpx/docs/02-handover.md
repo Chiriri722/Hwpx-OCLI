@@ -19,7 +19,7 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 
 | 검증 항목 | 결과 |
 |---|---|
-| `officecli plugins list`가 플러그인을 발견 | 통과 |
+| `officecli plugins list`가 기존 HWPX 설치 경로를 발견 | 통과 |
 | `officecli plugins lint` — emit한 모든 prop이 대상 스키마에 선언됨 | 통과, 미지 prop 0개 |
 | `officecli view <f>.hwpx text` → 형제 `.docx` 자동 생성 | 통과 |
 | 제목/혼합서식/엔티티/탭 텍스트 왕복 | 통과 |
@@ -65,17 +65,31 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 실제 문서 **5건**으로 검증(버그 7건 발견). 구청 공고·양식에 치우쳤다. 보고서·논문·통계자료 계열은 미검증 |
 | 이미지·각주·수식·도형·머리말 | 낮음~미상 | 코퍼스 5건에 **하나도 없었다**. 이미지는 합성 픽스처로만 검증됨. 나머지는 미구현 (`03-work-plan.md` 3절) |
-| Windows / Linux 동작 | 부분 검증 | GitHub Actions run `31572303544`에서 기존 네이티브 test·clippy·release build와 Windows 설치 무결성은 성공. 새 HWP 브리지·Windows Job Object·MSRV 1.88·OfficeCLI discovery CI의 첫 결과는 대기 중 |
+| Windows / Linux 동작 | 부분 검증 | GitHub Actions run `31700156231`에서 양 OS H3 브리지·MSRV 1.88와 Windows Job Object·기존 HWPX OfficeCLI discovery가 성공. 후속 H1 `.hwp` discovery·`view` CI는 미실행 |
 | 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. OfficeCLI 30초 watchdog lint 0.771초 성공. 10초보다 빨라 heartbeat reset 자체는 관찰하지 못함 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-H3 변환 경계와 H4/H5의 로컬 검증은 끝났다. 가장 먼저 새 workflow의 Linux/
-Windows 결과를 확인한다. 확인 대상은 MSRV 1.88, Windows `plugins list`, 양 OS의
-fake converter 계약, Linux 비 UTF-8 staging, Windows Job Object process-tree
-종료다. 전부 통과하면 H1에서 매니페스트·설치 경로에 `.hwp`를 별도 원자 변경으로
-등록하고 실제 RHWP/OfficeCLI HWP smoke를 추가한다. 그전에는 `.hwpx`만 광고한다.
+H3 변환 경계와 H4/H5, 양 OS H3 네이티브 게이트 및 Windows의 기존
+HWPX discovery는 run `31700156231`에서 끝났다. H1의
+`[".hwpx", ".hwp"]` 매니페스트, 두 환경변수, 두 사용자 설치 경로는
+로컬에 구현했다. macOS에서 227개 Rust 테스트, 43개 HWPX 왕복 검사,
+OfficeCLI 1.0.143과 공식 RHWP 0.8.4의 실제 HWP smoke도 통과했다. 이제 새
+Linux/Windows job에서 실제 RHWP와 `officecli view <file.hwp> text`를
+확인해야 한다. 이 새 결과 전에는 H1을 크로스 플랫폼 완료로 표시하지
+않는다.
+
+Unix 설치기는 `hwpx/plugin` 하나만 실제 파일로 교체하고
+`hwp/plugin -> ../hwpx/plugin` 상대 심볼릭 링크를 둔다. Windows는
+staging한 두 복사본의 SHA-256과 `--info`를 확인한 뒤 순차 교체하며,
+중간 실패 시 best-effort rollback한다. 강제 종료까지 포함한 두 경로
+완전 원자성은 보장하지 않는다.
+
+OfficeCLI의 플러그인 목록은 설치 경로별로 열거하므로 같은 매니페스트가
+두 행으로 보일 수 있다. 각 행의 `extensions`와 실제 `.hwp` resolution을
+별도로 확인해야 한다. RHWP가 없을 때 `.hwp`가 exit 3을 반환하는 것은
+의도한 선택 기능 계약이며 HWPX 경로에는 영향을 주지 않는다.
 
 `scripts/verify-hwp-pairs.py`는 NFC 정규화로 동명 HWP/HWPX를 찾고 두 JSONL,
 unknown prop, OfficeCLI batch/validate 및 문단·표·셀·폼필드 구조를 대조한다.
@@ -93,6 +107,8 @@ HWP5 3종·HWP3 1종에서 만든 쌍도 19/48/712/467개 항목이 정확히 �
 officecli-dump-reader-hwpx dump 실제문서.hwpx | head -20   # 텍스트가 나오는지
 officecli plugins lint officecli-hwpx --fixture 실제문서.hwpx --json
 officecli view 실제문서.hwpx text
+# 원본 옆에 실제문서.docx가 생길 수 있으므로 HWP 복사본으로 실행한다.
+OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp officecli view 실제문서.hwp text
 ```
 
 `plugins lint`가 미지 prop을 뱉거나 텍스트가 비면 그게 곧 수정 목록이다.
@@ -277,8 +293,8 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 새 Linux/Windows MSRV·브리지·OfficeCLI discovery CI를 확인하고, 전부
-   통과하면 H1 `.hwp` 매니페스트·설치 경로를 활성화한다 (`04-hwp-support-plan.md`).
+1. 새 Linux/Windows `.hwp` discovery·RHWP `view` CI를 확인한다
+   (`04-hwp-support-plan.md`).
 2. 실제 한글 저장 파일 검증 (위 1번) — 장기 품질 작업의 전제
 3. 스타일 이름 매핑 (`styleIDRef` → docx `style`). 제목 계층이 살아나므로
    문서 구조 파악에 가장 크게 기여

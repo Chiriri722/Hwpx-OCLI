@@ -143,3 +143,28 @@
 - `cargo +1.88.0 build --release --locked`, workflow YAML parse, 두 Python verifier `--help`, `git diff --check`: passed.
 - OfficeCLI 1.0.143 `verify-roundtrip.sh`: 43 checks passed.
 - Windows/Linux 네이티브 테스트, 새 MSRV matrix, Windows OfficeCLI discovery는 변경을 원격에 올린 뒤 확인해야 한다.
+
+### 2026-08-15 Sol Pro 계획 검증 및 H1 착수
+- 참조 대화가 제시한 기준선 `d910b40d66707127e4fcff7811a8bc1b1329b23d`는 로컬 `HEAD`와 `origin/feat/hwpx-plugin`에 정확히 일치했고 worktree는 clean이었다.
+- GitHub Actions run `31700156231`은 성공했다. Linux x64, Windows x64, Rust 1.88 MSRV Linux x64, Rust 1.88 MSRV Windows x64의 4개 job이 모두 success였다.
+- 현재 `Manifest::default()`는 `.hwpx`만 선언하고 설치기도 `dump-reader/hwpx` 한 경로만 관리한다. OfficeCLI `PluginRegistry.CandidatePaths`는 요청 확장자별 환경변수·사용자 디렉터리를 탐색하고 `ManifestMatches`가 그 확장자를 매니페스트에서 다시 확인하므로 `.hwp`에는 별도 경로/환경변수와 양 확장자 매니페스트 선언이 모두 필요하다.
+- Sol Pro 계획의 다음 단계 H1은 코드·호스트 discovery 계약과 일치한다. 반면 `main` 반영은 기능 브랜치가 main보다 4커밋, 51파일, 15,184행 추가된 별도 통합 작업이므로 H1 변경과 섞지 않는다.
+- 참조 대화의 966행 첨부 파일은 `read_thread`나 로컬 파일 검색에서 회수되지 않았다. 대화의 요약·체크섬과 저장소의 활성 `task_plan.md`를 근거로 실행 계획을 보정했다.
+- 로컬 `gh` 토큰 만료와 sandbox DNS 차단 때문에 공개 GitHub REST API 및 GitHub 앱의 run-job 조회로 원격 CI를 검증했다.
+
+### 2026-08-15 H1 로컬 구현·실측
+- RED에서 `--info`가 `.hwpx`만 선언했고 Unix 설치기가 `hwp` 사용자 경로와 환경변수를 관리하지 않아 새 매니페스트·설치 계약 6개가 실패하는 것을 확인했다.
+- 매니페스트는 기존 순서를 보존한 `[".hwpx", ".hwp"]`를 선언하고, HWP는 선택적 RHWP 브리지라는 설명으로 정정했다.
+- Unix 설치기는 HWPX 실행파일을 destination-local staging 뒤 교체하고 `hwp/plugin -> ../hwpx/plugin` 상대 링크를 관리한다. PowerShell 설치기는 두 복사본을 모두 staging·해시·`--info` 검증한 뒤 순차 교체하며 예외 시 best-effort rollback한다.
+- Unix 설치 계약 6개와 매니페스트 계약이 GREEN이다. 설치/제거, 관련 없는 플러그인 보존, 상대 링크, HWP staging 실패 시 기존 HWPX 복구를 확인했다.
+- 격리 임시 HOME에서 OfficeCLI 1.0.143과 RHWP 0.8.4로 `english.hwp`를 환경변수 plugin override 없이 실제 `view ... text`했다. exit 0, 기대 영문, 형제 DOCX, 원본 SHA-256·mtime 불변, 중간 HWPX 0개를 확인했다.
+- 첫 smoke에 지정한 사용자 로컬 RHWP 경로는 확인 결과 v0.8.2여서 H1 v0.8.4 증거로 채택하지 않았다. 공식 v0.8.4 압축에서 추출한 실행파일로 같은 격리 smoke를 다시 실행해 위 결과를 확정했다.
+- 두 사용자 경로를 열거하므로 `plugins list --json`에는 같은 매니페스트가 HWP/HWPX 경로별 두 행으로 표시됐다. 기존 왕복 스크립트는 정확히 1행 대신 최소 1행을 요구하도록 정정하고, 실제 `.hwp` view를 resolver 증거로 삼는다.
+- 기존 HWP backup `mv` 실패를 주입하자 rollback이 아직 교체하지 않은 HWP를 삭제하는 RED가 재현됐다. 백업 여부와 새 target commit 여부를 분리한 뒤 기존 HWP/HWPX가 모두 보존되는 GREEN을 고정했다.
+- uninstall에서 `hwp` extension 디렉터리가 외부 디렉터리 symlink이면 외부 `plugin`을 삭제하는 RED를 실파일로 재현했다. Unix는 제거 전 symlink를 exit 73으로 거부하고, PowerShell도 제거 전 reparse-point guard를 실행하도록 고정했다.
+- H1 workflow는 `.hwp` smoke 뒤 RHWP가 명시적으로 만든 HWPX도 사용자 HWPX 경로로 `view`해 기존 직접 경로의 회귀를 양 OS에서 함께 검사한다. 같은 직접 HWPX 절차는 로컬 macOS에서도 통과했다.
+- 프로토콜은 환경변수 plugin 경로를 절대경로로 요구하지만 OfficeCLI host는 상대경로도 후보로 받는 기존 보안 차이가 있다. H1 설치기가 출력하는 절대경로는 안전하게 유지하며 host enforcement·목록 dedup·HWP PATH alias 정책은 별도 원자 변경으로 남긴다.
+- H1a/H1b는 로컬 완료다. 새 workflow의 Linux/Windows 네이티브 `.hwp` discovery와 실제 RHWP view는 커밋·푸시 뒤 첫 원격 run이 성공하기 전까지 미완료다.
+- workflow는 OfficeCLI 1.0.143, RHWP 0.8.4 양 OS 자산과 전체 commit의 `english.hwp`를 하드코딩 SHA-256으로 검증한다. 외부 action의 tag 참조 SHA 고정은 별도 공급망 변경으로 남긴다.
+- 최종 로컬 회귀는 Rust 1.88 기준 227개(lib 135 + binary 1 + golden 3 + installer 9 + parser 34 + protocol 45)가 통과했다. Rust 1.88 host/Windows GNU all-target check, stable host/Windows GNU Clippy `-D warnings`, release build, installer Bash 문법, workflow YAML/Linux block 문법, `git diff --check`도 통과했다.
+- PowerShell 네이티브 실행과 새 Linux/Windows H1 workflow의 실제 다운로드·discovery·view 결과는 로컬에서 증명하지 않았으며 새 원격 run까지 H1c/H1d를 열어 둔다.

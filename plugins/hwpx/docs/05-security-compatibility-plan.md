@@ -1,7 +1,7 @@
 # HWPX 보안·호환성 후속 계획
 
 작성일: 2026-08-11  
-최종 갱신: 2026-08-13
+최종 갱신: 2026-08-15
 
 ## 기준선
 
@@ -39,11 +39,46 @@
 - [x] Windows PowerShell 설치 스크립트와 설치 후 매니페스트 검증을 CI에 추가한다.
 - [x] 파싱 동안 10초 주기 heartbeat를 보내고 emitter를 블록 단위 JSONL 출력으로 바꾼다.
 - [x] 새 GitHub Actions workflow의 첫 Linux/Windows 네이티브 실행 결과를 확인한다.
-- [ ] Windows에서 실제 OfficeCLI `plugins list`로 설치된 플러그인 discovery를 확인한다.
-- [ ] Linux/Windows에서 선언 MSRV 1.88 전용 job의 첫 결과를 확인한다.
+- [x] Windows에서 실제 OfficeCLI `plugins list`로 기존 HWPX 설치의 discovery를 확인한다.
+- [x] Linux/Windows에서 선언 MSRV 1.88 전용 job의 첫 결과를 확인한다.
 - [x] macOS 합성 48MiB 표본 1회의 wall-time/RSS와 실제 OfficeCLI watchdog을 실측한다.
 
 Windows 구현은 `GetFileInformationByHandle`로 열린 source/log 핸들의 volume serial과 64-bit file index를 비교한다. 크로스 타깃 컴파일은 통과했으며 실제 NTFS 하드 링크 동작은 Windows CI가 검증한다.
+
+## P3 — 선택적 HWP discovery 활성화
+
+- [x] 매니페스트가 `[".hwpx", ".hwp"]`를 선언한다.
+- [x] 두 환경변수와 두 사용자 extension 경로를 설치·제거 대상으로 관리한다.
+- [x] Unix는 HWPX 실파일 하나와 HWP 상대 심볼릭 링크를 사용한다.
+- [x] Windows는 두 복사본을 사전 검증하고 중간 실패 시 best-effort rollback한다.
+- [x] H1 변경에 대한 로컬 전체 회귀와 실제 OfficeCLI HWP smoke를 완료한다.
+- [ ] 새 Linux/Windows CI에서 실제 `.hwp` discovery와 RHWP `view`를 확인한다.
+
+Windows의 두 대상은 순차 교체되므로 프로세스 강제 종료까지 포함한 완전한
+두 경로 원자성을 보장하지 않는다. `plugins list`도 실행 경로별로 같은
+매니페스트를 두 행 표시할 수 있다. 따라서 목록 행 수가 아니라
+`extensions` 필드와 실제 `.hwp` resolution을 검증한다. `officecli view
+<file.hwp> text`는 입력 옆에 `.docx` 형제 파일을 만들 수 있으므로 CI와
+수동 검증 모두 원본이 아닌 복사본을 사용한다.
+
+HWP discovery가 성공해도 RHWP가 없는 런타임에서는 `.hwp`가 exit
+3(`unsupported_feature`)을 반환한다. HWPX 직접 경로에는 이 선택 의존성이
+없다.
+
+## P4 — Host discovery와 공급망 후속 하드닝
+
+- [ ] 프로토콜과 맞게 상대 `OFFICECLI_PLUGIN_*` 실행파일 경로를 host에서 거부한다.
+- [ ] 같은 매니페스트가 여러 extension 경로에 있을 때 `plugins list`의 identity/dedup 정책을 정한다.
+- [ ] 사용자 디렉터리 외 `.hwp` PATH alias를 설치·지원할지 결정한다.
+- [ ] installer ancestor reparse 정책과 Windows 악성 junction 제거 회귀를 네이티브로 검증한다.
+- [ ] workflow의 외부 action tag를 검증된 전체 commit SHA로 고정한다.
+
+현재 설치기의 `--print-env`/`-PrintEnv`는 절대경로만 출력한다. 그러나
+OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사용자가 직접
+지정한 상대 환경변수 경로도 후보로 받는다. 이 host 전역 문제는 H1 플러그인
+변경과 섞지 않고 실패 테스트를 갖춘 별도 원자 변경으로 수정한다. H1 CI가
+다운로드하는 OfficeCLI·RHWP·fixture 자체는 버전, 전체 commit URL, SHA-256으로
+고정한다.
 
 ## 검증 순서
 
@@ -116,3 +151,19 @@ Windows 구현은 `GetFileInformationByHandle`로 열린 source/log 핸들의 vo
 - 공격자가 제어하는 Windows `--media-dir`의 junction retarget까지 경로 기반 RHWP argv에서 안전하게 보장할 수 없으므로, Windows binary HWP staging은 canonical user-temp root만 사용한다. `--media-dir`은 HWPX 직접 경로에는 원래 필요하지 않다.
 - RHWP는 `argv[0]`도 UTF-8 `String`으로 수집하므로 명시/PATH/사용자 설치 후보 중 비 Unicode converter 경로는 선택하지 않고, 명시 설정은 exit 3으로 거절한다.
 - 핵심 fake converter 성공/실패/출력 재검증 테스트를 양 OS에서 실행하고, Linux 비 UTF-8 staging과 Windows 실제 descendant 종료 테스트를 네이티브 CI에 고정했다. 첫 원격 결과는 아직 대기 중이다.
+
+## 2026-08-15 H3 원격 게이트 확인과 H1 로컬 구현
+
+- GitHub Actions run `31700156231`에서 H3 브리지, Linux 비 UTF-8 staging,
+  Windows Job Object process-tree 종료, 양 OS MSRV 1.88, Windows의 기존
+  HWPX OfficeCLI discovery가 성공했다. 이 결과로 위 2026-08-13 H3 대기
+  항목은 닫았다.
+- 이 run은 H1 이전 커밋을 검증했다. 후속 H1은 매니페스트·두 환경변수·두
+  사용자 설치 경로를 로컬 구현했다. macOS의 227개 Rust 테스트, 43개 HWPX
+  왕복 검사, OfficeCLI 1.0.143과 공식 RHWP 0.8.4 HWP smoke는 통과했지만 새
+  Linux/Windows `.hwp` discovery·RHWP `view` CI는 아직 실행하지 않았다.
+- Unix의 한 실파일과 상대 심볼릭 링크는 양 확장자의 버전을 일치시킨다.
+  Windows는 staging·SHA-256·`--info` 검증과 best-effort rollback을
+  사용하지만 강제 종료를 포함한 완전한 두 경로 트랜잭션은 아니다.
+- 목록의 중복 행 가능성, RHWP 부재 시 exit 3, 대형 binary HWP와 느린
+  변환기의 heartbeat-host 통합 미실측은 잔여 제한으로 유지한다.

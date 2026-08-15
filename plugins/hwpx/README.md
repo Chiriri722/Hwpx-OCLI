@@ -1,7 +1,8 @@
 # officecli-hwpx
 
-[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **HWPX(한글 문서) dump-reader
-플러그인**. `.hwpx` 파일을 읽어 OfficeCLI의 docx 명령(JSONL)으로 변환한다.
+[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **HWP/HWPX(한글 문서)
+dump-reader 플러그인**. `.hwpx`는 직접 읽고, 바이너리 `.hwp`는 선택적
+RHWP 변환기를 거쳐 OfficeCLI의 docx 명령(JSONL)으로 변환한다.
 
 Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 바이너리 HWP는
 선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
@@ -13,9 +14,10 @@ Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 
 .hwp   ──[RHWP, 선택]──▶  임시 .hwpx ──[이 플러그인]──────▶  .docx
 ```
 
-OfficeCLI가 `.hwpx` 파일을 열면 이 플러그인을 `dump` 서브커맨드로 실행하고,
-표준출력으로 흘러나오는 명령을 재생해 원본 옆에 `.docx` 형제 파일을 만든다.
-편집은 그 `.docx`에 대해 이뤄진다. 원본 `.hwpx`는 읽기 전용이다.
+OfficeCLI가 `.hwpx` 또는 `.hwp` 파일을 열면 이 플러그인을 `dump`로
+실행하고, 표준출력의 명령을 재생해 원본 옆에 `.docx` 형제 파일을
+만든다. 편집은 그 `.docx`에 대해 이뤄지며 원본 HWP/HWPX는 읽기
+전용으로 취급한다.
 
 ## 설치
 
@@ -23,8 +25,11 @@ OfficeCLI가 `.hwpx` 파일을 열면 이 플러그인을 `dump` 서브커맨드
 scripts/install.sh
 ```
 
-`~/.officecli/plugins/dump-reader/hwpx/plugin`에 설치한다
-(프로토콜 §3 탐색 순서 2순위).
+Unix에서는 `~/.officecli/plugins/dump-reader/hwpx/plugin`에 실제
+바이너리를 설치하고,
+`~/.officecli/plugins/dump-reader/hwp/plugin -> ../hwpx/plugin` 상대 심볼릭 링크를
+만든다(프로토콜 §3 탐색 순서 2순위). 두 확장자 경로를 항상 함께
+설치·제거하며 별도의 `--with-hwp` 옵션은 없다.
 
 ```bash
 scripts/install.sh --no-build    # 이미 빌드된 바이너리 사용
@@ -32,11 +37,19 @@ scripts/install.sh --uninstall   # 제거
 scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 ```
 
+`--print-env`는 같은 바이너리를 가리키는
+`OFFICECLI_PLUGIN_DUMP_READER_HWPX`와
+`OFFICECLI_PLUGIN_DUMP_READER_HWP` 두 설정을 출력한다.
+
 확인:
 
 ```bash
 officecli plugins list
 ```
+
+OfficeCLI는 설치 경로별로 플러그인을 열거하므로 같은 매니페스트가
+두 행으로 보일 수 있다. 각 행의 `extensions`에 `.hwpx,.hwp`가 있는지
+확인하고, 실제 확장자 해석은 아래의 `officecli view`로 검증한다.
 
 Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로에 설치한다.
 
@@ -47,7 +60,18 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 .\scripts\install.ps1 -PrintEnv
 ```
 
-설치 위치는 `$HOME\.officecli\plugins\dump-reader\hwpx\plugin.exe`다.
+설치 위치는 다음 두 곳이다.
+
+```text
+$HOME\.officecli\plugins\dump-reader\hwpx\plugin.exe
+$HOME\.officecli\plugins\dump-reader\hwp\plugin.exe
+```
+
+Windows에서는 심볼릭 링크 권한에 의존하지 않고 같은 바이너리를 두
+경로에 복사한다. 두 임시 복사본의 SHA-256과 `--info`를 먼저 검증한
+뒤 교체하고, 중간 실패 시 기존 파일을 복원하는 best-effort rollback을
+적용한다. 둘 사이의 순차 교체이므로 프로세스 강제 종료까지 포함한
+완전한 두 경로 원자성을 보장하지는 않는다.
 
 ## 포맷 판별
 
@@ -63,14 +87,23 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 
 바이너리 HWP 지원 계획은 `docs/04-hwp-support-plan.md`.
 
-RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. 현재 매니페스트는 H3
-브리지의 크로스 플랫폼 CI가 끝날 때까지 `.hwpx`만 광고하므로, `.hwp` 파일은
-플러그인을 직접 실행해 검증한다.
+RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. RHWP가 없으면
+`.hwp` 호출은 exit 3(`unsupported_feature`)으로 종료하지만 `.hwpx`는
+계속 외부 런타임 없이 동작한다.
+
+H3 브리지의 Linux/Windows 네이티브 게이트와 Windows의 기존 HWPX
+OfficeCLI discovery는 GitHub Actions run `31700156231`에서 통과했다.
+H1의 두 확장자
+매니페스트·설치 경로는 로컬에 구현했으나, 이 변경의 새 Linux/Windows
+`.hwp` discovery·`view` CI는 아직 실행하지 않았다. 그 결과 전에는 H1을
+크로스 플랫폼 완료로 간주하지 않는다.
 
 ```bash
 rhwp --version  # v0.8.4 이상
 export OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp
 officecli-dump-reader-hwpx dump 문서.hwp
+# 주의: 원본 옆에 문서.docx를 만든다. 복사본으로 검증할 것.
+OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp officecli view 문서.hwp text
 ```
 
 RHWP 바이너리는 [공식 릴리스](https://github.com/edwardkim/rhwp/releases)에서
@@ -196,6 +229,7 @@ UPDATE_GOLDEN=1 cargo test --test golden
 src/
   main.rs           진입점, 종료코드 반환
   format.rs         입력 포맷 판별 (매직 바이트)
+  converter.rs      선택적 RHWP HWP→HWPX 변환 경계
   lib.rs            인자 파싱 + 명령 디스패치
   manifest.rs       --info 매니페스트 (§4)
   error.rs          에러 → 종료코드 매핑 (§6.5/§6.6)
@@ -213,11 +247,12 @@ tests/
   common/mod.rs         실제 ZIP+OWPML 픽스처 빌더
   parse_owpml.rs        파서 통합 테스트
   protocol_contract.rs  플러그인 바이너리 실행 계약 검증
+  install_contract.rs   HWP/HWPX 설치·제거 경로 계약 검증
   golden.rs             전체 파이프라인 회귀
   golden/canonical.jsonl
 scripts/
-  install.sh            디스커버리 경로에 설치
-  install.ps1           Windows 사용자 플러그인 경로에 plugin.exe 설치
+  install.sh            Unix의 HWPX 실파일 + HWP 상대 심볼릭 링크 설치
+  install.ps1           Windows 양 확장자 경로에 검증된 plugin.exe 복사
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
   verify-roundtrip.sh   실제 officecli로 43개 항목 왕복 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증

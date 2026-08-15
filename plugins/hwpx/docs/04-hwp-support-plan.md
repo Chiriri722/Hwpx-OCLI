@@ -1,9 +1,11 @@
 # `.hwp` (바이너리) 지원 계획
 
-작성: 2026-08-01. 최종 갱신: 2026-08-13. 근거는 전부 실측이다.
+작성: 2026-08-01. 최종 갱신: 2026-08-15. 근거는 전부 실측이다.
 
 > **진행 상태**: H2(포맷 판별), H3(rhwp 브리지), H4(쌍 회귀), H5(문서화)
-> 완료. 새 Linux/Windows CI의 첫 결과 뒤 H1(discovery)만 남았다.
+> 완료. 양 OS H3 네이티브 게이트와 Windows의 기존 HWPX discovery도
+> run `31700156231`에서 통과했다. H1 discovery는 로컬 구현을 마쳤고,
+> 새 Linux/Windows `.hwp` discovery·RHWP `view` CI는 아직 미실행이다.
 
 ## 0. 결론 먼저
 
@@ -251,21 +253,48 @@ A2는 "in-process가 꼭 필요해지면" 그때 검토한다. 결정 근거를 
 
 ## 3. 작업 계획
 
-### H1. 확장자 등록과 디스커버리 (반나절)
+### H1. 확장자 등록과 디스커버리 — **로컬 구현 완료, 원격 검증 대기**
 
-- 매니페스트 `extensions`를 `[".hwpx", ".hwp"]`로 확장.
-- 디스커버리는 `(kind, ext)`별 경로다(§3). 같은 바이너리를 두 경로에 둔다.
-  §3이 "Symlinks are followed"라고 명시하므로 심볼릭 링크로 충분하다.
+- 매니페스트 `extensions`를 `[".hwpx", ".hwp"]`로 확장했다.
+- 환경변수 discovery는 같은 바이너리를 가리키는 두 값을 사용한다.
 
+  ```text
+  OFFICECLI_PLUGIN_DUMP_READER_HWPX=/absolute/path/to/plugin
+  OFFICECLI_PLUGIN_DUMP_READER_HWP=/absolute/path/to/plugin
   ```
-  ~/.officecli/plugins/dump-reader/hwpx/plugin   (실제 파일)
-  ~/.officecli/plugins/dump-reader/hwp/plugin    → 위를 가리키는 심볼릭 링크
-  ```
-- `scripts/install.sh`에 `--with-hwp` 옵션 추가(기본 켜기, 링크 생성).
-- 바이너리 이름 규약은 `officecli-<kind>-<ext>`이므로 PATH 경로 4순위를 쓰려면
-  `officecli-dump-reader-hwp`도 필요하다. 링크로 처리한다.
 
-**검증**: `officecli plugins list`에 `.hwpx, .hwp` 둘 다 나오는지.
+- 사용자 디렉터리 discovery는 `(kind, ext)`별 두 경로를 모두 관리한다.
+
+  ```text
+  ~/.officecli/plugins/dump-reader/hwpx/plugin
+  ~/.officecli/plugins/dump-reader/hwp/plugin
+  ```
+
+- Unix 설치기는 `hwpx/plugin` 하나만 실제 파일로 staging·검증·원자
+  교체하고 `hwp/plugin -> ../hwpx/plugin` 상대 심볼릭 링크를 둔다.
+  업그레이드할 때 한 실파일을 교체하면 두 확장자가 같은 버전을 본다.
+- Windows 설치기는 심볼릭 링크 권한에 의존하지 않고 같은 바이너리의
+  복사본을 두 경로에 둔다. 두 임시 복사본의 SHA-256과 `--info`를
+  확인한 뒤 순차 교체하고, 중간 실패 시 기존 파일을 best-effort로
+  복원한다. 프로세스 강제 종료까지 포함한 두 경로 완전 원자성은
+  보장하지 않는다.
+- 두 설치기는 양 확장자를 기본으로 함께 설치·제거한다. 과거 계획의
+  `--with-hwp` 옵션은 구현하지 않았다.
+- 사용자 디렉터리 경로가 프로토콜 §3의 PATH보다 우선하므로 설치기가
+  별도의 `officecli-dump-reader-hwp` PATH 별칭을 만들 필요는 없다.
+
+OfficeCLI의 `plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가
+두 행으로 보일 수 있다. 검증 기준은 최소 한 행의 `extensions`가
+`.hwpx,.hwp`인지와 실제 `.hwp` resolution이다. `officecli view
+<복사본>.hwp text`는 입력 옆에 같은 stem의 `.docx`를 만들 수 있으므로
+원본 대신 복사본으로 실행한다.
+
+**남은 검증**: 실제 RHWP를 구성한 Linux/Windows에서 설치·제거,
+`plugins list`, `.hwp` `view`, 기존 `.hwpx` 회귀를 새 CI로 확인한다.
+run `31700156231`은 H1 이전 커밋의 결과이므로 이 완료 근거로 재사용하지
+않는다. 로컬 macOS에서는 227개 Rust 테스트, 43개 기존 HWPX 왕복 검사,
+OfficeCLI 1.0.143과 공식 RHWP 0.8.4의 `english.hwp` view를 통과했고 원본
+hash·mtime 불변, 형제 DOCX, 중간 HWPX 0개를 확인했다.
 
 ### H2. 입력 포맷 판별 — **완료**
 
@@ -404,11 +433,14 @@ RHWP v0.8.4 `--verify`는 공식 표본 4종 중 3종에서 상류 IR 차이를 
 - README에 선택적 HWP 지원·RHWP 체크섬·실행 경계를 기록했다.
 - `docs/01-protocol-contract.md`에 ADR-5(A1 선택)를 추가하고 ADR-2를 정정했다.
 - `docs/02-handover.md`에 설명만 보고 판단해서 틀린 다섯 번째 사례를 기록했다.
+- H1의 설치·discovery 문서는 로컬 구현 상태까지 반영했다. 정식
+  크로스 플랫폼 완료 문구와 새 run ID는 H1 원격 검증 뒤에만 추가한다.
 
 ### 순서
 
 ```
-H2 판별  →  H3 브리지  →  H4 회귀  →  H5 문서  →  (원격 CI)  →  H1 디스커버리
+H2 판별 → H3 브리지 → H4 회귀 → H5 브리지 문서 → H3 원격 CI
+        → H1 로컬 discovery → (새 H1 원격 CI) → 정식 지원 문서
 ```
 
 H2를 먼저 하는 이유: 판별이 없으면 브리지가 HWPX 파일에도 변환을 걸어 낭비한다.
@@ -450,6 +482,8 @@ h4 AI 제안서    cb= 0 clk= 0 tbl= 1  items= 34 unk=0  validate=OK
 | R5 | HWP 3.0 | 공식 HWP3 1종의 변환·467개 JSONL·OfficeCLI validate를 확인. 다양성은 여전히 부족 |
 | R6 | 성능. 변환 단계가 늘어난다 | staging은 256MiB로 제한. HWPX 48MiB만 제한적 실측했고 대형 binary HWP와 느린 변환기 heartbeat-host 통합은 미실측 |
 | R7 | 외부 바이너리 실행이라는 신뢰 경계 | 변환기 경로를 환경변수/PATH로만 받고, 다운로드 시 SHA256 대조를 스크립트에 넣는다 |
+| R8 | `plugins list`가 양 설치 경로를 별도 행으로 열거 | 매니페스트 `extensions`와 실제 `.hwp` resolution을 검증 기준으로 삼고 중복 가능성을 문서화 |
+| R9 | Windows 두 복사본 교체 중 프로세스가 강제 종료됨 | 사전 staging·검증과 best-effort rollback을 적용하되 완전한 두 경로 원자성은 주장하지 않음 |
 
 ## 6. 정정한 기존 기록
 

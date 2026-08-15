@@ -105,7 +105,12 @@ print('' if not d.get('success') else (d['data']['results'][0].get('text') or ''
 echo
 echo "── 1. 플러그인 디스커버리 ──"
 DISCOVERED="$("${OFFICECLI}" plugins list 2>&1 | grep -c 'officecli-hwpx' || true)"
-check "officecli가 플러그인을 찾는다" "${DISCOVERED}" "1"
+if [[ "${DISCOVERED}" -ge 1 ]]; then
+  DISCOVERY_OK="yes"
+else
+  DISCOVERY_OK="no"
+fi
+check "officecli가 플러그인을 하나 이상 찾는다" "${DISCOVERY_OK}" "yes"
 
 echo
 echo "── 2. 픽스처 생성 ──"

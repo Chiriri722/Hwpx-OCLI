@@ -2,7 +2,8 @@
 
 출처: `iOfficeAI/OfficeCLI` `plugins/plugin-protocol.md` v1 (final draft),
 `schemas/help/docx/*`, wiki `command-batch.md` / `command-dump.md`.
-아래 항목은 전부 `tests/protocol_contract.rs`에서 기계적으로 검증한다.
+매니페스트·dump 계약은 `tests/protocol_contract.rs`, 설치·discovery
+경로는 `tests/install_contract.rs`에서 기계적으로 검증한다.
 
 ## C1. `--info` 매니페스트 (§4)
 
@@ -16,7 +17,7 @@
 | `version` | string, SemVer | `0.1.0` |
 | `protocol` | integer | `1` (불일치 시 메인이 exit 5로 거부) |
 | `kinds` | array | `["dump-reader"]` |
-| `extensions` | array, 점 포함 | `[".hwpx"]` |
+| `extensions` | array, 점 포함 | `[".hwpx", ".hwp"]` |
 | `idle_timeout_seconds` | object | `{"default":60,"verbs":{"dump":30}}` |
 | `runtime` | string | `"rust"` |
 | `target` | string | `"docx"` — dump-reader는 **필수**, `docx`/`xlsx`/`pptx` 중 하나 |
@@ -110,14 +111,27 @@
 
 ## C9. 설치 경로 (§3)
 
-메인의 탐색 순서. 첫 매치가 이긴다.
+메인의 탐색 순서. 요청한 `(kind, ext)`별 첫 매치가 이긴다.
 
-1. `$OFFICECLI_PLUGIN_DUMP_READER_HWPX` (실행파일 절대경로)
-2. `~/.officecli/plugins/dump-reader/hwpx/plugin`
-3. `<officecli 디렉터리>/plugins/dump-reader/hwpx/plugin`
-4. PATH의 `officecli-dump-reader-hwpx` → `officecli-hwpx`
+| 순위 | HWPX | HWP |
+|---|---|---|
+| 환경변수 | `$OFFICECLI_PLUGIN_DUMP_READER_HWPX` | `$OFFICECLI_PLUGIN_DUMP_READER_HWP` |
+| 사용자 경로 | `~/.officecli/plugins/dump-reader/hwpx/plugin` | `~/.officecli/plugins/dump-reader/hwp/plugin` |
+| bundled 경로 | `<officecli 디렉터리>/plugins/dump-reader/hwpx/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hwp/plugin` |
+| PATH | `officecli-dump-reader-hwpx` → `officecli-hwpx` | `officecli-dump-reader-hwp` → `officecli-hwp` |
 
-`<kind>`는 kebab-case, `<ext>`는 점 없는 확장자.
+`<kind>`는 kebab-case, `<ext>`는 점 없는 확장자다. Unix 설치기는 HWPX
+경로에 실제 파일을 원자 교체하고 HWP 경로에는 `../hwpx/plugin` 상대
+심볼릭 링크를 둔다. Windows 설치기는 심볼릭 링크 권한에 의존하지 않고
+두 경로의 복사본을 staging·체크섬·`--info` 검증한 뒤 순차 교체한다.
+실패하면 가능한 범위에서 기존 복사본을 복원하지만 강제 종료까지 포함한
+두 경로 완전 원자성은 보장하지 않는다.
+
+`plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가 두 행으로
+보일 수 있다. 이는 `(kind, ext)`별 resolution 실패를 의미하지 않는다.
+실제 확인에는 `officecli view <복사본>.hwp text`를 사용한다. 이 명령은
+입력 파일 옆에 같은 stem의 `.docx`를 만들 수 있으므로 원본이 아닌
+복사본으로 실행한다.
 
 ---
 
@@ -174,7 +188,12 @@ RHWP v0.8.4의 UTF-8 argv 제약 때문에 원본은 private scratch의 `source.
 옆에는 쓰지 않고 RAII로 scratch를 정리하며 staging copy를 256MiB로 제한한다.
 Unix scratch/source는 `0700`/`0600`, Windows scratch는 protected owner+SYSTEM
 DACL과 원자 create+handle 경계로 보호한다. 총 120초 제한, bounded stderr,
-Unix process group, Windows Job Object와 active-process drain을 적용한다. `.hwp`
-매니페스트 광고는 이 경계의 Linux/Windows 원격 검증을 통과한 뒤 별도 변경으로
-활성화한다. Windows의 `--media-dir`은 신뢰할 수 없는 junction이 될 수 있어
-바이너리 HWP staging에는 쓰지 않고 사용자별 OS 임시 루트를 사용한다.
+Unix process group, Windows Job Object와 active-process drain을 적용한다.
+이 경계의 Linux/Windows 네이티브 검증은 GitHub Actions run
+`31700156231`에서 통과했다. 후속 H1에서 `.hwp` 매니페스트와 양 확장자
+설치 경로를 로컬 구현했지만, 새 Linux/Windows `.hwp` discovery·`view`
+CI는 아직 실행하지 않았다. 따라서 H1의 크로스 플랫폼 완료 근거로
+run `31700156231`을 재사용하지 않는다. RHWP가 없으면 `.hwp`는 exit
+3(`unsupported_feature`)을 반환하고 `.hwpx` 직접 경로는 계속 동작한다.
+Windows의 `--media-dir`은 신뢰할 수 없는 junction이 될 수 있어 바이너리
+HWP staging에는 쓰지 않고 사용자별 OS 임시 루트를 사용한다.

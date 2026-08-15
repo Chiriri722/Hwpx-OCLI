@@ -45,14 +45,14 @@ impl Default for Manifest {
             version: PLUGIN_VERSION,
             protocol: PROTOCOL_VERSION,
             kinds: vec!["dump-reader"],
-            extensions: vec![".hwpx"],
+            extensions: vec![".hwpx", ".hwp"],
             target: "docx",
             runtime: "rust",
             idle_timeout_seconds: IdleTimeout {
                 default: 60,
                 verbs: VerbTimeouts { dump: 30 },
             },
-            description: "HWPX (OWPML) dump-reader — converts .hwpx into officecli docx commands",
+            description: "HWP/HWPX dump-reader — reads .hwpx directly and .hwp via optional RHWP",
             license: "MIT",
             supports: vec![
                 "paragraphs",

@@ -3,12 +3,12 @@ name = "officecli-hwpx"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "OfficeCLI dump-reader plugin for HWPX (OWPML) documents"
+description = "OfficeCLI dump-reader plugin for HWP/HWPX documents with an optional RHWP bridge"
 license = "MIT"
 repository = "https://github.com/Chiriri722/Hwpx-OCLI"
 
-# 메인 바이너리 이름은 프로토콜 §3의 PATH 탐색 규약
-# (`officecli-<kind>-<ext>`)과 일치시킨다.
+# 기존 HWPX PATH 탐색 이름은 유지한다. HWP는 확장자별 환경변수 또는
+# 사용자 plugin 디렉터리로 등록하며 별도 PATH alias는 아직 제공하지 않는다.
 [[bin]]
 name = "officecli-dump-reader-hwpx"
 path = "src/main.rs"

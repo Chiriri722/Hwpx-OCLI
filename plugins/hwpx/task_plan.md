@@ -8,25 +8,35 @@
 - [x] Phase 2: 보안 및 OfficeCLI/플랫폼 호환성 위험 분석
 - [x] Phase 3: 확인된 보안 위험에 대한 실패 테스트와 구현
 - [x] Phase 4: 전체 회귀·왕복 검증 및 결과 문서화
-- [ ] Phase 5: 타 플랫폼·대용량 호환성 실측
+- [x] Phase 5: 타 플랫폼·대용량 호환성 실측
   - [x] Windows volume/file ID 기반 하드 링크 차단 구현 및 크로스 타깃 컴파일
   - [x] Linux 비 UTF-8 실파일 및 Windows 하드 링크 CI 검증 추가
   - [x] Windows 네이티브 플러그인 설치 스크립트와 설치 무결성 검증 추가
   - [x] 대용량 파싱 heartbeat와 블록 단위 JSONL 출력
   - [x] 로컬 전체 회귀 및 실제 OfficeCLI 왕복 재검증
   - [x] GitHub Linux/Windows 러너의 첫 네이티브 실행 결과 확인
-  - [ ] 실제 Windows OfficeCLI `plugins list` 디스커버리 CI 첫 결과 확인
-  - [ ] Linux/Windows 선언 MSRV 1.88 전용 CI 첫 결과 확인
+  - [x] 실제 Windows OfficeCLI `plugins list` 디스커버리 CI 첫 결과 확인
+  - [x] Linux/Windows 선언 MSRV 1.88 전용 CI 첫 결과 확인
   - [x] macOS 합성 48MiB 표본 1회 wall-time/RSS 및 실제 OfficeCLI watchdog 실측
 - [ ] Phase 6: 바이너리 HWP 선택적 지원
   - [x] H3a: RHWP v0.8.4 CLI 계약과 배포 체크섬 재검증
   - [x] H3b: 변환기 탐색·실행·임시 산출물 정리 경계를 TDD로 구현
   - [x] H3c: 변환 실패·출력 누락·비 HWPX 출력·원본 불변 보안 회귀 검증
   - [x] H3d: UTF-8 staging, bounded stderr, Unix process group, Windows Job Object 보강
-  - [ ] H3e: Linux/Windows 네이티브 브리지·프로세스 트리 CI 첫 결과 확인
+  - [x] H3e: Linux/Windows 네이티브 브리지·프로세스 트리 CI 첫 결과 확인
   - [ ] H1: H3 완료 뒤에만 `.hwp` 디스커버리와 설치 경로를 활성화
+    - [x] H1a: 매니페스트·두 환경변수·두 사용자 설치 경로의 로컬 구현
+    - [x] H1b: Unix/PowerShell 설치·제거 계약과 로컬 OfficeCLI smoke
+    - [ ] H1c: Linux/Windows 네이티브 `.hwp` discovery와 실제 RHWP `view` CI
+    - [ ] H1d: 새 원격 증거를 반영한 공개 문서의 정식 지원 승격
   - [x] H4: 실제 HWP/HWPX 쌍과 공식 4표본 동등성 및 OfficeCLI 왕복 검증
   - [x] H5: README·ADR·인수인계 문서 갱신
+- [ ] Phase 7: OfficeCLI host discovery·공급망 하드닝을 별도 원자 변경으로 진행
+  - [ ] 상대 `OFFICECLI_PLUGIN_*` 경로를 host에서 거부하는 회귀 테스트와 구현
+  - [ ] 동일 매니페스트의 다중 설치 경로를 `plugins list`에서 다룰 identity/dedup 정책
+  - [ ] `.hwp` PATH alias 지원 여부와 설치 범위 결정
+  - [ ] installer ancestor reparse 정책과 Windows 악성 junction 제거 회귀를 네이티브로 검증
+  - [ ] GitHub Actions 외부 action 참조를 검증된 commit SHA로 고정
 
 ## Key Questions
 1. 기존 `docs/03-work-plan.md`에서 실제로 남은 기능은 무엇인가?
@@ -55,6 +65,12 @@
 - RHWP v0.8.4가 비 UTF-8 argv를 받지 못하므로 원본을 UTF-8 고정명의 private scratch에 복사하고 그 staging 경로만 전달한다. 원본 hash·mtime은 유지한다.
 - 외부 변환기는 shell 없이 세 인자를 분리하고 256MiB staging copy 예산, 120초 총 제한, 8KiB stderr tail, HWPX 재판별을 적용한다. Unix process group과 Windows Job Object로 자손 프로세스를 정리하며 stderr drain도 bounded다.
 - `scripts/verify-hwp-pairs.py`로 실제 동명 HWP/HWPX 1쌍은 JSONL byte-for-byte 일치, unknown prop 0, OfficeCLI 구조/스키마 검증 일치를 확인했다. 공식 HWP5 3종·HWP3 1종의 RHWP 생성 쌍도 같은 검증을 통과했다.
+- GitHub Actions run `31700156231`에서 `d910b40d`의 Linux/Windows 네이티브 test·clippy·release와 양 OS Rust 1.88 MSRV job 4개가 모두 성공했다. Windows 설치 뒤 실제 OfficeCLI `plugins list`도 통과했으므로 Phase 5와 H3e 원격 게이트를 완료 처리한다.
+- Sol Pro 계획의 우선순위 중 구현 브랜치 `d910b40d`를 기준선으로 삼고 H1 `.hwp` 공개 디스커버리를 시작한다는 판단은 현재 코드·CI와 일치한다. 기본 브랜치 병합/PR은 15,184행 규모의 별도 원자 검토가 필요하므로 H1 구현과 섞지 않는다.
+- H1 완료는 로컬 계약, 실제 OfficeCLI resolution, Linux/Windows 네이티브 RHWP view, 공개 문서 승격으로 나눠 판정한다. 사용자 경로별 열거 때문에 `plugins list`에 같은 매니페스트가 두 행 보일 수 있으므로 목록의 정확한 행 수는 resolution 증거로 사용하지 않는다.
+- 프로토콜은 환경변수 플러그인 경로를 절대경로로 요구하지만 현재 OfficeCLI host는 상대경로도 후보로 받는다. 설치기가 출력하는 경로는 절대경로로 유지하고, host absolute-path enforcement와 목록 dedup/PATH alias 정책은 H1 변경과 분리한 후속 보안·호환성 변경으로 다룬다.
+- H1 workflow의 OfficeCLI·RHWP·HWP fixture는 버전·전체 commit URL·SHA-256으로 고정한다. `actions/checkout`과 toolchain action의 commit SHA 고정은 기능 변경과 분리해 Phase 7 공급망 하드닝으로 추적한다.
+- 양 extension 설치는 백업 여부와 새 target commit 여부를 따로 추적해야 한다. uninstall도 child `plugin`을 만지기 전에 extension 디렉터리 symlink/reparse point를 fail-closed로 거부한다.
 
 ## Errors Encountered
 - 기존 작업 문서명이 `task_plan.md`가 아니라 `docs/03-work-plan.md`였다. 이 파일을 새 활성 계획으로 만들고 기존 문서를 이력/근거로 유지한다.
@@ -70,12 +86,15 @@
 - 상속된 `SIGCHLD` disposition/mask와 reap 후 PGID 재사용 경쟁을 피하려고 Unix timeout을 `waitid(WNOWAIT)` polling으로 교체했다. scratch는 Unix `0700`/`0600`, Windows atomic protected-DACL create+handle과 Job drain으로 보호한다.
 - Windows의 임의 media root는 mutable junction 위험 때문에 binary HWP staging에 사용하지 않고 canonical user-temp root만 사용한다.
 - RHWP v0.8.4는 `env::args()`를 사용해 Linux 비 UTF-8 원본·media 경로를 직접 받을 수 없다. UTF-8 private staging과 Linux 전용 회귀 테스트를 추가했다.
+- 참조 ChatGPT 대화의 966행 첨부 `task-plan.md` 본문은 `read_thread` 응답과 로컬 파일시스템에 노출되지 않았다. 대화에 남은 핵심 판단·Phase 흐름·SHA-256을 현재 저장소 근거와 대조했고, 실행 세부 사항은 이 활성 계획에 기록한다.
+- 로컬 `gh` 인증 토큰은 만료됐고 sandbox 네트워크도 차단됐다. GitHub 앱은 PR-triggered run만 반환해 push CI를 놓쳤으므로 공개 GitHub REST API의 전체 commit SHA와 Actions run jobs를 사용해 원격 결과를 검증했다.
+- H1 Unix rollback의 첫 구현은 기존 HWP backup 이동이 실패하면 아직 교체하지 않은 HWP까지 삭제했다. 실패 주입 테스트로 재현한 뒤 target별 commit flag로 수정했다.
+- uninstall은 extension 디렉터리가 외부 symlink/junction일 때 child `plugin`을 따라가 삭제할 수 있었다. Unix 실파일 RED와 Windows 계약 RED를 추가하고 제거 전에 symlink/reparse guard를 실행한다.
 
 ## Status
-**Currently in Phase 6** - H3/H4/H5의 로컬 구현·실측은 완료했다. 새 Linux/Windows MSRV·브리지 테스트와 Windows host discovery의 첫 원격 결과를 확인한 뒤 H1 `.hwp` 광고·설치 경로를 별도 원자 변경으로 진행한다.
+**Currently in Phase 6 / H1 remote gate** - H1a/H1b 로컬 구현·회귀·실제 OfficeCLI/RHWP smoke는 완료했다. H1c/H1d는 새 Linux/Windows workflow를 커밋·푸시해 첫 네이티브 결과를 확인하기 전까지 미완료다.
 
 ## Next Action Plan
-1. 현재 H3/H4/H5 및 보안 보강 변경을 별도 커밋으로 올린 뒤 GitHub Actions의 Linux/Windows test와 MSRV 1.88, Windows `plugins list` 결과를 확인한다.
-2. 모두 성공하면 H1 RED에서 매니페스트 `.hwp` 확장, `OFFICECLI_PLUGIN_DUMP_READER_HWP`, 사용자 `dump-reader/hwp/plugin` 경로의 discovery 계약을 먼저 고정한다.
-3. 같은 바이너리를 HWP/HWPX 두 사용자 플러그인 경로에 설치·제거하도록 Unix/PowerShell 스크립트를 확장하고 실제 `officecli plugins list`/`view <file.hwp> text`를 양 OS CI에 추가한다.
-4. H1까지 통과한 뒤에만 `.hwp`를 정식 지원으로 문서화한다. 다음 품질 단계는 독립 편집된 HWP/HWPX 쌍과 보고서·논문·통계 문서 코퍼스 확대이며, G5 스타일 매핑은 실제 heading 표본을 확보한 뒤 재개한다.
+1. 사용자가 커밋·푸시를 지시하면 H1을 별도 원자 커밋으로 올리고 새 Linux/Windows 네이티브 CI를 확인한다.
+2. 양 OS에서 `.hwp` 사용자 경로 resolution과 RHWP `view`가 모두 성공한 뒤 H1c/H1d와 Phase 6을 완료하고 새 run ID를 문서에 기록한다.
+3. H1과 분리한 Phase 7에서 OfficeCLI의 상대 환경변수 경로 거부, 중복 목록 정책, `.hwp` PATH alias, installer ancestor reparse, action SHA pinning을 실패 테스트부터 진행한다.

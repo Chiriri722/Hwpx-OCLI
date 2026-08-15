@@ -454,7 +454,7 @@ prop을 넣고 **OOXML 산출물**을 확인하는 표를 유지한다.
 | R3 | `hp:switch`/`hp:case`/`hp:default` 구조를 우연히 잘 처리하고 있다 | 현재 마지막 값(=`hp:default`)이 이긴다. 의도한 동작이지만 테스트가 없다. G1 작업 시 테스트 추가 |
 | R4 | 누름틀 `Command` 문자열 형식 근거가 2개 문서뿐 | 파싱 실패 시 안내문만 생략하고 필드는 만든다. 원문을 버리지 않는다 |
 | R5 | 코퍼스 문서의 저장소 포함 여부 | P-1 참고. 익명화 또는 외부 경로 |
-| R6 | Windows/Linux 실행 | GitHub Actions run `31572303544`에서 기존 HWPX 경로의 두 네이티브 job 성공. 새 HWP bridge·Windows Job Object·MSRV/discovery 변경의 첫 원격 결과는 대기 중 |
+| R6 | Windows/Linux 실행 | run `31572303544`의 기존 HWPX 네이티브 경로와 run `31700156231`의 양 OS H3 bridge·MSRV 1.88, Windows Job Object·기존 HWPX discovery가 성공. 후속 H1 `.hwp` discovery·RHWP `view` CI는 미실행 |
 
 ## 7. 하지 않을 것
 
@@ -463,8 +463,9 @@ prop을 넣고 **OOXML 산출물**을 확인하는 표를 유지한다.
 - **HWPX 쓰기.** dump-reader의 계약 밖이다. 확보되면 `format-handler`로
   승격하는 별도 과제다 (`01-protocol-contract.md` ADR-1).
 - **바이너리 HWP 파서를 자체 구현하거나 벤더링하는 일.** 후속 결정에서 선택적
-  RHWP→HWPX 프로세스 브리지를 구현했다. 남은 매니페스트·설치 discovery는
-  `04-hwp-support-plan.md` H1에서 추적한다(정정된 ADR-2, ADR-5).
+  RHWP→HWPX 프로세스 브리지를 구현했다. H1 매니페스트·설치 discovery도
+  로컬에 구현했으며 새 Linux/Windows `.hwp` discovery·`view` 결과는
+  `04-hwp-support-plan.md`에서 계속 추적한다(정정된 ADR-2, ADR-5).
 - **완벽한 시각 재현.** dump-reader의 목적은 AI 에이전트가 읽고 편집할 수 있는
   구조로 옮기는 것이다. 픽셀 단위 재현이 목표가 아니다.
 - **추정에 기반한 기능 추가.** 3절 후순위 항목 참고.
