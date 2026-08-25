@@ -2,6 +2,8 @@
 .dotnet/
 .dotnet-cli-home/
 .nuget/
+__pycache__/
+*.py[cod]
 
 # .NET build output
 src/officecli/bin/

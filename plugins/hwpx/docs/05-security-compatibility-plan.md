@@ -128,7 +128,7 @@ OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사
 - `rust-version = "1.87"`에서 `cargo +1.87.0 check --locked --all-targets`를 실행하자 `zip 8.6.0 requires rustc 1.88`로 실패했다.
 - ZIP 보안 경계 의존성을 낮추는 대신 선언 MSRV를 1.88로 정정하고 전용 CI job을 추가한다.
 - Windows 설치 job에는 SHA-256을 고정한 OfficeCLI 1.0.143을 내려받아 실제 `plugins list` discovery를 검사하는 단계를 추가한다.
-- 새 CI 정의의 첫 원격 결과와 대용량/idle 통합 실측 전에는 Phase 5 전체를 완료로 표시하지 않는다. 대용량/idle 실측은 아래에서 완료했으며 새 CI 결과만 남았다.
+- 당시에는 새 CI 정의의 첫 원격 결과와 대용량/idle 통합 실측 전이라 Phase 5 전체를 완료로 표시하지 않았다. 대용량/idle 실측은 아래에서, 새 CI 확인은 2026-08-14에 완료했다.
 
 ## 2026-08-13 대용량/idle 제한적 실측
 
@@ -137,7 +137,7 @@ OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사
 - OfficeCLI 1.0.143: `OFFICECLI_PLUGIN_IDLE_TIMEOUT_SECONDS=30` 아래 `plugins lint`가 0.771초에 성공했고 unknown prop은 0개였다.
 - 전체 실행이 heartbeat 주기 10초보다 빨라 이 표본에서는 heartbeat 프레임이 발생하지 않았다. heartbeat 프레임 자체는 단위 테스트로 별도 검증한다.
 - `BufferedReader.read(1MiB)`가 첫 바이트 시각을 늦게 기록하던 측정 결함은 `os.read`로 수정했다. 이 값은 합성 표본 1회 결과이지 일반 성능 보증이 아니다.
-- 따라서 경계 크기 합성 표본 게이트만 닫는다. 느린 실제 dump의 heartbeat-host reset, 대형 binary HWP, 새 MSRV/Windows discovery CI는 계속 대기한다.
+- 따라서 경계 크기 합성 표본 게이트만 닫는다. 느린 실제 dump의 heartbeat-host reset과 대형 binary HWP 실측은 계속 대기한다. MSRV/Windows discovery CI는 2026-08-14에 완료했다.
 
 ## 2026-08-13 HWP 변환기 보안 후속 리뷰
 
@@ -150,7 +150,17 @@ OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사
 - scratch는 Unix `0700`/source `0600`을 강제한다. Windows는 owner+SYSTEM protected DACL을 상대 `NtCreateFile`의 create+handle 단계에서 원자 적용하고 delete-share 없는 root/child handle을 유지한다. Job active-process 0을 bounded wait한 뒤 scratch 삭제를 재시도한다.
 - 공격자가 제어하는 Windows `--media-dir`의 junction retarget까지 경로 기반 RHWP argv에서 안전하게 보장할 수 없으므로, Windows binary HWP staging은 canonical user-temp root만 사용한다. `--media-dir`은 HWPX 직접 경로에는 원래 필요하지 않다.
 - RHWP는 `argv[0]`도 UTF-8 `String`으로 수집하므로 명시/PATH/사용자 설치 후보 중 비 Unicode converter 경로는 선택하지 않고, 명시 설정은 exit 3으로 거절한다.
-- 핵심 fake converter 성공/실패/출력 재검증 테스트를 양 OS에서 실행하고, Linux 비 UTF-8 staging과 Windows 실제 descendant 종료 테스트를 네이티브 CI에 고정했다. 첫 원격 결과는 아직 대기 중이다.
+- 핵심 fake converter 성공/실패/출력 재검증 테스트를 양 OS에서 실행하고, Linux 비 UTF-8 staging과 Windows 실제 descendant 종료 테스트를 네이티브 CI에 고정했다. 첫 원격 결과는 GitHub Actions run `31700156231`에서 모두 성공했다.
+
+## 2026-08-14 Phase 6 원격 완료와 검증기 이식성
+
+- 브랜치 HEAD `d910b40d66707127e4fcff7811a8bc1b1329b23d`의 GitHub Actions run `31700156231`이 전체 성공했다.
+- Linux x64는 220 tests, clippy, release build를 통과했고 Rust 1.88 MSRV check도 성공했다.
+- Windows x64는 210 tests, clippy, release build, 네이티브 설치, OfficeCLI 1.0.143 `plugins list` discovery를 통과했고 Rust 1.88 MSRV check도 성공했다.
+- 로컬 Windows에서 검증기 기본 경로가 확장자 없는 실행파일만 찾아 `.exe`를 놓치는 결함을 재현했다. 공통 탐색기로 Windows `.exe`와 Linux 확장자 없는 이름만 자동 선택하도록 수정했다. 명시 경로는 계속 허용한다.
+- 같은 checkout에서 Windows release가 남은 채 Linux `CARGO_TARGET_DIR`를 따로 쓰면 검증기가 오래된 `.exe`를 선택하는 결함도 재현했다. 반대 OS 이름의 자동 fallback을 제거하고 `CARGO_TARGET_DIR/release`를 반영했다.
+- 실행파일 탐색 단위 테스트 6개와 `verify-large-file.py --skip-officecli --sections 1 --text-mib 1` smoke를 Linux/Windows workflow에 추가했다. Windows 로컬 기본 경로 smoke도 exit 0, JSONL 1행/1.0MiB, 원본 불변으로 통과했다.
+- Codex 제한 토큰에서만 `%TEMP%` 재접근이 거부된 현상은 샌드박스 밖의 원본 Windows protected-DACL 테스트가 통과해 제품 결함이 아닌 실행 환경 제약으로 분리했다.
 
 ## 2026-08-15 H3 원격 게이트 확인과 H1 로컬 구현
 

@@ -8,7 +8,7 @@ The canonical plugin source is now `plugins/hwpx`.
 
 - `src/officecli`: OfficeCLI host (.NET 10)
 - `plugins/plugin-protocol.md`: upstream plugin contract
-- `plugins/hwpx`: HWPX dump-reader (Rust, MSRV 1.87)
+- `plugins/hwpx`: HWPX dump-reader (Rust, MSRV 1.88)
 - `.dotnet`: project-local .NET SDK (ignored by Git)
 
 The Git remotes are intentionally split:

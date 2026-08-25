@@ -82,11 +82,17 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Test verifier executable discovery
+        run: python scripts/test_executable_paths.py
+
       - name: Lint
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Build release plugin
         run: cargo build --release --locked
+
+      - name: Smoke large-file verifier
+        run: python scripts/verify-large-file.py --skip-officecli --sections 1 --text-mib 1
 
       - name: Verify Linux native HWP discovery and view
         if: runner.os == 'Linux'

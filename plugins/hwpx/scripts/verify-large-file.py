@@ -16,12 +16,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import zipfile
+
+from executable_paths import cargo_release_directory, preferred_executable, resolve_tool
 
 try:
     import resource
@@ -96,16 +97,12 @@ def build_fixture(path: Path, sections: int, text_mib: int) -> None:
 
 
 def locate_officecli(explicit: Path | None) -> Path | None:
-    if explicit:
-        return explicit
-    env_path = os.environ.get("OFFICECLI")
-    if env_path:
-        return Path(env_path)
-    on_path = shutil.which("officecli")
-    if on_path:
-        return Path(on_path)
-    cached = Path.home() / ".local" / "officecli-verify" / "officecli"
-    return cached if cached.is_file() else None
+    return resolve_tool(
+        explicit,
+        "OFFICECLI",
+        "officecli",
+        cache_dir=Path.home() / ".local" / "officecli-verify",
+    )
 
 
 def peak_child_rss_mib() -> tuple[float | None, str]:
@@ -226,7 +223,13 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
-    plugin = args.plugin or root / "target" / "release" / "officecli-dump-reader-hwpx"
+    plugin = (
+        args.plugin.expanduser().resolve()
+        if args.plugin is not None
+        else preferred_executable(
+            cargo_release_directory(root), "officecli-dump-reader-hwpx"
+        )
+    )
     if not plugin.is_file():
         raise SystemExit(f"release plugin not found: {plugin}")
 

@@ -19,10 +19,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import unicodedata
+
+from executable_paths import cargo_release_directory, preferred_executable, resolve_tool
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -241,29 +242,6 @@ def roundtrip(
     }
 
 
-def resolve_tool(explicit: Path | None, env_name: str, command: str) -> Path | None:
-    if explicit is not None:
-        return explicit.expanduser().resolve()
-    configured = os.environ.get(env_name)
-    if configured:
-        return Path(configured).expanduser().resolve()
-    found = shutil.which(command)
-    if found:
-        return Path(found).resolve()
-    if env_name == "OFFICECLI":
-        cache = Path.home() / ".local" / "officecli-verify"
-        names = (
-            ("officecli.exe", "officecli")
-            if os.name == "nt"
-            else ("officecli", "officecli.exe")
-        )
-        for name in names:
-            candidate = cache / name
-            if candidate.is_file():
-                return candidate.resolve()
-    return None
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hwp-dir", type=Path, required=True)
@@ -274,10 +252,20 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
-    plugin = (args.plugin or root / "target/release/officecli-dump-reader-hwpx")
-    plugin = plugin.expanduser().resolve()
+    plugin = (
+        args.plugin.expanduser().resolve()
+        if args.plugin is not None
+        else preferred_executable(
+            cargo_release_directory(root), "officecli-dump-reader-hwpx"
+        )
+    )
     converter = resolve_tool(args.converter, "OFFICECLI_HWPX_CONVERTER", "rhwp")
-    officecli = resolve_tool(args.officecli, "OFFICECLI", "officecli")
+    officecli = resolve_tool(
+        args.officecli,
+        "OFFICECLI",
+        "officecli",
+        cache_dir=Path.home() / ".local" / "officecli-verify",
+    )
     for label, path in (("plugin", plugin), ("converter", converter), ("officecli", officecli)):
         if path is None or not path.is_file():
             raise SystemExit(f"{label} executable not found: {path}")

@@ -128,13 +128,13 @@
 - Unix scratch/source는 `0700`/`0600`, Windows는 owner+SYSTEM protected DACL의 상대 `NtCreateFile` create+handle과 no-delete-share로 원자 보호한다. 비 Unicode RHWP 실행파일 경로도 exit 3으로 거절한다.
 - Windows의 임의 `--media-dir`은 mutable junction 위험 때문에 binary HWP staging에 쓰지 않고 canonical user-temp root로 한정한다.
 - staging copy는 256MiB 예산을 두고 실제 읽기에도 `limit + 1` 상한을 적용해 파일 성장/디스크 소진 경계를 고정했다.
-- 양 OS fake converter 계약, Linux 비 UTF-8 원본·media 경로, Windows descendant 종료 테스트를 추가했다. 새 네이티브 CI의 첫 결과는 대기 중이다.
+- 양 OS fake converter 계약, Linux 비 UTF-8 원본·media 경로, Windows descendant 종료 테스트를 추가했다. GitHub Actions run `31700156231`에서 첫 네이티브 결과가 모두 성공했다.
 
 ### Phase 6 H4/H5
 - `scripts/verify-hwp-pairs.py`를 추가했다. NFC 동명 쌍의 JSONL/요약, unknown prop, OfficeCLI batch/validate, 문단·표·셀·폼필드 구조와 원본 불변을 검사한다.
 - 실제 독립 HWP/HWPX 1쌍은 34개 JSONL byte exact, unknown prop 0, OfficeCLI validate/구조 일치였다.
 - RHWP 공식 HWP5 3종·HWP3 1종과 v0.8.4가 만든 HWPX 쌍은 19/48/712/467개 JSONL exact, unknown prop 0, OfficeCLI validate/구조 일치였다.
-- README의 선택적 HWP 사용법, ADR-2 정정/ADR-5, 인수인계를 갱신했다. H1 `.hwp` 광고는 새 Linux/Windows 원격 CI가 성공한 뒤 진행한다.
+- README의 선택적 HWP 사용법, ADR-2 정정/ADR-5, 인수인계를 갱신했다. Linux/Windows 원격 CI는 성공했으며 H1 `.hwp` 광고는 실제 RHWP 양 OS smoke와 함께 별도 변경으로 진행한다.
 
 ### Phase 6 최종 로컬 검증
 - `cargo +1.88.0 test --locked`: macOS 218 passed (lib 135 + binary 1 + golden 3 + parser 34 + protocol 45).
@@ -142,7 +142,13 @@
 - stable `cargo clippy --locked --all-targets -- -D warnings`와 Windows GNU target clippy: passed.
 - `cargo +1.88.0 build --release --locked`, workflow YAML parse, 두 Python verifier `--help`, `git diff --check`: passed.
 - OfficeCLI 1.0.143 `verify-roundtrip.sh`: 43 checks passed.
-- Windows/Linux 네이티브 테스트, 새 MSRV matrix, Windows OfficeCLI discovery는 변경을 원격에 올린 뒤 확인해야 한다.
+- GitHub Actions run `31700156231`에서 Windows/Linux 네이티브 테스트, MSRV matrix, Windows OfficeCLI discovery가 모두 성공했다.
+
+### 2026-08-14 Windows/Linux 재검증
+- Linux 컨테이너에서 220 tests, clippy `-D warnings`, release build, Rust 1.88 all-target check가 모두 성공했다.
+- Windows 검증기의 기본 release/설치/OfficeCLI 경로가 `.exe`를 자동 탐색하도록 공통화하고 6개 단위 테스트와 양 OS 1MiB large-file smoke를 workflow에 추가했다. Linux에서는 반대 OS `.exe`나 실행 권한이 없는 파일을 자동 선택하지 않으며 별도 `CARGO_TARGET_DIR`도 반영한다.
+- Windows 로컬 기본 경로 large-file smoke는 exit 0, JSONL 1행/1.0MiB, 원본 hash·mtime 불변으로 성공했다.
+- Codex 제한 토큰의 `%TEMP%` ACL 문제는 샌드박스 밖에서 원본 protected-DACL 테스트가 통과해 제품 DACL과 분리했다.
 
 ### 2026-08-15 Sol Pro 계획 검증 및 H1 착수
 - 참조 대화가 제시한 기준선 `d910b40d66707127e4fcff7811a8bc1b1329b23d`는 로컬 `HEAD`와 `origin/feat/hwpx-plugin`에 정확히 일치했고 worktree는 clean이었다.

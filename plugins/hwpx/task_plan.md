@@ -52,7 +52,7 @@
 - 반복 이미지 증폭은 고유 BinData 캐시와 참조·출력 예산을 함께 적용해야 완결된다. 진단 경로 이슈와 Windows 설치 경로는 그 다음 호환성 묶음으로 처리한다.
 - 정식 스캔 7건은 먼저 macOS/Unix 실행 경로의 입력 경계·이미지 캐시·진단 경계에서 닫았다. Phase 5에서 Windows 하드 링크 식별 구현도 추가했고 네이티브 Windows runner에서 확인했다.
 - 진입점은 `args_os`를 사용하며 비 UTF-8 경로 바이트를 `PathBuf`로 보존한다. macOS 파일시스템은 잘못된 UTF-8 파일명 생성을 거부하므로 실제 파일 왕복은 Linux 러너에서 추가 확인한다.
-- Phase 5 착수 시 남은 호환성 작업은 Linux 비 UTF-8 실파일, Windows 네이티브 설치/하드 링크 식별, 30초 pre-output idle timeout이었다. 기존 네이티브 플랫폼 검증과 macOS 합성 48MiB 1회 실측은 완료했고 새 discovery/MSRV CI 결과만 남겼다.
+- Phase 5 착수 시 남은 호환성 작업은 Linux 비 UTF-8 실파일, Windows 네이티브 설치/하드 링크 식별, 30초 pre-output idle timeout이었다. 기존 네이티브 플랫폼 검증과 macOS 합성 48MiB 1회 실측에 이어 discovery/MSRV CI의 첫 결과도 확인했다.
 - OfficeCLI는 stderr의 `{"heartbeat":true}` 행을 소비하면서 idle 타이머만 갱신한다. 파싱 단계에는 10초 주기 heartbeat를 적용하고 emitter는 문서 전체가 아니라 최상위 블록 단위로 출력한다.
 - Windows 파일 동일성은 열린 핸들의 volume serial과 64-bit file index를 비교한다. 안정화되지 않은 Rust `MetadataExt` 대신 `windows-sys`의 `GetFileInformationByHandle`을 사용하고 Windows 크로스 타깃으로 전체 target을 컴파일한다.
 - Linux/Windows 네이티브 런타임 테스트는 `.github/workflows/hwpx-plugin.yml`에 고정했다. GitHub Actions run `31572303544`에서 두 job과 Windows 네이티브 설치 검사가 모두 성공해 플랫폼 하위 게이트를 완료 처리한다.
@@ -71,6 +71,7 @@
 - 프로토콜은 환경변수 플러그인 경로를 절대경로로 요구하지만 현재 OfficeCLI host는 상대경로도 후보로 받는다. 설치기가 출력하는 경로는 절대경로로 유지하고, host absolute-path enforcement와 목록 dedup/PATH alias 정책은 H1 변경과 분리한 후속 보안·호환성 변경으로 다룬다.
 - H1 workflow의 OfficeCLI·RHWP·HWP fixture는 버전·전체 commit URL·SHA-256으로 고정한다. `actions/checkout`과 toolchain action의 commit SHA 고정은 기능 변경과 분리해 Phase 7 공급망 하드닝으로 추적한다.
 - 양 extension 설치는 백업 여부와 새 target commit 여부를 따로 추적해야 한다. uninstall도 child `plugin`을 만지기 전에 extension 디렉터리 symlink/reparse point를 fail-closed로 거부한다.
+- Python 검증기는 공통 실행파일 탐색기를 사용한다. Windows는 `.exe`, Linux는 확장자 없는 이름만 자동 선택하고, `CARGO_TARGET_DIR`가 있으면 해당 release 디렉터리를 우선한다. 실행파일 탐색 단위 테스트와 양 OS 1MiB large-file smoke를 workflow에 고정한다.
 
 ## Errors Encountered
 - 기존 작업 문서명이 `task_plan.md`가 아니라 `docs/03-work-plan.md`였다. 이 파일을 새 활성 계획으로 만들고 기존 문서를 이력/근거로 유지한다.
@@ -90,6 +91,7 @@
 - 로컬 `gh` 인증 토큰은 만료됐고 sandbox 네트워크도 차단됐다. GitHub 앱은 PR-triggered run만 반환해 push CI를 놓쳤으므로 공개 GitHub REST API의 전체 commit SHA와 Actions run jobs를 사용해 원격 결과를 검증했다.
 - H1 Unix rollback의 첫 구현은 기존 HWP backup 이동이 실패하면 아직 교체하지 않은 HWP까지 삭제했다. 실패 주입 테스트로 재현한 뒤 target별 commit flag로 수정했다.
 - uninstall은 extension 디렉터리가 외부 symlink/junction일 때 child `plugin`을 따라가 삭제할 수 있었다. Unix 실파일 RED와 Windows 계약 RED를 추가하고 제거 전에 symlink/reparse guard를 실행한다.
+- Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
 **Currently in Phase 6 / H1 remote gate** - H1a/H1b 로컬 구현·회귀·실제 OfficeCLI/RHWP smoke는 완료했다. H1c/H1d는 새 Linux/Windows workflow를 커밋·푸시해 첫 네이티브 결과를 확인하기 전까지 미완료다.

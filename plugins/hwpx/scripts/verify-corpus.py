@@ -34,9 +34,17 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from executable_paths import (
+    first_existing_executable,
+    preferred_executable,
+    resolve_tool,
+)
+
 REPO = Path(__file__).resolve().parent.parent
 EXPECTED_PATH = REPO / "tests" / "corpus" / "expected.json"
-PLUGIN = Path.home() / ".officecli" / "plugins" / "dump-reader" / "hwpx" / "plugin"
+PLUGIN = preferred_executable(
+    Path.home() / ".officecli" / "plugins" / "dump-reader" / "hwpx", "plugin"
+)
 # 요약에 넣을 지표만 센다. 절대 좌표나 ID는 넣지 않는다(불안정).
 OOXML_PATTERNS = {
     "w_br": r"<w:br\b",
@@ -50,10 +58,14 @@ OOXML_PATTERNS = {
 
 
 def find_officecli() -> str:
-    for cand in ("officecli", str(Path.home() / ".local/officecli-verify/officecli")):
+    cache = Path.home() / ".local" / "officecli-verify"
+    resolved = resolve_tool(None, "OFFICECLI", "officecli")
+    cached = first_existing_executable(cache, "officecli")
+    candidates = [path for path in (resolved, cached) if path is not None]
+    for candidate in dict.fromkeys(candidates):
         try:
-            subprocess.run([cand, "--version"], capture_output=True, check=True)
-            return cand
+            subprocess.run([str(candidate), "--version"], capture_output=True, check=True)
+            return str(candidate)
         except (OSError, subprocess.CalledProcessError):
             continue
     sys.exit(
