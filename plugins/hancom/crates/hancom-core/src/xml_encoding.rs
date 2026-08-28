@@ -89,7 +89,9 @@ fn decode_utf16(bytes: &[u8], encoding: XmlEncoding) -> Result<String> {
         ));
     }
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| match encoding {
             XmlEncoding::Utf16Le => u16::from_le_bytes([pair[0], pair[1]]),
             XmlEncoding::Utf16Be => u16::from_be_bytes([pair[0], pair[1]]),
@@ -102,7 +104,9 @@ fn decode_utf16(bytes: &[u8], encoding: XmlEncoding) -> Result<String> {
 
 fn decode_utf16_prefix(bytes: &[u8], encoding: XmlEncoding) -> Result<String> {
     let mut units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| match encoding {
             XmlEncoding::Utf16Le => u16::from_le_bytes([pair[0], pair[1]]),
             XmlEncoding::Utf16Be => u16::from_be_bytes([pair[0], pair[1]]),
