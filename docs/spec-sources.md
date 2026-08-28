@@ -39,4 +39,4 @@ and source surfaces:
 > 본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
 
 This repository places that notice in the plugin's `--info` description,
-`--help`, `plugins/hwpx/README.md`, and `plugins/hwpx/NOTICE`.
+`--help`, `plugins/hancom/README.md`, and `plugins/hancom/NOTICE`.

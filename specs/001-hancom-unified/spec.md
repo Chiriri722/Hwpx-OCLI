@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-hancom-unified`
 **Created**: 2026-08-28
-**Status**: P1 진행 중 — P0 원격 CI 게이트 완료
+**Status**: P1 진행 중 — T1-1 workspace 이동 로컬 게이트 완료, 원격 CI 대기
 **Task Plan**: `./task-plan.md` (정본 작업 목록)
 **Research**: `../../.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록)
 **Official Sources**: `../../docs/spec-sources.md` (한컴 원문 URL·리비전·바이트·SHA-256)

@@ -134,7 +134,7 @@ fn help_includes_required_hancom_notice() {
 
 #[test]
 fn distributed_docs_include_required_hancom_notice() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for relative in ["README.md", "NOTICE"] {
         let text = std::fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));

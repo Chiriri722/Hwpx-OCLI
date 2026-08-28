@@ -1,8 +1,8 @@
 //! Installation/discovery contract for the two advertised source extensions.
 
 #[cfg(unix)]
-const UNIX_INSTALLER: &str = include_str!("../scripts/install.sh");
-const WINDOWS_INSTALLER: &str = include_str!("../scripts/install.ps1");
+const UNIX_INSTALLER: &str = include_str!("../../../scripts/install.sh");
+const WINDOWS_INSTALLER: &str = include_str!("../../../scripts/install.ps1");
 
 #[test]
 fn windows_installer_exposes_hwp_and_hwpx_environment_overrides() {
@@ -92,7 +92,10 @@ fn windows_installer_creates_managed_directories_without_provider_path_expansion
 
 #[cfg(windows)]
 fn windows_installer_path() -> &'static std::path::Path {
-    std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/install.ps1"))
+    std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/install.ps1"
+    ))
 }
 
 #[cfg(windows)]
@@ -393,7 +396,10 @@ fn run_unix_installer_at(
 #[cfg(unix)]
 fn run_unix_installer(home: &std::path::Path, argument: &str) -> std::process::Output {
     run_unix_installer_at(
-        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/install.sh")),
+        std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/install.sh"
+        )),
         home,
         argument,
     )
@@ -501,7 +507,7 @@ fn unix_installer_rejects_relative_home_for_every_action() {
 fn unix_help_does_not_require_an_absolute_home() {
     let output = std::process::Command::new(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/scripts/install.sh"
+        "/../../scripts/install.sh"
     )))
     .arg("--help")
     .env("HOME", "relative-home")

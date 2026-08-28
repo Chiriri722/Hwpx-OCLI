@@ -11,7 +11,7 @@ repository = "https://github.com/Chiriri722/Hwpx-OCLI"
 # 사용자 plugin 디렉터리로 등록하며 별도 PATH alias는 아직 제공하지 않는다.
 [[bin]]
 name = "officecli-dump-reader-hwpx"
-path = "src/main.rs"
+path = "src/bin/officecli-dump-reader-hwpx.rs"
 
 [lib]
 name = "officecli_hwpx"
@@ -48,10 +48,3 @@ windows-sys = { version = "0.61.2", features = [
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"

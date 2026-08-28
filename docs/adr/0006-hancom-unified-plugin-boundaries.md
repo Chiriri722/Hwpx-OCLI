@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Decision date: 2026-08-28
-- Scope: `plugins/hwpx` and the planned `plugins/hancom` workspace
+- Scope: the `plugins/hancom` workspace migrated from `plugins/hwpx`
 - Plan: [`../../specs/001-hancom-unified/task-plan.md`](../../specs/001-hancom-unified/task-plan.md)
 
 ## Context
@@ -69,7 +69,7 @@ the PDF files are not redistributed.
   `DocumentHandlerFactory.TryOpenViaPlugin` and
   `PluginManifestExtensions.ResolveTargetFormat`
 - Local P0 evidence is recorded in
-  [`../../plugins/hwpx/notes.md`](../../plugins/hwpx/notes.md). Commit `e77fb77c`
+  [`../../plugins/hancom/notes.md`](../../plugins/hancom/notes.md). Commit `e77fb77c`
   satisfied T0-3 in [HWPX plugin run 33157787880](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33157787880),
   and [action pin run 33157787944](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33157787944)
   passed independently. P1 is therefore unblocked.

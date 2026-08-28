@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/hancom-hwp"]
+default-members = ["crates/hancom-hwp"]
+
+# Release settings live at the workspace root so every future Hancom binary
+# receives the same small, single-codegen-unit build profile.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,2 +1,2 @@
-plugins/hwpx/tests/golden/*.jsonl text eol=lf
+plugins/hancom/crates/hancom-hwp/tests/golden/*.jsonl text eol=lf
 *.sh text eol=lf

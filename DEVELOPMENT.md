@@ -2,13 +2,13 @@
 
 This checkout combines the current OfficeCLI upstream with the HWPX dump-reader
 plugin that was previously developed in the standalone `hwpx-ocli` directory.
-The canonical plugin source is now `plugins/hwpx`.
+The canonical plugin source is now the Cargo workspace at `plugins/hancom`.
 
 ## Repository layout
 
 - `src/officecli`: OfficeCLI host (.NET 10)
 - `plugins/plugin-protocol.md`: upstream plugin contract
-- `plugins/hwpx`: HWPX dump-reader (Rust, MSRV 1.88)
+- `plugins/hancom`: Hancom plugin workspace (Rust, MSRV 1.88)
 - `.dotnet`: project-local .NET SDK (ignored by Git)
 
 The Git remotes are intentionally split:
@@ -35,8 +35,8 @@ From the repository root:
 source scripts/dev-env.sh
 
 dotnet build src/officecli/officecli.csproj --nologo
-cargo test --locked --manifest-path plugins/hwpx/Cargo.toml
-cargo clippy --locked --manifest-path plugins/hwpx/Cargo.toml --all-targets -- -D warnings
+cargo test --workspace --locked --all-targets --manifest-path plugins/hancom/Cargo.toml
+cargo clippy --workspace --locked --all-targets --manifest-path plugins/hancom/Cargo.toml -- -D warnings
 ```
 
 For the self-contained native binary used by releases, run `./build.sh`. The
@@ -47,7 +47,7 @@ build.
 For end-to-end plugin validation, run from the plugin directory:
 
 ```bash
-cd plugins/hwpx
+cd plugins/hancom
 scripts/verify-roundtrip.sh
 ```
 

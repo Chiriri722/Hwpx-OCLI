@@ -21,7 +21,7 @@ from the repository target directory.
 ## Reproduction
 
 1. Build the plugin on Windows with `cargo build --release --locked`.
-2. Run `python plugins/hwpx/scripts/verify-large-file.py --skip-officecli`.
+2. Run `python plugins/hancom/scripts/verify-large-file.py --skip-officecli`.
 3. Observe `release plugin not found` even though the `.exe` exists.
 4. Leave that Windows target directory in the checkout.
 5. On Linux, build with an alternate `CARGO_TARGET_DIR` and run the verifier
@@ -75,8 +75,8 @@ from the repository target directory.
 
 - `.github/workflows/hwpx-plugin.yml`
 - `.gitignore`
-- `plugins/hwpx/scripts/executable_paths.py`
-- `plugins/hwpx/scripts/test_executable_paths.py`
-- `plugins/hwpx/scripts/verify-corpus.py`
-- `plugins/hwpx/scripts/verify-hwp-pairs.py`
-- `plugins/hwpx/scripts/verify-large-file.py`
+- `plugins/hancom/scripts/executable_paths.py`
+- `plugins/hancom/scripts/test_executable_paths.py`
+- `plugins/hancom/scripts/verify-corpus.py`
+- `plugins/hancom/scripts/verify-hwp-pairs.py`
+- `plugins/hancom/scripts/verify-large-file.py`

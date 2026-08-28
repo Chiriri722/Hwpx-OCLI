@@ -6,7 +6,7 @@
 
 ## Goal
 
-현재 `plugins/hwpx`(HWPX/HWP 읽기 전용 dump-reader 1종)를 한컴오피스 독자 규격 전체를
+현재 `plugins/hancom/crates/hancom-hwp`(HWPX/HWP 읽기 전용 dump-reader 1종)를 한컴오피스 독자 규격 전체를
 다루는 통합 호환 플러그인 스위트로 확장한다.
 
 | 계열 | 확장자 | 목표 kind | 목표 target | 현재 |
@@ -139,7 +139,7 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
 
 ## Phases
 
-기존 `plugins/hwpx/task_plan.md`의 Phase 6(H1c/H1d 원격 게이트)·Phase 7(호스트 하드닝)은
+기존 `plugins/hancom/task_plan.md`의 Phase 6(H1c/H1d 원격 게이트)·Phase 7(호스트 하드닝)은
 아래 P0에 흡수했으며 커밋 `e77fb77c`의 원격 검증으로 완료했다.
 
 ### P0 — 기반 정리 및 컴플라이언스 (선행 필수, 확장과 무관하게 즉시)
@@ -165,9 +165,14 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
 
 ### P1 — workspace 재편 (A1 실행)
 
-- [ ] T1-1 · `plugins/hwpx` → `plugins/hancom/` Cargo workspace 로 이동. **동작 변화 0**을
+- [x] T1-1 · `plugins/hwpx` → `plugins/hancom/` Cargo workspace 로 이동. **동작 변화 0**을
       목표로 하는 순수 구조 변경. 기존 테스트 전부(단위/`parse_owpml` 34개/`protocol_contract`/
       `golden` 3개/`install_contract`)가 그대로 통과해야 한다.
+      기존 package/lib/bin 이름과 `Cargo.lock`을 유지한 채 `crates/hancom-hwp` 단일 member로
+      옮겼다. 로컬에서 Rust 테스트 225개, Rust 1.88 all-target check, stable clippy, release build,
+      네이티브 Windows host 계약 35개, 실행 경로 6개, action pin 17개, workflow YAML 8개,
+      actionlint와 PowerShell/Bash 구문 검사를 모두 통과했다. GitHub-hosted Linux/Windows
+      게이트는 이동 커밋을 push한 뒤 별도로 확인한다.
 - [ ] T1-2 · `hancom-core` 추출: 컨테이너 판별, 문서모델, 단위변환, 자원예산·보안경계,
       JSONL emitter, heartbeat, 진단. 기존 `format.rs`의 매직바이트 판별을 여기로.
 - [ ] T1-3 · `officecli-hancom-hwp` 바이너리로 기존 기능 이관 + `.owpml`·`.hml` 확장자 추가
@@ -302,18 +307,23 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
    (단일 바이너리 원칙). Q5에서 재확인.
 8. T0-1 저작권 표기는 법적 요구사항이므로 확장 작업보다 우선한다.
 9. spec-kit `specs/001-hancom-unified/`를 이 확장의 정본 위치로 삼고, 기존
-   `plugins/hwpx/task_plan.md`는 P0-T0-3/T0-4가 끝날 때까지 병행 유지한다.
+   `plugins/hancom/task_plan.md`는 P0 이력과 검증 근거로 유지한다.
+10. T1-1에서는 기존 `officecli-hwpx` package를 `crates/hancom-hwp`에 그대로 두고, 공용 core
+    추출과 바이너리 이름 변경은 각각 T1-2/T1-3으로 분리한다. 구조 이동과 동작 변경을 한
+    커밋에 섞지 않는다.
 
 ## Status
 
-**P0 완료 · P1 착수 가능.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0 완료 · P1 진행 중(T1-1 로컬 게이트 완료).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
+T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬
+회귀·MSRV·공급망·스크립트 검증을 통과했다. 이동 커밋의 원격 양 OS 결과를 기다린다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. P1 workspace 재편을 "동작 변화 0" 원자 변경으로 진행한다. 기존 테스트가 회귀 판정 기준이다.
-2. 공통 core와 `hancom-hwp` 진입점을 분리하고 설치·CI 경로를 새 workspace에 맞춘다.
+1. T1-1 workspace 이동을 커밋·push하고 GitHub-hosted Linux/Windows 회귀를 확인한다.
+2. T1-2에서 공통 core를 추출하되 기존 `officecli-hwpx` 공개 surface에는 임시 re-export를 둔다.
 3. 현재 브랜치의 upstream 지연은 workspace 이동과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
 5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,

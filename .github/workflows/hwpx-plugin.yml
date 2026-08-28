@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'plugins/hwpx/**'
+      - 'plugins/hancom/**'
       - 'plugins/plugin-protocol.md'
       - 'src/officecli/Core/Plugins/**'
       - 'src/officecli/CommandBuilder.Plugins.cs'
@@ -13,7 +13,7 @@ on:
       - '.github/workflows/hwpx-plugin.yml'
   push:
     paths:
-      - 'plugins/hwpx/**'
+      - 'plugins/hancom/**'
       - 'plugins/plugin-protocol.md'
       - 'src/officecli/Core/Plugins/**'
       - 'src/officecli/CommandBuilder.Plugins.cs'
@@ -61,7 +61,7 @@ jobs:
             os: windows-latest
     defaults:
       run:
-        working-directory: plugins/hwpx
+        working-directory: plugins/hancom
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
@@ -70,7 +70,7 @@ jobs:
         uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # branch: 1.88.0 (Rust 1.88.0)
 
       - name: Check all targets on the declared MSRV
-        run: cargo check --locked --all-targets
+        run: cargo check --workspace --locked --all-targets
 
   test:
     name: ${{ matrix.name }}
@@ -100,7 +100,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: plugins/hwpx
+        working-directory: plugins/hancom
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
@@ -111,16 +111,16 @@ jobs:
           components: clippy
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked --all-targets
 
       - name: Test verifier executable discovery
         run: python scripts/test_executable_paths.py
 
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
 
       - name: Build release plugin
-        run: cargo build --release --locked
+        run: cargo build --release --locked --package officecli-hwpx --bin officecli-dump-reader-hwpx
 
       - name: Smoke large-file verifier
         run: python scripts/verify-large-file.py --skip-officecli --sections 1 --text-mib 1

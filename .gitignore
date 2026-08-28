@@ -2,6 +2,7 @@
 .dotnet/
 .dotnet-cli-home/
 .nuget/
+plugins/hancom/target/
 __pycache__/
 *.py[cod]
 

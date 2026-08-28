@@ -30,7 +30,7 @@ source "${bootstrap_script_dir}/dev-env.sh"
 
 if ! command -v cargo >/dev/null 2>&1; then
   printf '%s\n' \
-    'Rust is required for plugins/hwpx.' \
+    'Rust is required for plugins/hancom.' \
     'Install rustup from https://rustup.rs, then rerun this script.' >&2
   exit 1
 fi
