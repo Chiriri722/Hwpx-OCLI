@@ -171,8 +171,10 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
       기존 package/lib/bin 이름과 `Cargo.lock`을 유지한 채 `crates/hancom-hwp` 단일 member로
       옮겼다. 로컬에서 Rust 테스트 225개, Rust 1.88 all-target check, stable clippy, release build,
       네이티브 Windows host 계약 35개, 실행 경로 6개, action pin 17개, workflow YAML 8개,
-      actionlint와 PowerShell/Bash 구문 검사를 모두 통과했다. GitHub-hosted Linux/Windows
-      게이트는 이동 커밋을 push한 뒤 별도로 확인한다.
+      actionlint와 PowerShell/Bash 구문 검사를 모두 통과했다. 커밋 `6decf630`의
+      [HWPX plugin run 33160363729](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33160363729)에서
+      GitHub-hosted Linux/Windows 전체 회귀·MSRV·host·실제 HWP/HWPX 설치/조회/제거가 성공했고,
+      [action pin run 33160363733](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33160363733)도 통과했다.
 - [ ] T1-2 · `hancom-core` 추출: 컨테이너 판별, 문서모델, 단위변환, 자원예산·보안경계,
       JSONL emitter, heartbeat, 진단. 기존 `format.rs`의 매직바이트 판별을 여기로.
 - [ ] T1-3 · `officecli-hancom-hwp` 바이너리로 기존 기능 이관 + `.owpml`·`.hml` 확장자 추가
@@ -314,16 +316,16 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0 완료 · P1 진행 중(T1-1 로컬 게이트 완료).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0 완료 · P1 진행 중(T1-1 완료, T1-2 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
-T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬
-회귀·MSRV·공급망·스크립트 검증을 통과했다. 이동 커밋의 원격 양 OS 결과를 기다린다.
+T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
+원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T1-1 workspace 이동을 커밋·push하고 GitHub-hosted Linux/Windows 회귀를 확인한다.
-2. T1-2에서 공통 core를 추출하되 기존 `officecli-hwpx` 공개 surface에는 임시 re-export를 둔다.
+1. T1-2에서 공통 core를 추출하되 기존 `officecli-hwpx` 공개 surface에는 임시 re-export를 둔다.
+2. T1-3에서 한글 계열 진입점과 `.owpml`·`.hml` 지원을 RED 테스트부터 구현한다.
 3. 현재 브랜치의 upstream 지연은 workspace 이동과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
 5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
