@@ -68,6 +68,9 @@ the PDF files are not redistributed.
 - Current host behavior:
   `DocumentHandlerFactory.TryOpenViaPlugin` and
   `PluginManifestExtensions.ResolveTargetFormat`
+- Shared-core implementation: commit `da540e47`, validated by
+  [HWPX plugin run 33162799813](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33162799813)
+  and [action pin run 33162799808](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33162799808)
 - Local P0 evidence is recorded in
   [`../../plugins/hancom/notes.md`](../../plugins/hancom/notes.md). Commit `e77fb77c`
   satisfied T0-3 in [HWPX plugin run 33157787880](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33157787880),

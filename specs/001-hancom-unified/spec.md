@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-hancom-unified`
 **Created**: 2026-08-28
-**Status**: P1 진행 중 — T1-1 workspace 이동 양 OS 게이트 완료, T1-2 다음
+**Status**: P1 진행 중 — T1-1 workspace 이동과 T1-2 공용 core 추출 양 OS 게이트 완료, T1-3 다음
 **Task Plan**: `./task-plan.md` (정본 작업 목록)
 **Research**: `../../.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록)
 **Official Sources**: `../../docs/spec-sources.md` (한컴 원문 URL·리비전·바이트·SHA-256)
