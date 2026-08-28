@@ -5,6 +5,8 @@
 
 use quick_xml::events::BytesStart;
 
+use crate::error::Result;
+
 /// `hp:run` → `run`. 접두사를 떼고 소유 String으로 돌려준다.
 pub fn local_name(raw: &[u8]) -> String {
     let s = String::from_utf8_lossy(raw);
@@ -45,6 +47,19 @@ pub fn attr_i64(e: &BytesStart<'_>, name: &str) -> Option<i64> {
     t.parse::<i64>()
         .ok()
         .or_else(|| t.parse::<f64>().ok().map(|f| f.round() as i64))
+}
+
+/// `&amp;` 또는 `&#48;`처럼 quick-xml이 별도 이벤트로 내는 엔티티를
+/// 내용 손실 없이 문자열로 바꾼다. 알 수 없는 이름은 원문 형태로 보존한다.
+pub fn resolve_entity(reference: &quick_xml::events::BytesRef<'_>) -> Result<String> {
+    if let Ok(Some(character)) = reference.resolve_char_ref() {
+        return Ok(character.to_string());
+    }
+    let name = reference.decode()?;
+    Ok(match quick_xml::escape::resolve_predefined_entity(&name) {
+        Some(value) => value.to_string(),
+        None => format!("&{name};"),
+    })
 }
 
 #[cfg(test)]

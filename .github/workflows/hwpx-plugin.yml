@@ -120,7 +120,7 @@ jobs:
         run: cargo clippy --workspace --locked --all-targets -- -D warnings
 
       - name: Build release plugin
-        run: cargo build --release --locked --package officecli-hwpx --bin officecli-dump-reader-hwpx
+        run: cargo build --release --locked --package officecli-hwpx --bins
 
       - name: Smoke large-file verifier
         run: python scripts/verify-large-file.py --skip-officecli --sections 1 --text-mib 1
@@ -189,7 +189,7 @@ jobs:
           matches = [
               plugin
               for plugin in payload.get("data", [])
-              if plugin.get("name") == "officecli-hwpx"
+              if plugin.get("name") == "officecli-hancom-hwp"
               and {".hwp", ".hwpx"}.issubset(set(plugin.get("extensions", [])))
           ]
           assert matches, payload
@@ -294,7 +294,7 @@ jobs:
             throw "officecli plugins list returned an unsuccessful envelope: $pluginsRaw"
           }
           $matches = @($plugins.data | Where-Object {
-            ($_.name -eq 'officecli-hwpx') -and
+            ($_.name -eq 'officecli-hancom-hwp') -and
             ($_.extensions -contains '.hwp') -and
             ($_.extensions -contains '.hwpx')
           })

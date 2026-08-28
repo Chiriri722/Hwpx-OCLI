@@ -15,11 +15,16 @@ use serde_json::Value;
 use std::os::unix::fs::PermissionsExt;
 
 const BIN: &str = "officecli-dump-reader-hwpx";
+const CANONICAL_BIN: &str = "officecli-hancom-hwp";
 const HANCOM_NOTICE: &str =
     "본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.";
 
 fn plugin() -> Command {
     Command::cargo_bin(BIN).expect("binary is built")
+}
+
+fn canonical_plugin() -> Command {
+    Command::cargo_bin(CANONICAL_BIN).expect("canonical binary is built")
 }
 
 // ─────────────────────────── C1. --info 매니페스트 ───────────────────────────
@@ -69,7 +74,15 @@ fn info_declares_protocol_one() {
 }
 
 #[test]
-fn info_declares_dump_reader_kind_and_hwp_extensions() {
+fn canonical_binary_is_the_primary_hancom_hwp_entrypoint() {
+    let out = canonical_plugin().arg("--info").assert().success();
+    let manifest: Value = serde_json::from_slice(&out.get_output().stdout)
+        .expect("canonical binary must print a manifest");
+    assert_eq!(manifest["name"], "officecli-hancom-hwp");
+}
+
+#[test]
+fn info_declares_dump_reader_kind_and_all_hancom_hwp_extensions() {
     let m = info_manifest();
     let kinds: Vec<&str> = m["kinds"]
         .as_array()
@@ -87,8 +100,8 @@ fn info_declares_dump_reader_kind_and_hwp_extensions() {
         .collect();
     assert_eq!(
         exts,
-        vec![".hwpx", ".hwp"],
-        "both advertised extensions must include a leading dot"
+        vec![".hwpx", ".owpml", ".hml", ".hwp"],
+        "all advertised extensions must include a leading dot"
     );
 }
 
@@ -216,6 +229,74 @@ fn dump_emits_one_json_object_per_line() {
         let v: Value = serde_json::from_str(line).expect("each line must be valid JSON");
         assert!(v.is_object(), "each line must be an object, got: {line}");
     }
+}
+
+#[test]
+fn canonical_binary_reads_owpml_and_single_xml_hml() {
+    let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"])
+        .write_to_temp("sample.owpml");
+    let owpml_out = canonical_plugin()
+        .arg("dump")
+        .arg(&owpml)
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&owpml_out.get_output().stdout).contains("OWPML 확장자")
+    );
+
+    let hml_dir = tempfile::tempdir().expect("tempdir");
+    let hml = hml_dir.path().join("sample.hml");
+    std::fs::write(
+        &hml,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<HWPML Version="2.91"><HEAD SecCnt="1"><MAPPINGTABLE>
+<CHARSHAPELIST Count="1"><CHARSHAPE Id="0" Height="1000"/></CHARSHAPELIST>
+<PARASHAPELIST Count="1"><PARASHAPE Id="0" Align="Left"><PARAMARGIN/></PARASHAPE></PARASHAPELIST>
+</MAPPINGTABLE></HEAD><BODY><SECTION Id="0"><P ParaShape="0">
+<TEXT CharShape="0"><CHAR>HML 단일 XML 성공</CHAR></TEXT>
+</P></SECTION></BODY></HWPML>"#
+            .as_bytes(),
+    )
+    .expect("write hml");
+    let hml_out = canonical_plugin()
+        .arg("dump")
+        .arg(&hml)
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&hml_out.get_output().stdout).contains("HML 단일 XML 성공")
+    );
+}
+
+#[test]
+fn generic_xml_is_not_misclassified_as_hwpml() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("not-hwpml.hml");
+    std::fs::write(&path, b"<html><body>HWPML text only</body></html>").expect("write xml");
+    let out = canonical_plugin().arg("dump").arg(path).assert().code(2);
+    assert!(out.get_output().stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.get_output().stderr).contains("not an HWPML"));
+}
+
+#[test]
+fn unsupported_hwpml_control_exits_three_without_partial_stdout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("unsupported-control.hml");
+    std::fs::write(
+        &path,
+        r#"<HWPML Version="2.91"><BODY><SECTION>
+          <P><TEXT><CHAR>이 문단도 부분 출력되면 안 됨</CHAR></TEXT></P>
+          <P><TEXT><EQUATION><SCRIPT>x+y</SCRIPT></EQUATION></TEXT></P>
+        </SECTION></BODY></HWPML>"#
+            .as_bytes(),
+    )
+    .expect("write hml");
+
+    let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
+    assert!(out.get_output().stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&out.get_output().stderr).contains("EQUATION")
+    );
 }
 
 #[test]

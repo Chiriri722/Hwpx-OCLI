@@ -16,7 +16,7 @@ use quick_xml::Reader;
 
 use super::model::{Block, Cell, Image, Inline, Paragraph, Table, TextField, TextRun};
 use super::styles::{normalize_color, StyleTable};
-use super::xml::{attr, attr_i64, attr_usize, local_name};
+use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
 use crate::error::{PluginError, Result};
 
 /// 셀 안에 또 표가 나오는 등 재귀가 깊어질 때의 상한. 악의적 입력 방어.
@@ -588,21 +588,6 @@ fn read_text_until_end(reader: &mut Reader<&[u8]>, end: &str) -> Result<String> 
         buf.clear();
     }
     Ok(out)
-}
-
-/// `&amp;` → `&`, `&#48;` → `0`.
-///
-/// 해석할 수 없는 엔티티는 원문 그대로(`&name;`) 남긴다. 조용히 버리면
-/// 내용이 손실되고, 실패로 처리하면 문서 하나 때문에 전체가 죽는다.
-fn resolve_entity(r: &quick_xml::events::BytesRef<'_>) -> Result<String> {
-    if let Ok(Some(c)) = r.resolve_char_ref() {
-        return Ok(c.to_string());
-    }
-    let name = r.decode()?;
-    match quick_xml::escape::resolve_predefined_entity(&name) {
-        Some(s) => Ok(s.to_string()),
-        None => Ok(format!("&{name};")),
-    }
 }
 
 /// 여는 태그를 이미 읽은 상태에서 해당 요소를 닫는 태그까지 버린다.

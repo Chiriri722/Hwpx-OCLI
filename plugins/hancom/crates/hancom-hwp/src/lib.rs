@@ -1,11 +1,13 @@
-//! OfficeCLI `dump-reader` 플러그인 — HWPX(OWPML) → docx 명령.
+//! OfficeCLI `dump-reader` 플러그인 — 한글(HWPX/OWPML/HWPML/HWP) → docx 명령.
 //!
 //! 계약: `docs/01-protocol-contract.md`
 
+pub mod cli;
 mod converter;
 pub mod emit;
 pub mod error;
 pub mod format;
+pub mod hwpml;
 pub mod manifest;
 pub mod owpml;
 
@@ -14,8 +16,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use error::{ExitCode, PluginError, Result};
-pub use officecli_hancom_core::diagnostics::escape_diagnostic_text;
 use officecli_hancom_core::diagnostics::diagnostic_path;
+pub use officecli_hancom_core::diagnostics::escape_diagnostic_text;
 
 /// 파싱된 명령줄.
 #[derive(Debug, PartialEq)]
@@ -237,6 +239,10 @@ fn unsupported_binary_hwp(detected: &format::SourceFormat) -> PluginError {
             // 도달할 수 없다. needs_conversion()이 false인 경우다.
             "unexpected format state".to_string()
         }
+        format::SourceFormat::Hwpml => {
+            // 도달할 수 없다. needs_conversion()이 false인 경우다.
+            "unexpected format state".to_string()
+        }
     };
 
     if let format::SourceFormat::Hwp5(info) = detected {
@@ -260,12 +266,12 @@ fn unsupported_binary_hwp(detected: &format::SourceFormat) -> PluginError {
 }
 
 pub const HELP_TEXT: &str = concat!(
-    "officecli-dump-reader-hwpx — OfficeCLI dump-reader plugin for HWPX\n",
+    "officecli-hancom-hwp — OfficeCLI dump-reader plugin for HWPX/OWPML/HWPML/HWP\n",
     "\n",
     "USAGE:\n",
-    "  officecli-dump-reader-hwpx --info\n",
-    "  officecli-dump-reader-hwpx dump <source.hwpx> [--media-dir <dir>]\n",
-    "                                                [--log-file <path>] [--quiet]\n",
+    "  officecli-hancom-hwp --info\n",
+    "  officecli-hancom-hwp dump <source> [--media-dir <dir>]\n",
+    "                                      [--log-file <path>] [--quiet]\n",
     "\n",
     "The plugin writes one JSON BatchItem per line to stdout and exits.\n",
     "See docs/01-protocol-contract.md for the full contract.\n",
@@ -334,7 +340,19 @@ pub fn run<O: Write, E: Write>(cmd: Command, stdout: &mut O, stderr: &mut E) -> 
                 .as_ref()
                 .map_or(source.as_path(), converter::ConvertedHwpx::path);
 
-            let doc = owpml::read_document(readable_source)?;
+            let doc = match if converted.is_some() {
+                &format::SourceFormat::Hwpx
+            } else {
+                &detected
+            } {
+                format::SourceFormat::Hwpx => owpml::read_document(readable_source)?,
+                format::SourceFormat::Hwpml => hwpml::read_document(readable_source)?,
+                format::SourceFormat::Hwp5(_) | format::SourceFormat::Hwp3 => {
+                    return Err(PluginError::internal(
+                        "binary HWP conversion completed without a readable HWPX source",
+                    ));
+                }
+            };
             let count = emit::stream_document(&doc, stdout)?;
 
             // 진단은 stderr 또는 --log-file로. stdout은 JSONL 전용이다(§5.1).

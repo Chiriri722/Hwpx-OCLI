@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-pub const PLUGIN_NAME: &str = "officecli-hwpx";
+pub const PLUGIN_NAME: &str = "officecli-hancom-hwp";
 pub const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §4.1: v1 플러그인은 반드시 1. 불일치 시 메인이 exit 5로 거부한다.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -45,14 +45,15 @@ impl Default for Manifest {
             version: PLUGIN_VERSION,
             protocol: PROTOCOL_VERSION,
             kinds: vec!["dump-reader"],
-            extensions: vec![".hwpx", ".hwp"],
+            extensions: vec![".hwpx", ".owpml", ".hml", ".hwp"],
             target: "docx",
             runtime: "rust",
             idle_timeout_seconds: IdleTimeout {
                 default: 60,
                 verbs: VerbTimeouts { dump: 30 },
             },
-            description: "HWP/HWPX dump-reader — reads .hwpx directly and .hwp via optional RHWP. \
+            description: "Hancom HWP dump-reader — reads .hwpx/.owpml and legacy .hml directly, \
+                with .hwp via optional RHWP. \
                 본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.",
             license: "MIT",
             supports: vec![

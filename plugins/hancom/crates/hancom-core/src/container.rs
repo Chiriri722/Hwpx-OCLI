@@ -7,7 +7,8 @@
 //! |---|---|
 //! | HWP 3.0 | 파일 선두 23바이트가 `HWP Document File V3.00` |
 //! | HWP 5.x | CFB 시그니처 + `FileHeader` 스트림이 `HWP Document File`로 시작 |
-//! | HWPX | ZIP 시그니처 + `mimetype`이 `application/hwp+zip` 또는 `Contents/section*.xml` 존재 |
+//! | HWPX/OWPML | ZIP 시그니처 + `mimetype`이 `application/hwp+zip` 또는 `Contents/section*.xml` 존재 |
+//! | HWPML | XML 루트 엘리먼트의 local name이 `HWPML` |
 //!
 //! 판별 순서가 중요하다. CFB 파일의 `FileHeader` 스트림에도
 //! `HWP Document File` 문자열이 들어 있으므로, HWP 3.0은 **파일 선두**에서만
@@ -19,11 +20,14 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::error::{PluginError, Result};
+use crate::xml_encoding::{bom_encoding, decode_xml_prefix, XmlEncoding};
 
 pub const HWPX_MIMETYPE_ENTRY: &str = "mimetype";
 pub const HWPX_MIMETYPE_VALUE: &str = "application/hwp+zip";
 pub const HWPX_SECTION_PREFIX: &str = "Contents/section";
 pub const MAX_MIMETYPE_BYTES: u64 = 4 * 1024;
+/// XML 선언·주석 뒤의 루트 엘리먼트를 찾기 위해 읽는 최대 바이트.
+pub const MAX_XML_PREAMBLE_BYTES: u64 = 64 * 1024;
 
 /// CFB(Compound File Binary, OLE) 컨테이너 시그니처.
 const CFB_SIGNATURE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
@@ -130,8 +134,10 @@ impl Hwp5Info {
 /// 판별된 입력 포맷.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFormat {
-    /// HWPX (ZIP + OWPML). 우리 파서가 직접 처리한다.
+    /// HWPX/OWPML (ZIP + OWPML). 우리 파서가 직접 처리한다.
     Hwpx,
+    /// HWPML (단일 XML, 보통 `.hml`). 우리 파서가 직접 처리한다.
+    Hwpml,
     /// HWP 5.x (CFB). 외부 변환기가 필요하다.
     Hwp5(Hwp5Info),
     /// HWP 3.0 (평문). 외부 변환기가 필요하다.
@@ -141,13 +147,14 @@ pub enum SourceFormat {
 impl SourceFormat {
     /// HWPX로 변환하는 단계가 필요한지.
     pub fn needs_conversion(&self) -> bool {
-        !matches!(self, Self::Hwpx)
+        !matches!(self, Self::Hwpx | Self::Hwpml)
     }
 
     /// 진단용 짧은 이름.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Hwpx => "hwpx",
+            Self::Hwpml => "hwpml",
             Self::Hwp5(_) => "hwp5",
             Self::Hwp3 => "hwp3",
         }
@@ -178,16 +185,80 @@ pub fn detect_reader<R: Read + Seek>(mut reader: R) -> Result<SourceFormat> {
         return detect_cfb(reader);
     }
 
-    // 3. ZIP → HWPX 인지 확인
+    // 3. ZIP → HWPX/OWPML 인지 확인
     if is_zip_like(head) {
         reader.seek(SeekFrom::Start(0))?;
         return detect_zip(reader);
+    }
+
+    // 4. XML → HWPML인지 루트 엘리먼트로 확인한다. 파일명이나 문서 안의
+    // 문자열 검색은 쓰지 않는다. UTF-8 BOM과 XML 선언/주석/공백을 허용한다.
+    if looks_like_xml(head) || looks_like_utf16_xml(head) {
+        reader.seek(SeekFrom::Start(0))?;
+        return detect_xml(reader);
     }
 
     Err(PluginError::corrupt(format!(
         "unrecognized format (first bytes: {})",
         hex_prefix(head, 8)
     )))
+}
+
+/// 단일 XML이 HWPML인지 루트 엘리먼트만 제한된 범위에서 확인한다.
+fn detect_xml<R: Read + Seek>(reader: R) -> Result<SourceFormat> {
+    use quick_xml::events::Event;
+
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_XML_PREAMBLE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    let truncated = u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_XML_PREAMBLE_BYTES;
+    let decoded = decode_xml_prefix(&bytes, MAX_XML_PREAMBLE_BYTES)?;
+    let mut xml = quick_xml::Reader::from_str(&decoded.text);
+    xml.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                let raw = element.name();
+                let local = xml_local_name(raw.as_ref());
+                return if local.eq_ignore_ascii_case(b"HWPML") {
+                    Ok(SourceFormat::Hwpml)
+                } else {
+                    Err(PluginError::corrupt(format!(
+                        "XML root <{}> is not an HWPML document",
+                        String::from_utf8_lossy(local)
+                    )))
+                };
+            }
+            Ok(Event::DocType(_)) => {
+                return Err(PluginError::corrupt(
+                    "HWPML XML document type declarations are not supported",
+                ));
+            }
+            Ok(Event::Eof) => {
+                if truncated {
+                    return Err(PluginError::corrupt(format!(
+                        "resource limit exceeded: XML root element not found within {MAX_XML_PREAMBLE_BYTES} bytes"
+                    )));
+                }
+                return Err(PluginError::corrupt("XML input has no HWPML root element"));
+            }
+            Err(error) => {
+                if truncated {
+                    return Err(PluginError::corrupt(format!(
+                        "resource limit exceeded: XML root element not found within {MAX_XML_PREAMBLE_BYTES} bytes"
+                    )));
+                }
+                return Err(PluginError::corrupt(format!(
+                    "malformed XML before HWPML root: {error}"
+                )));
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// CFB 컨테이너에서 `FileHeader` 스트림을 읽어 HWP 5.x인지 확인한다.
@@ -265,6 +336,26 @@ fn is_zip_like(head: &[u8]) -> bool {
         && head[0] == ZIP_SIGNATURE[0]
         && head[1] == ZIP_SIGNATURE[1]
         && ZIP_THIRD_BYTES.contains(&head[2])
+}
+
+fn looks_like_xml(head: &[u8]) -> bool {
+    let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(head);
+    let first = head
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace());
+    first.is_none_or(|byte| byte == b'<')
+}
+
+fn looks_like_utf16_xml(head: &[u8]) -> bool {
+    matches!(
+        bom_encoding(head),
+        Some((XmlEncoding::Utf16Le | XmlEncoding::Utf16Be, 2))
+    )
+}
+
+fn xml_local_name(raw: &[u8]) -> &[u8] {
+    raw.rsplit(|byte| *byte == b':').next().unwrap_or(raw)
 }
 
 /// EOF를 오류로 보지 않고 읽은 만큼 돌려준다.
@@ -478,10 +569,57 @@ mod tests {
     #[test]
     fn needs_conversion_only_for_binary_formats() {
         assert!(!SourceFormat::Hwpx.needs_conversion());
+        assert!(!SourceFormat::Hwpml.needs_conversion());
         assert!(SourceFormat::Hwp3.needs_conversion());
         let b = cfb_bytes(HWP5_SIGNATURE, [0, 0, 0, 5], 0);
         let f = detect_reader(Cursor::new(b)).expect("detects");
         assert!(f.needs_conversion());
         assert_eq!(f.label(), "hwp5");
+    }
+
+    #[test]
+    fn detects_hwpml_after_utf8_bom_declaration_and_whitespace() {
+        let xml = b"\xEF\xBB\xBF  \r\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<HWPML Version=\"2.91\"><BODY/></HWPML>";
+        assert_eq!(
+            detect_reader(Cursor::new(xml)).expect("detects HWPML"),
+            SourceFormat::Hwpml
+        );
+        assert_eq!(SourceFormat::Hwpml.label(), "hwpml");
+    }
+
+    #[test]
+    fn rejects_generic_xml_even_when_it_mentions_hwpml_in_text() {
+        let xml = b"<?xml version=\"1.0\"?><html><body>HWPML</body></html>";
+        let error = detect_reader(Cursor::new(xml)).expect_err("not HWPML");
+        assert!(error.message.contains("not an HWPML"), "got: {error}");
+    }
+
+    #[test]
+    fn detects_utf16_hwpml_with_either_bom() {
+        fn encoded(xml: &str, little_endian: bool) -> Vec<u8> {
+            let mut bytes = if little_endian {
+                vec![0xFF, 0xFE]
+            } else {
+                vec![0xFE, 0xFF]
+            };
+            for unit in xml.encode_utf16() {
+                let pair = if little_endian {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                };
+                bytes.extend_from_slice(&pair);
+            }
+            bytes
+        }
+
+        let xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-16\"?><HWPML Version=\"2.91\"><BODY/></HWPML>";
+        for little_endian in [true, false] {
+            assert_eq!(
+                detect_reader(Cursor::new(encoded(xml, little_endian))).expect("detects UTF-16"),
+                SourceFormat::Hwpml
+            );
+        }
     }
 }

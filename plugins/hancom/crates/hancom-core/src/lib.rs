@@ -12,3 +12,4 @@ pub mod emit;
 pub mod error;
 pub mod heartbeat;
 pub mod model;
+pub mod xml_encoding;
