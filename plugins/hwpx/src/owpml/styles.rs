@@ -125,9 +125,7 @@ impl StyleTable {
                             });
                         }
                         "subscript" if cur_char.is_some() => {
-                            set_char(&mut cur_char, |s| {
-                                s.vert_align = Some(VertAlign::Subscript)
-                            });
+                            set_char(&mut cur_char, |s| s.vert_align = Some(VertAlign::Subscript));
                         }
                         "fontRef" if cur_char.is_some() => {
                             // 한글 폰트를 우선하고 없으면 라틴을 쓴다.
@@ -151,13 +149,15 @@ impl StyleTable {
                         }
                         // ── paraPr 자식들 ──
                         "align" if cur_para.is_some() => {
-                            if let Some(a) =
-                                attr(&e, "horizontal").as_deref().and_then(Align::from_owpml)
+                            if let Some(a) = attr(&e, "horizontal")
+                                .as_deref()
+                                .and_then(Align::from_owpml)
                             {
                                 set_para(&mut cur_para, move |s| s.align = Some(a));
                             }
                         }
-                        "margin" if cur_para.is_some() => { /* 자식 intent/left/prev/next에서 읽는다 */ }
+                        "margin" if cur_para.is_some() => { /* 자식 intent/left/prev/next에서 읽는다 */
+                        }
                         "intent" if cur_para.is_some() => {
                             if let Some(v) = attr(&e, "value").and_then(|v| parse_i64(&v)) {
                                 let t = hwpunit_to_twip(v);
@@ -259,8 +259,8 @@ fn parse_font_table(xml: &str) -> HashMap<String, String> {
                 match local_name(owned.as_ref()).as_str() {
                     "fontfaces" => depth_in_faces = true,
                     "fontface" => {
-                        in_hangul = attr(&e, "lang")
-                            .is_some_and(|l| l.eq_ignore_ascii_case("HANGUL"));
+                        in_hangul =
+                            attr(&e, "lang").is_some_and(|l| l.eq_ignore_ascii_case("HANGUL"));
                     }
                     "font" if depth_in_faces => {
                         if let (Some(id), Some(face)) = (attr(&e, "id"), attr(&e, "face")) {
@@ -344,7 +344,10 @@ mod tests {
 
     #[test]
     fn normalizes_color_forms() {
-        assert_eq!(normalize_color("#ff0000".into()).as_deref(), Some("#FF0000"));
+        assert_eq!(
+            normalize_color("#ff0000".into()).as_deref(),
+            Some("#FF0000")
+        );
         assert_eq!(normalize_color("00FF00".into()).as_deref(), Some("#00FF00"));
         assert_eq!(normalize_color("none".into()), None);
         assert_eq!(normalize_color("".into()), None);
@@ -406,7 +409,10 @@ mod tests {
             !t.char_style(Some("2")).strike,
             "no attribute at all must default to off"
         );
-        assert!(t.char_style(Some("3")).strike, "legacy type= must still work");
+        assert!(
+            t.char_style(Some("3")).strike,
+            "legacy type= must still work"
+        );
     }
 
     #[test]
@@ -499,8 +505,8 @@ mod tests {
               </hp:case>
               <hp:default>
                 <hh:margin>
-                  <hc:intent value="-8570" unit="HWPUNIT"/>
-                  <hc:left value="8570" unit="HWPUNIT"/>
+                  <hc:intent value="-5000" unit="HWPUNIT"/>
+                  <hc:left value="6000" unit="HWPUNIT"/>
                 </hh:margin>
               </hp:default>
             </hp:switch>
@@ -508,10 +514,11 @@ mod tests {
         </hh:paraProperties>"##;
         let t = StyleTable::parse(xml).expect("parses");
         let p = t.para_style(Some("0"));
-        // -8570 HWPUNIT / 5 = -1714 twip → 내어쓰기 1714
-        assert_eq!(p.indent_hanging_twip, Some(1714));
+        // Host가 case namespace를 협상하지 않으므로 뒤의 default가 이긴다.
+        // -5000 HWPUNIT / 5 = -1000 twip → 내어쓰기 1000
+        assert_eq!(p.indent_hanging_twip, Some(1000));
         assert_eq!(p.indent_first_twip, None);
-        assert_eq!(p.indent_left_twip, Some(1714));
+        assert_eq!(p.indent_left_twip, Some(1200));
     }
 
     #[test]

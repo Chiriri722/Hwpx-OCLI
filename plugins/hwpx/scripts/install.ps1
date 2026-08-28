@@ -13,25 +13,54 @@ if ((@($Uninstall, $PrintEnv) | Where-Object { $_ }).Count -gt 1) {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $binaryName = "officecli-dump-reader-hwpx.exe"
 $builtBinary = Join-Path $repoRoot "target\release\$binaryName"
-$hwpInstallDirectory = Join-Path $HOME ".officecli\plugins\dump-reader\hwp"
-$hwpxInstallDirectory = Join-Path $HOME ".officecli\plugins\dump-reader\hwpx"
+if (-not [IO.Path]::IsPathFullyQualified($HOME)) {
+    throw "HOME must be an absolute path"
+}
+$homeDirectory = [IO.Path]::GetFullPath($HOME)
+$officeCliDirectory = Join-Path $homeDirectory ".officecli"
+$pluginsDirectory = Join-Path $officeCliDirectory "plugins"
+$pluginRoot = Join-Path $pluginsDirectory "dump-reader"
+$hwpInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\hwp"
+$hwpxInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\hwpx"
 $installTargets = @(
     [PSCustomObject]@{ Extension = "hwp"; Directory = $hwpInstallDirectory; Path = (Join-Path $hwpInstallDirectory "plugin.exe") }
     [PSCustomObject]@{ Extension = "hwpx"; Directory = $hwpxInstallDirectory; Path = (Join-Path $hwpxInstallDirectory "plugin.exe") }
 )
 
 function Assert-InstallDirectoryNotReparse([string]$Path) {
-    if (Test-Path -LiteralPath $Path) {
-        $directoryItem = Get-Item -LiteralPath $Path -Force
-        if (($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "refusing reparseable install directory: $Path"
+    foreach ($component in @($officeCliDirectory, $pluginsDirectory, $pluginRoot, $Path)) {
+        try {
+            $directoryItem = Get-Item -LiteralPath $component -Force -ErrorAction Stop
+        } catch [System.Management.Automation.ItemNotFoundException] {
+            continue
         }
+        if (($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "refusing reparseable install directory: $component"
+        }
+        if (-not $directoryItem.PSIsContainer) {
+            throw "refusing non-directory install path component: $component"
+        }
+    }
+}
+
+function Assert-InstallTargetSafe([string]$Path) {
+    try {
+        $targetItem = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        return
+    }
+    if (($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "refusing reparseable install target: $Path"
+    }
+    if ($targetItem.PSIsContainer) {
+        throw "refusing non-file install target: $Path"
     }
 }
 
 if ($Uninstall) {
     foreach ($target in $installTargets) {
         Assert-InstallDirectoryNotReparse $target.Directory
+        Assert-InstallTargetSafe $target.Path
     }
     foreach ($target in $installTargets) {
         if (Test-Path -LiteralPath $target.Path) {
@@ -84,7 +113,12 @@ if ($LASTEXITCODE -ne 0) {
 
 foreach ($target in $installTargets) {
     Assert-InstallDirectoryNotReparse $target.Directory
-    New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null
+}
+foreach ($target in $installTargets) {
+    [void][IO.Directory]::CreateDirectory($target.Directory)
+}
+foreach ($target in $installTargets) {
+    Assert-InstallDirectoryNotReparse $target.Directory
 }
 
 $sourceHash = (Get-FileHash -LiteralPath $builtBinary -Algorithm SHA256).Hash
@@ -92,14 +126,11 @@ $staged = @()
 $records = @()
 try {
     foreach ($target in $installTargets) {
-        if (Test-Path -LiteralPath $target.Path) {
-            $existing = Get-Item -LiteralPath $target.Path -Force
-            if (($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "refusing reparseable install target: $($target.Path)"
-            }
-        }
+        Assert-InstallDirectoryNotReparse $target.Directory
+        Assert-InstallTargetSafe $target.Path
 
         $stage = Join-Path $target.Directory (".plugin." + [Guid]::NewGuid().ToString("N") + ".tmp.exe")
+        $staged += [PSCustomObject]@{ Target = $target; Stage = $stage }
         Copy-Item -LiteralPath $builtBinary -Destination $stage
         $stageHash = (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash
         if ($stageHash -ne $sourceHash) {
@@ -109,11 +140,12 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "staged $($target.Extension) plugin failed its manifest check"
         }
-        $staged += [PSCustomObject]@{ Target = $target; Stage = $stage }
     }
 
     foreach ($item in $staged) {
         $target = $item.Target
+        Assert-InstallDirectoryNotReparse $target.Directory
+        Assert-InstallTargetSafe $target.Path
         $backup = Join-Path $target.Directory (".plugin." + [Guid]::NewGuid().ToString("N") + ".bak.exe")
         $hadExisting = Test-Path -LiteralPath $target.Path -PathType Leaf
         $record = [PSCustomObject]@{
@@ -124,10 +156,14 @@ try {
         }
         $records += $record
 
-        if ($hadExisting) {
-            [IO.File]::Replace($item.Stage, $target.Path, $backup, $true)
-        } else {
-            [IO.File]::Move($item.Stage, $target.Path)
+        try {
+            if ($hadExisting) {
+                [IO.File]::Replace($item.Stage, $target.Path, $backup, $true)
+            } else {
+                [IO.File]::Move($item.Stage, $target.Path)
+            }
+        } catch {
+            throw "failed to commit $($target.Extension) plugin: $($_.Exception.Message)"
         }
         $record.Committed = $true
     }
@@ -138,26 +174,56 @@ try {
             throw "installed $($record.Target.Extension) plugin failed its manifest check"
         }
     }
-} catch {
-    [array]::Reverse($records)
     foreach ($record in $records) {
-        if ($record.Committed -and (Test-Path -LiteralPath $record.Target.Path)) {
-            Remove-Item -LiteralPath $record.Target.Path -Force
-        }
-        if ($record.HadExisting -and (Test-Path -LiteralPath $record.Backup -PathType Leaf)) {
-            [IO.File]::Move($record.Backup, $record.Target.Path)
+        if (Test-Path -LiteralPath $record.Backup) {
+            try {
+                Remove-Item -LiteralPath $record.Backup -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "installed plugin is valid, but backup cleanup failed and was preserved at $($record.Backup): $($_.Exception.Message)"
+            }
         }
     }
-    throw
+} catch {
+    $installError = $_
+    $rollbackErrors = @()
+    [array]::Reverse($records)
+    foreach ($record in $records) {
+        try {
+            Assert-InstallDirectoryNotReparse $record.Target.Directory
+            if ($record.Committed) {
+                if ($record.HadExisting) {
+                    if (-not (Test-Path -LiteralPath $record.Backup -PathType Leaf)) {
+                        throw "recovery backup is missing: $($record.Backup)"
+                    }
+                    if (Test-Path -LiteralPath $record.Target.Path -PathType Leaf) {
+                        $restoreDisplaced = Join-Path $record.Target.Directory (".plugin." + [Guid]::NewGuid().ToString("N") + ".rollback.exe")
+                        $staged += [PSCustomObject]@{ Target = $record.Target; Stage = $restoreDisplaced }
+                        [IO.File]::Replace($record.Backup, $record.Target.Path, $restoreDisplaced, $true)
+                    } else {
+                        [IO.File]::Move($record.Backup, $record.Target.Path)
+                    }
+                } elseif (Test-Path -LiteralPath $record.Target.Path) {
+                    Remove-Item -LiteralPath $record.Target.Path -Force
+                }
+            } elseif (Test-Path -LiteralPath $record.Backup -PathType Leaf) {
+                throw "commit state is uncertain; recovery backup preserved at $($record.Backup)"
+            }
+        } catch {
+            $rollbackErrors += "[$($record.Target.Extension)] $($_.Exception.Message)"
+        }
+    }
+    if ($rollbackErrors.Count -gt 0) {
+        throw "installation failed: $($installError.Exception.Message); rollback incomplete and recovery backups were preserved: $($rollbackErrors -join '; ')"
+    }
+    throw $installError
 } finally {
     foreach ($item in $staged) {
         if (Test-Path -LiteralPath $item.Stage) {
-            Remove-Item -LiteralPath $item.Stage -Force
-        }
-    }
-    foreach ($record in $records) {
-        if (Test-Path -LiteralPath $record.Backup) {
-            Remove-Item -LiteralPath $record.Backup -Force
+            try {
+                Remove-Item -LiteralPath $item.Stage -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "temporary cleanup failed at $($item.Stage): $($_.Exception.Message)"
+            }
         }
     }
 }

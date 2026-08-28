@@ -15,7 +15,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CACHE_DIR="${HOME}/.local/officecli-verify"
-OFFICECLI_VERSION="${OFFICECLI_VERSION:-v1.0.143}"
+OFFICECLI_VERSION="${OFFICECLI_VERSION:-v1.0.145}"
 DO_DOWNLOAD=0
 
 [[ "${1:-}" == "--download" ]] && DO_DOWNLOAD=1

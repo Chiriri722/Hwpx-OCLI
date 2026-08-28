@@ -8,6 +8,8 @@ __pycache__/
 # .NET build output
 src/officecli/bin/
 src/officecli/obj/
+tests/**/bin/
+tests/**/obj/
 /bin/
 publish/
 *.user

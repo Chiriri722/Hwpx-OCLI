@@ -29,6 +29,7 @@ static partial class CommandBuilder
         cmd.SetAction(result => { var json = result.GetValue(jsonOption); return SafeRun(() =>
         {
             var plugins = PluginRegistry.EnumerateAll();
+            var registrationWarnings = PluginRegistry.RegistrationWarningsFor(plugins);
 
             if (json)
             {
@@ -53,6 +54,8 @@ static partial class CommandBuilder
                         // Warnings: section, so script/AI consumers of --json
                         // can react to drift without parsing stderr.
                         var pluginWarnings = p.Manifest.Warnings();
+                        if (registrationWarnings.TryGetValue(p.ExecutablePath, out var conflicts))
+                            pluginWarnings.AddRange(conflicts);
                         if (pluginWarnings.Count > 0)
                         {
                             w.WritePropertyName("warnings");
@@ -102,7 +105,13 @@ static partial class CommandBuilder
             // listing, but they help plugin authors notice drift before
             // users hit it at invocation time.
             var withWarnings = plugins
-                .Select(p => (p.Manifest.Name, Warnings: p.Manifest.Warnings()))
+                .Select(p =>
+                {
+                    var warnings = p.Manifest.Warnings();
+                    if (registrationWarnings.TryGetValue(p.ExecutablePath, out var conflicts))
+                        warnings.AddRange(conflicts);
+                    return (p.Manifest.Name, Warnings: warnings);
+                })
                 .Where(t => t.Warnings.Count > 0)
                 .ToList();
             if (withWarnings.Count > 0)
@@ -134,43 +143,14 @@ static partial class CommandBuilder
         cmd.SetAction(result => { var json = result.GetValue(jsonOption); return SafeRun(() =>
         {
             var target = result.GetValue(nameArg) ?? "";
-            var resolved = ResolveByNameOrPath(target);
-            if (resolved is null)
+            var resolvedInfo = ResolveManifestInfoByNameOrPath(target);
+            if (resolvedInfo is null)
                 throw new CliException($"Plugin not found: '{target}'")
                 {
                     Code = "plugin_not_found",
                     Suggestion = "Run `officecli plugins list` to see installed plugins, or provide the absolute path to the plugin executable.",
                 };
-
-            // Re-read the manifest raw rather than re-serializing from our typed
-            // class: this preserves any extra fields the plugin emits beyond
-            // what PluginManifest knows about, so `plugins info` is faithful to
-            // the plugin's actual --info output.
-            using var p = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = resolved.ExecutablePath,
-                    Arguments = "--info",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    // CONSISTENCY(child-stream-encoding): see BlankDocCreator.
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
-                    StandardErrorEncoding = System.Text.Encoding.UTF8,
-                    CreateNoWindow = true,
-                }
-            };
-            p.Start();
-            // Async-drain BOTH streams before waiting — the synchronous
-            // stdout-only read deadlocked when a plugin emitted verbose
-            // diagnostics on stderr (same pitfall PluginRegistry.TryReadManifest
-            // documents), and the Kill fallback sat unreachable behind it.
-            var manifestTask = p.StandardOutput.ReadToEndAsync();
-            var drainErrTask = p.StandardError.ReadToEndAsync();
-            if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } }
-            var rawManifest = manifestTask.Result;
-            _ = drainErrTask.Result;
+            var (resolved, rawManifest) = resolvedInfo.Value;
 
             if (json)
             {
@@ -443,17 +423,78 @@ static partial class CommandBuilder
     private static ResolvedPlugin? ResolveByNameOrPath(string target)
     {
         // Path mode: absolute or relative path that exists.
-        if (target.Contains(Path.DirectorySeparatorChar) || target.Contains(Path.AltDirectorySeparatorChar) || File.Exists(target))
+        if (LooksLikePluginPath(target))
         {
             var full = Path.GetFullPath(target);
-            if (File.Exists(full) && PluginRegistry.TryReadManifest(full, out var m))
-                return new ResolvedPlugin(full, m);
+            if (File.Exists(full) && PluginRegistry.TryReadManifest(
+                full,
+                out var m,
+                out var identity))
+            {
+                return PluginRegistry.CreateResolvedPlugin(full, m, identity);
+            }
             return null;
         }
 
         // Name mode: search the full enumeration for a manifest whose name matches.
         var all = PluginRegistry.EnumerateAll();
-        return all.FirstOrDefault(p =>
-            string.Equals(p.Manifest.Name, target, StringComparison.OrdinalIgnoreCase));
+        return PluginRegistry.ResolveByStableName(all, target);
     }
+
+    private static (ResolvedPlugin Plugin, string RawManifest)? ResolveManifestInfoByNameOrPath(
+        string target)
+    {
+        // An explicit path is probed exactly once, so the full future-aware raw
+        // manifest and the typed view are guaranteed to be one snapshot.
+        if (LooksLikePluginPath(target))
+        {
+            var full = Path.GetFullPath(target);
+            if (!File.Exists(full) || !PluginRegistry.TryReadManifest(
+                full,
+                out var manifest,
+                out var identity,
+                out var rawManifest))
+            {
+                return null;
+            }
+
+            return (
+                PluginRegistry.CreateResolvedPlugin(full, manifest, identity),
+                rawManifest);
+        }
+
+        // Name lookup must enumerate all registrations to enforce ambiguity.
+        // Re-probe only the chosen executable to recover unknown future fields,
+        // then require it to match the identity from that discovery snapshot.
+        var resolved = ResolveByNameOrPath(target);
+        if (resolved is null) return null;
+        if (!PluginRegistry.TryReadManifest(
+            resolved.ExecutablePath,
+            out _,
+            out var refreshedIdentity,
+            out var refreshedRawManifest))
+        {
+            throw new CliException(
+                $"Plugin manifest could not be read safely: '{target}'")
+            {
+                Code = "plugin_manifest_invalid",
+                Suggestion = "Verify that the plugin emits one valid protocol-v1 JSON manifest within five seconds.",
+            };
+        }
+        if (!PluginRegistry.ManifestIdentityMatches(resolved, refreshedIdentity))
+        {
+            throw new CliException(
+                $"Plugin manifest changed while resolving '{target}'.")
+            {
+                Code = "plugin_manifest_changed",
+                Suggestion = "Verify that the plugin executable is not being replaced, then retry or provide its absolute path.",
+            };
+        }
+        return (resolved, refreshedRawManifest);
+    }
+
+    private static bool LooksLikePluginPath(string target) =>
+        target.Contains(Path.DirectorySeparatorChar) ||
+        target.Contains(Path.AltDirectorySeparatorChar) ||
+        File.Exists(target);
 }

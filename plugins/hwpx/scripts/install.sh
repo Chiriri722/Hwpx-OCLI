@@ -19,12 +19,6 @@ BIN_NAME="officecli-dump-reader-hwpx"
 BUILT_BIN="${REPO_ROOT}/target/release/${BIN_NAME}"
 
 KIND="dump-reader"
-PLUGIN_ROOT="${HOME}/.officecli/plugins/${KIND}"
-HWP_INSTALL_DIR="${PLUGIN_ROOT}/hwp"
-HWPX_INSTALL_DIR="${PLUGIN_ROOT}/hwpx"
-HWP_INSTALL_PATH="${HWP_INSTALL_DIR}/plugin"
-HWPX_INSTALL_PATH="${HWPX_INSTALL_DIR}/plugin"
-
 DO_BUILD=1
 ACTION="install"
 
@@ -45,18 +39,64 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [[ -z "${HOME-}" || "${HOME-}" != /* ]]; then
+  echo "error: HOME must be an absolute path" >&2
+  exit 64  # EX_USAGE
+fi
+
+OFFICECLI_DIR="${HOME}/.officecli"
+PLUGINS_DIR="${OFFICECLI_DIR}/plugins"
+PLUGIN_ROOT="${PLUGINS_DIR}/${KIND}"
+HWP_INSTALL_DIR="${PLUGIN_ROOT}/hwp"
+HWPX_INSTALL_DIR="${PLUGIN_ROOT}/hwpx"
+HWP_INSTALL_PATH="${HWP_INSTALL_DIR}/plugin"
+HWPX_INSTALL_PATH="${HWPX_INSTALL_DIR}/plugin"
+
 assert_install_directories_not_links() {
-  for dir in "${HWPX_INSTALL_DIR}" "${HWP_INSTALL_DIR}"; do
+  for dir in \
+    "${OFFICECLI_DIR}" \
+    "${PLUGINS_DIR}" \
+    "${PLUGIN_ROOT}" \
+    "${HWPX_INSTALL_DIR}" \
+    "${HWP_INSTALL_DIR}"
+  do
     if [[ -L "${dir}" ]]; then
       echo "error: refusing reparseable install directory: ${dir}" >&2
+      return 1
+    fi
+    if [[ -e "${dir}" && ! -d "${dir}" ]]; then
+      echo "error: refusing non-directory install path component: ${dir}" >&2
       return 1
     fi
   done
 }
 
+assert_install_targets_safe() {
+  if [[ -L "${HWPX_INSTALL_PATH}" ]]; then
+    echo "error: refusing reparseable install target: ${HWPX_INSTALL_PATH}" >&2
+    return 1
+  fi
+  if [[ -e "${HWPX_INSTALL_PATH}" && ! -f "${HWPX_INSTALL_PATH}" ]]; then
+    echo "error: refusing non-file install target: ${HWPX_INSTALL_PATH}" >&2
+    return 1
+  fi
+
+  if [[ -L "${HWP_INSTALL_PATH}" ]]; then
+    if [[ "$(readlink "${HWP_INSTALL_PATH}")" != "../hwpx/plugin" || \
+          ! -f "${HWPX_INSTALL_PATH}" ]]; then
+      echo "error: refusing unexpected or broken install target link: ${HWP_INSTALL_PATH}" >&2
+      return 1
+    fi
+  elif [[ -e "${HWP_INSTALL_PATH}" && ! -f "${HWP_INSTALL_PATH}" ]]; then
+    echo "error: refusing non-file install target: ${HWP_INSTALL_PATH}" >&2
+    return 1
+  fi
+}
+
 case "${ACTION}" in
   uninstall)
     assert_install_directories_not_links || exit 73  # EX_CANTCREAT
+    assert_install_targets_safe || exit 73  # EX_CANTCREAT
     for entry in \
       "${HWP_INSTALL_PATH}|${HWP_INSTALL_DIR}" \
       "${HWPX_INSTALL_PATH}|${HWPX_INSTALL_DIR}"
@@ -110,7 +150,10 @@ if ! "${BUILT_BIN}" --info >/dev/null 2>&1; then
 fi
 
 assert_install_directories_not_links || exit 73  # EX_CANTCREAT
+assert_install_targets_safe || exit 73  # EX_CANTCREAT
 mkdir -p "${HWPX_INSTALL_DIR}" "${HWP_INSTALL_DIR}"
+assert_install_directories_not_links || exit 73  # EX_CANTCREAT
+assert_install_targets_safe || exit 73  # EX_CANTCREAT
 chmod go-w "${HWPX_INSTALL_DIR}" "${HWP_INSTALL_DIR}"
 
 STAGED_HWPX="$(mktemp "${HWPX_INSTALL_DIR}/.plugin.tmp.XXXXXX")"
@@ -123,8 +166,12 @@ COMMITTED_HWPX=0
 COMMITTED_HWP=0
 
 cleanup_staging() {
-  [[ -z "${STAGED_HWPX}" ]] || rm -f "${STAGED_HWPX}"
-  [[ -z "${STAGED_HWP}" ]] || rm -f "${STAGED_HWP}"
+  if [[ -n "${STAGED_HWPX}" ]] && ! rm -f "${STAGED_HWPX}"; then
+    echo "warning: could not remove staged HWPX plugin: ${STAGED_HWPX}" >&2
+  fi
+  if [[ -n "${STAGED_HWP}" ]] && ! rm -f "${STAGED_HWP}"; then
+    echo "warning: could not remove staged HWP link: ${STAGED_HWP}" >&2
+  fi
 }
 trap cleanup_staging EXIT
 
@@ -148,6 +195,9 @@ if [[ -z "${STAGED_HWP}" ]]; then
   exit 73
 fi
 
+assert_install_directories_not_links || exit 73  # EX_CANTCREAT
+assert_install_targets_safe || exit 73  # EX_CANTCREAT
+
 unique_backup() {
   local dir="$1" name="$2" candidate
   for _ in {1..32}; do
@@ -161,17 +211,61 @@ unique_backup() {
 }
 
 rollback_install() {
+  local hwp_unrecovered=0
+  local hwpx_unrecovered=0
+
   if [[ "${COMMITTED_HWP}" -eq 1 ]]; then
-    rm -f "${HWP_INSTALL_PATH}"
+    if ! rm -f "${HWP_INSTALL_PATH}"; then
+      echo "warning: could not remove committed HWP target during rollback: ${HWP_INSTALL_PATH}" >&2
+      hwp_unrecovered=1
+    fi
   fi
   if [[ "${COMMITTED_HWPX}" -eq 1 ]]; then
-    rm -f "${HWPX_INSTALL_PATH}"
+    if ! rm -f "${HWPX_INSTALL_PATH}"; then
+      echo "warning: could not remove committed HWPX target during rollback: ${HWPX_INSTALL_PATH}" >&2
+      hwpx_unrecovered=1
+    fi
   fi
-  if [[ "${HAD_HWPX}" -eq 1 && -n "${BACKUP_HWPX}" && ( -e "${BACKUP_HWPX}" || -L "${BACKUP_HWPX}" ) ]]; then
-    mv "${BACKUP_HWPX}" "${HWPX_INSTALL_PATH}" || true
+
+  if [[ "${HAD_HWPX}" -eq 1 ]]; then
+    if [[ -n "${BACKUP_HWPX}" && ( -e "${BACKUP_HWPX}" || -L "${BACKUP_HWPX}" ) ]]; then
+      if mv "${BACKUP_HWPX}" "${HWPX_INSTALL_PATH}"; then
+        BACKUP_HWPX=""
+        hwpx_unrecovered=0
+      else
+        echo "error: could not restore HWPX recovery backup: ${BACKUP_HWPX}" >&2
+        hwpx_unrecovered=1
+      fi
+    else
+      echo "error: HWPX recovery backup is missing during rollback: ${BACKUP_HWPX}" >&2
+      hwpx_unrecovered=1
+    fi
   fi
-  if [[ "${HAD_HWP}" -eq 1 && -n "${BACKUP_HWP}" && ( -e "${BACKUP_HWP}" || -L "${BACKUP_HWP}" ) ]]; then
-    mv "${BACKUP_HWP}" "${HWP_INSTALL_PATH}" || true
+  if [[ "${HAD_HWP}" -eq 1 ]]; then
+    if [[ -n "${BACKUP_HWP}" && ( -e "${BACKUP_HWP}" || -L "${BACKUP_HWP}" ) ]]; then
+      if mv "${BACKUP_HWP}" "${HWP_INSTALL_PATH}"; then
+        BACKUP_HWP=""
+        hwp_unrecovered=0
+      else
+        echo "error: could not restore HWP recovery backup: ${BACKUP_HWP}" >&2
+        hwp_unrecovered=1
+      fi
+    else
+      echo "error: HWP recovery backup is missing during rollback: ${BACKUP_HWP}" >&2
+      hwp_unrecovered=1
+    fi
+  fi
+
+  if [[ "${hwp_unrecovered}" -ne 0 || "${hwpx_unrecovered}" -ne 0 ]]; then
+    echo "error: rollback incomplete; recovery backups were preserved where possible" >&2
+  fi
+}
+
+cleanup_recovery_backup() {
+  local label="$1"
+  local path="$2"
+  if [[ -n "${path}" ]] && ! rm -f "${path}"; then
+    echo "warning: ${label} backup cleanup failed; recovery backup preserved at: ${path}" >&2
   fi
 }
 
@@ -212,8 +306,8 @@ if ! "${HWPX_INSTALL_PATH}" --info >/dev/null 2>&1 || \
   exit 70
 fi
 
-[[ -z "${BACKUP_HWPX}" ]] || rm -f "${BACKUP_HWPX}"
-[[ -z "${BACKUP_HWP}" ]] || rm -f "${BACKUP_HWP}"
+cleanup_recovery_backup "HWPX" "${BACKUP_HWPX}"
+cleanup_recovery_backup "HWP" "${BACKUP_HWP}"
 trap - EXIT
 
 echo "installed: ${HWPX_INSTALL_PATH}"

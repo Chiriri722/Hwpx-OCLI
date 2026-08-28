@@ -4,17 +4,30 @@
 
 ### 기존 작업 계획
 - Path: `docs/03-work-plan.md`
-- 검토 예정: 완료 표시와 실제 코드·테스트·왕복 검증의 일치 여부
+- 검토 완료: 완료 표시와 실제 코드·테스트·왕복 검증의 일치 여부
 
 ### 인수인계 문서
 - Path: `docs/02-handover.md`
-- 검토 예정: 알려진 한계, 미검증 플랫폼, 실제 문서 표본 위험
+- 검토 완료: 알려진 한계, 미검증 플랫폼, 실제 문서 표본 위험
 
 ### OfficeCLI 플러그인 계약
 - Path: `../plugin-protocol.md`
-- 검토 예정: dump-reader 입력·출력·종료코드·idle timeout 계약
+- 검토 완료: dump-reader 입력·출력·종료코드·idle timeout 계약
 
 ## Synthesized Findings
+
+### 2026-08-28 계획 재감사
+- 감사 시작 시 `HEAD`와 `origin/feat/hwpx-plugin`은 `f32602a487cdd689af204ff23f18c20b1b1c8b54`로 일치했다. 원시 조사 자료 `.agents/research/`, 생성된 spec-kit 실행 스캐폴딩, 개인 `.kiro/` 설정은 로컬에 보존하고 커밋에서 제외한다. 정제된 `.agents/brain/`, ADR, `specs/` 정본 계획만 별도 계획 커밋으로 관리한다.
+- H1 변경이 들어간 push run `31890284597`와 후속 verifier 수정 run `32793306250`는 모두 실패했다. 최신 run에서 Linux/Windows Rust test, verifier discovery test, Clippy, release build, 1MiB large-file smoke와 양 OS Rust 1.88 MSRV는 통과했다.
+- Linux는 설치·manifest·`plugins list --json`까지 통과한 뒤 실제 HWP `view`에서 실패했고, Windows는 설치·manifest 뒤 `plugins list --json`에서 실패했다. 양쪽의 표면 오류는 OfficeCLI 1.0.143 `WriteError`가 `System.Private.Xml, Version=10.0.0.0`을 로드하지 못한 것이며 최초 예외는 가려졌다. 따라서 H1c의 양 OS discovery/view 성공 증거는 아직 없다.
+- 공식 OfficeCLI 1.0.145 Windows x64 자산(`760696b…`)과 Linux x64 자산(`449f0e6a…`)은 각각 로컬 Windows와 고정 digest 비-root Linux 컨테이너에서 `plugins list --json`, RHWP 0.8.4 `english.hwp` view, 기대 텍스트·형제 DOCX·원본 hash/mtime 불변·중간 HWPX 0개, 직접 HWPX view를 통과했다. workflow는 같은 체크섬으로 갱신했으며 새 원격 run 전까지 H1c는 열어 둔다.
+- Phase 7 host 변경은 현재 checkout을 정확한 .NET SDK 10.0.302로 빌드하는 양 OS 계약 job을 추가했다. 로컬 Windows에서는 10.0.400 직접 MSBuild로 기본 solution과 harness를 빌드하고 35개 계약을 통과했으며, 공식 Linux SDK 10.0.302 이미지에서는 그 직전 34개가 통과했다. 프로필 경계 계약을 포함한 정확한 양 OS 35개 증거는 새 CI를 기다린다.
+- host는 상대/drive-relative 환경변수와 PATH를 거부하고 네 discovery class를 목록·이름 해석에 일관되게 사용한다. 사용자 프로필이 비어 있거나 fully-qualified 경로가 아니면 user plugin root 자체를 생략해 현재 디렉터리를 암묵적 탐색 위치로 만들지 않는다. 경로별 행은 보존하며 같은 안정 이름의 전체 canonical manifest가 다를 때만 경고와 모호성 오류를 낸다.
+- host 열거는 후보 256개, probe 합계 30초, 후보 stdout 1MiB, 정상 manifest 합계 16MiB, root별 디렉터리 항목 4,096개의 all-or-error 경계를 둔다. 이름 기반 `plugins info` 재-probe가 최초 identity와 달라지면 `plugin_manifest_changed`이며 명시 경로는 1회만 probe한다. 무한 출력 검사는 외부 8초 process-tree kill로 격리했다.
+- install/uninstall은 `HOME` 아래 `.officecli`부터 `dump-reader/{hwp,hwpx}`까지 기존 조상을 사전 검사한다. Windows 네이티브 계약 12/12와 고정 digest 비-root Linux 컨테이너 계약 21/21이 통과했다. Unix rollback은 한 target 정리 실패 뒤에도 양쪽 복원을 계속하며, 유효한 설치 뒤 백업 정리만 실패하면 설치를 유지하고 복구 경로를 경고한다. 같은 권한 주체의 검사 직후 경로 교체 TOCTOU는 script-only 설치기의 잔여 한계다.
+- 저장소 외부 GitHub Action 참조 25곳을 검증된 commit SHA로 고정했다. 8번째 전용 workflow는 해시 고정된 PyYAML로 workflow `jobs.*.uses`/`jobs.*.steps[*].uses`와 저장소 어디에나 있는 composite action `runs.steps[*].uses`를 의미적으로 검사한다. flow/block/folded scalar, YAML escape·anchor·merge를 같은 정책으로 다루되 symlink·비정규 파일·1MiB 초과와 깊이·alias·node·명시 mapping 폭·문서 전체 merge 확장 예산 초과는 construction 전에 거부한다. Windows에서 실행되는 mixed-case `Action.yml`도 casefold로 찾는다. PR은 read-only `pull_request_target`에서 base의 checker와 requirements로 candidate checkout을 데이터로만 검사하며, fork checkout은 명시 opt-in 뒤 어떤 candidate 코드도 실행하지 않는다.
+- 최종 로컬 검증은 Windows Rust 225개, Rust 1.88 all-target check, 양 OS stable clippy `-D warnings`, release build, OfficeCLI host 35개, Python 실행파일 탐색 6개, action pin 17개(외부 GitHub commit SHA와 Docker SHA-256 digest 포함), workflow YAML 8개, PowerShell/Bash parse, shell LF, `git diff --check`를 통과했다.
+- 원격 fork의 `main`은 아직 branch protection/CODEOWNERS가 없다. base-trusted PR 검사는 코드 자체의 no-op 우회만 막으며, gate 파일 변경 승인은 저장소 governance에 남는다. 단독 소유자의 갱신 경로를 잠그지 않기 위해 자동 byte-equality는 두지 않았고, 강한 변조 방지는 protected required workflow 또는 별도 code-owner 승인으로 구성해야 한다.
 
 ### 초기 상태
 - 활성 브랜치: `feat/hwpx-plugin`

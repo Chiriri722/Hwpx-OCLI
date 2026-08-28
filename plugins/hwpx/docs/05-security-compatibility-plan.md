@@ -1,7 +1,7 @@
 # HWPX 보안·호환성 후속 계획
 
 작성일: 2026-08-11  
-최종 갱신: 2026-08-15
+최종 갱신: 2026-08-28
 
 ## 기준선
 
@@ -67,18 +67,27 @@ HWP discovery가 성공해도 RHWP가 없는 런타임에서는 `.hwp`가 exit
 
 ## P4 — Host discovery와 공급망 후속 하드닝
 
-- [ ] 프로토콜과 맞게 상대 `OFFICECLI_PLUGIN_*` 실행파일 경로를 host에서 거부한다.
-- [ ] 같은 매니페스트가 여러 extension 경로에 있을 때 `plugins list`의 identity/dedup 정책을 정한다.
-- [ ] 사용자 디렉터리 외 `.hwp` PATH alias를 설치·지원할지 결정한다.
-- [ ] installer ancestor reparse 정책과 Windows 악성 junction 제거 회귀를 네이티브로 검증한다.
-- [ ] workflow의 외부 action tag를 검증된 전체 commit SHA로 고정한다.
+- [x] 프로토콜과 맞게 상대 `OFFICECLI_PLUGIN_*` 실행파일 경로를 host에서 거부한다.
+- [x] 같은 매니페스트가 여러 extension 경로에 있을 때 `plugins list`의 identity/dedup 정책을 정한다.
+- [x] 사용자 디렉터리 외 `.hwp` PATH alias를 설치·지원할지 결정한다.
+- [x] installer ancestor reparse 정책과 Windows 악성 junction 제거 회귀를 네이티브로 검증한다.
+- [x] workflow의 외부 action tag를 검증된 전체 commit SHA로 고정한다.
 
-현재 설치기의 `--print-env`/`-PrintEnv`는 절대경로만 출력한다. 그러나
-OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사용자가 직접
-지정한 상대 환경변수 경로도 후보로 받는다. 이 host 전역 문제는 H1 플러그인
-변경과 섞지 않고 실패 테스트를 갖춘 별도 원자 변경으로 수정한다. H1 CI가
-다운로드하는 OfficeCLI·RHWP·fixture 자체는 버전, 전체 commit URL, SHA-256으로
-고정한다.
+설치기의 `--print-env`/`-PrintEnv`는 절대경로만 출력한다. Host도 이제
+환경변수와 PATH directory에 fully-qualified 경로만 허용하고 잘못된 후보는
+다음 discovery class로 넘긴다. 목록은 환경변수·사용자·bundled·PATH를 모두
+보며 정규화된 실행 경로를 행 identity로 쓴다. 같은 안정 이름의 전체
+canonical manifest가 다르면 경고와 `plugin_name_ambiguous`를 낸다.
+`.hwp`의 두 PATH 별칭은 수동/패키지 관리자 설치에 지원하지만 이 설치기는
+더 높은 우선순위의 사용자 extension 경로만 관리한다. H1 CI가 다운로드하는
+OfficeCLI·RHWP·fixture는 버전, 전체 commit URL, SHA-256으로 고정한다.
+
+Host 열거는 후보 256개, 후보별 manifest stdout 1MiB, 정상 manifest 합계
+16MiB, 전체 probe 30초를 all-or-error 경계로 적용한다. 이름 기반
+`plugins info`의 재-probe identity가 최초 snapshot과 다르면
+`plugin_manifest_changed`로 거부하고, 명시적 경로는 한 번만 probe한다.
+프로세스 시작 지연도 시간 예산에서 차감하지만 동기 OS launch 호출 자체는
+선점할 수 없어 늦게 반환할 수 있으며, 이 경우 즉시 실패시킨다.
 
 ## 검증 순서
 
@@ -171,9 +180,39 @@ OfficeCLI host는 프로토콜이 절대경로를 요구하는 것과 달리 사
 - 이 run은 H1 이전 커밋을 검증했다. 후속 H1은 매니페스트·두 환경변수·두
   사용자 설치 경로를 로컬 구현했다. macOS의 227개 Rust 테스트, 43개 HWPX
   왕복 검사, OfficeCLI 1.0.143과 공식 RHWP 0.8.4 HWP smoke는 통과했지만 새
-  Linux/Windows `.hwp` discovery·RHWP `view` CI는 아직 실행하지 않았다.
+  Linux/Windows `.hwp` discovery·RHWP `view` CI는 당시 미실행이었다. 후속
+  run 두 건의 실패 원인과 1.0.145 재검증 대기는 아래 2026-08-28 기록에 있다.
 - Unix의 한 실파일과 상대 심볼릭 링크는 양 확장자의 버전을 일치시킨다.
   Windows는 staging·SHA-256·`--info` 검증과 best-effort rollback을
   사용하지만 강제 종료를 포함한 완전한 두 경로 트랜잭션은 아니다.
 - 목록의 중복 행 가능성, RHWP 부재 시 exit 3, 대형 binary HWP와 느린
   변환기의 heartbeat-host 통합 미실측은 잔여 제한으로 유지한다.
+
+## 2026-08-28 계획 재감사와 Phase 7
+
+- H1 push run `31890284597`, `32793306250`는 모두 실패했다. 최신 run에서
+  Linux는 설치·manifest·목록 뒤 HWP `view`, Windows는 설치·manifest 뒤
+  목록에서 멈췄다. OfficeCLI 1.0.143의 오류 출력이 `System.Private.Xml`
+  로드 중 다시 실패해 최초 예외를 가렸다.
+- 공식 OfficeCLI 1.0.145 양 OS 자산은 로컬 Windows와 고정 digest 비-root
+  Linux 컨테이너에서 HWP discovery/view, 원본 불변, 직접 HWPX 회귀를
+  통과했다. workflow는 같은 양 OS 체크섬으로 갱신했고 새 원격 성공 전까지
+  P3/H1 원격 항목을 열어 둔다.
+- 무의존 OfficeCLI host 계약 35개가 상대·비정상 사용자 프로필 경로 거부, 플랫폼별 환경변수명
+  대소문자, 네 discovery class 목록 일치, PATH alias 우선순위, canonical
+  manifest identity, 모호성·snapshot 변경 오류, stdout/aggregate memory/time
+  경계, 반복 heartbeat의 idle timer reset을 검증한다.
+- Windows 설치 계약 12개와 고정 digest의 비-root Linux 컨테이너 설치 계약
+  21개가 모두 통과했다. install/uninstall은 `HOME` 아래 `.officecli`부터 두
+  extension까지 기존 조상을 검사해 symlink/junction/reparse와 non-directory를
+  거부한다. Unix rollback은 target별 복원을 독립적으로 끝까지 시도하고, 검증된
+  설치 뒤 백업 정리 실패는 성공 상태와 복구 백업을 유지한 채 경고한다. 같은
+  권한 주체의 검사 직후 경로 교체 경쟁은 script-only installer의 잔여 한계다.
+- 저장소 외부 GitHub Action 참조 25곳을 검증된 전체 commit SHA로 고정했고,
+  전용 workflow에서 해시 고정 PyYAML로 workflow/reusable job과 저장소 전역
+  composite action의 실행 위치를 의미적으로 순회해 YAML 표기와 무관하게 symbolic
+  ref 재도입을 차단한다. PR은 read-only `pull_request_target`에서 base의 checker를
+  실행하며, 입력은 non-symlink regular file·1MiB·구조 복잡도 예산 안에서만 파싱한다.
+- Windows Rust 전체 회귀 225개, Rust 1.88 all-target check, 양 OS stable clippy
+  `-D warnings`, release build, Python 6+17개, workflow YAML 8개, PowerShell/Bash
+  parse, shell LF 및 `git diff --check`가 통과했다.

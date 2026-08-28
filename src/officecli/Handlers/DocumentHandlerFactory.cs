@@ -309,8 +309,8 @@ public static class DocumentHandlerFactory
     /// has been deleted). All edits target the sibling file, not the original
     /// source.
     ///
-    /// format-handler: not yet wired; resolved plugins produce a clear
-    /// "found but not yet wired" exception until the proxy lands.
+    /// format-handler: starts a persistent protocol session and returns a
+    /// <see cref="FormatHandlerProxy"/> backed by that session.
     /// </summary>
     private static IDocumentHandler? TryOpenViaPlugin(string filePath, string ext, bool editable)
     {

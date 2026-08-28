@@ -4,8 +4,10 @@
 
 > **진행 상태**: H2(포맷 판별), H3(rhwp 브리지), H4(쌍 회귀), H5(문서화)
 > 완료. 양 OS H3 네이티브 게이트와 Windows의 기존 HWPX discovery도
-> run `31700156231`에서 통과했다. H1 discovery는 로컬 구현을 마쳤고,
-> 새 Linux/Windows `.hwp` discovery·RHWP `view` CI는 아직 미실행이다.
+> run `31700156231`에서 통과했다. H1 run `31890284597`, `32793306250`는
+> 실패했고 OfficeCLI 1.0.143 오류 처리에 최초 예외가 가렸다. 1.0.145로
+> 수리한 고정 자산은 로컬 양 OS에서 통과했고 새 Linux/Windows 원격
+> `.hwp` discovery·RHWP `view`가 남았다.
 
 ## 0. 결론 먼저
 
@@ -253,7 +255,7 @@ A2는 "in-process가 꼭 필요해지면" 그때 검토한다. 결정 근거를 
 
 ## 3. 작업 계획
 
-### H1. 확장자 등록과 디스커버리 — **로컬 구현 완료, 원격 검증 대기**
+### H1. 확장자 등록과 디스커버리 — **로컬 구현 완료, 원격 게이트 수리 후 재검증 대기**
 
 - 매니페스트 `extensions`를 `[".hwpx", ".hwp"]`로 확장했다.
 - 환경변수 discovery는 같은 바이너리를 가리키는 두 값을 사용한다.
@@ -280,21 +282,35 @@ A2는 "in-process가 꼭 필요해지면" 그때 검토한다. 결정 근거를 
   보장하지 않는다.
 - 두 설치기는 양 확장자를 기본으로 함께 설치·제거한다. 과거 계획의
   `--with-hwp` 옵션은 구현하지 않았다.
+- Unix rollback은 한 target 정리 실패가 다른 target의 복원을 중단하지 않게
+  독립적으로 끝까지 시도한다. 새 설치 검증 뒤 과거 백업 정리만 실패하면
+  유효한 설치와 복구 백업을 함께 보존하고 경고한다.
+- 두 설치기는 절대 `HOME`을 신뢰 anchor로 두고 그 아래 기존 관리 경로의
+  모든 조상을 사전 검사한다. symlink/junction/reparse 또는 non-directory
+  component와 예상 밖 terminal target은 양쪽 경로를 바꾸기 전에 거부한다.
+  경로 검사 뒤 같은 권한 주체가 component를 바꾸는 TOCTOU를 완전히 없애려면
+  OS별 directory-handle/openat helper가 필요하므로 현재 portable script 범위에는
+  포함하지 않는다.
 - 사용자 디렉터리 경로가 프로토콜 §3의 PATH보다 우선하므로 설치기가
   별도의 `officecli-dump-reader-hwp` PATH 별칭을 만들 필요는 없다.
 
-OfficeCLI의 `plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가
-두 행으로 보일 수 있다. 검증 기준은 최소 한 행의 `extensions`가
+OfficeCLI의 `plugins list`는 정규화된 실행 경로별로 열거하므로 같은
+매니페스트가 두 행으로 보일 수 있다. 같은 전체 manifest는 이름 해석에서
+첫 discovery 경로를 쓰고, 내용이 다르면 경고와 `plugin_name_ambiguous`로
+명시적 경로 선택을 요구한다. 검증 기준은 최소 한 행의 `extensions`가
 `.hwpx,.hwp`인지와 실제 `.hwp` resolution이다. `officecli view
 <복사본>.hwp text`는 입력 옆에 같은 stem의 `.docx`를 만들 수 있으므로
 원본 대신 복사본으로 실행한다.
 
 **남은 검증**: 실제 RHWP를 구성한 Linux/Windows에서 설치·제거,
 `plugins list`, `.hwp` `view`, 기존 `.hwpx` 회귀를 새 CI로 확인한다.
-run `31700156231`은 H1 이전 커밋의 결과이므로 이 완료 근거로 재사용하지
-않는다. 로컬 macOS에서는 227개 Rust 테스트, 43개 기존 HWPX 왕복 검사,
-OfficeCLI 1.0.143과 공식 RHWP 0.8.4의 `english.hwp` view를 통과했고 원본
-hash·mtime 불변, 형제 DOCX, 중간 HWPX 0개를 확인했다.
+run `31700156231`은 H1 이전 커밋이다. H1 run `31890284597`,
+`32793306250`는 실패했고 최신 run은 Linux HWP `view`, Windows
+`plugins list`에서 멈췄다. 두 표면 오류는 OfficeCLI 1.0.143 `WriteError`의
+`System.Private.Xml` 로드 실패라 최초 예외를 가린다. workflow는 검증된
+OfficeCLI 1.0.145 자산으로 갱신했으며 로컬 Windows와 고정 digest 비-root
+Linux 컨테이너에서 이 자산과 RHWP 0.8.4의 `english.hwp` discovery/view,
+원본 hash·mtime 불변, 형제 DOCX, 중간 HWPX 0개와 직접 HWPX 회귀를 확인했다.
 
 ### H2. 입력 포맷 판별 — **완료**
 
@@ -480,7 +496,7 @@ h4 AI 제안서    cb= 0 clk= 0 tbl= 1  items= 34 unk=0  validate=OK
 | R3 | rhwp가 0.8.x이고 빠르게 변한다. CLI 인터페이스가 바뀔 수 있다 | 버전을 확인하고(`rhwp --version`) 기대 범위를 기록. 깨지면 A2(라이브러리 링크) 또는 C(자체 파서)로 전환 |
 | R4 | 암호 걸린 HWP | 보호 상태는 먼저 진단하지만 실제 변환 성공 여부는 표본이 없어 미검증. 실패 시 exit 2 |
 | R5 | HWP 3.0 | 공식 HWP3 1종의 변환·467개 JSONL·OfficeCLI validate를 확인. 다양성은 여전히 부족 |
-| R6 | 성능. 변환 단계가 늘어난다 | staging은 256MiB로 제한. HWPX 48MiB만 제한적 실측했고 대형 binary HWP와 느린 변환기 heartbeat-host 통합은 미실측 |
+| R6 | 성능. 변환 단계가 늘어난다 | staging은 256MiB로 제한. HWPX 48MiB만 제한적 실측했다. host 계약에서 1초 budget보다 긴 프로세스의 반복 heartbeat reset은 확인했지만 대형 binary HWP 자체는 미실측 |
 | R7 | 외부 바이너리 실행이라는 신뢰 경계 | 변환기 경로를 환경변수/PATH로만 받고, 다운로드 시 SHA256 대조를 스크립트에 넣는다 |
 | R8 | `plugins list`가 양 설치 경로를 별도 행으로 열거 | 매니페스트 `extensions`와 실제 `.hwp` resolution을 검증 기준으로 삼고 중복 가능성을 문서화 |
 | R9 | Windows 두 복사본 교체 중 프로세스가 강제 종료됨 | 사전 staging·검증과 best-effort rollback을 적용하되 완전한 두 경로 원자성은 주장하지 않음 |

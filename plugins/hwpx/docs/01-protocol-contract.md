@@ -191,9 +191,12 @@ DACL과 원자 create+handle 경계로 보호한다. 총 120초 제한, bounded 
 Unix process group, Windows Job Object와 active-process drain을 적용한다.
 이 경계의 Linux/Windows 네이티브 검증은 GitHub Actions run
 `31700156231`에서 통과했다. 후속 H1에서 `.hwp` 매니페스트와 양 확장자
-설치 경로를 로컬 구현했지만, 새 Linux/Windows `.hwp` discovery·`view`
-CI는 아직 실행하지 않았다. 따라서 H1의 크로스 플랫폼 완료 근거로
-run `31700156231`을 재사용하지 않는다. RHWP가 없으면 `.hwp`는 exit
+설치 경로를 로컬 구현했다. H1 run `31890284597`, `32793306250`는
+OfficeCLI 1.0.143의 오류 처리 중 `System.Private.Xml` 로드 오류가 최초
+예외를 가려 실패했다. workflow는 OfficeCLI 1.0.145로 갱신했고 같은 고정
+자산의 로컬 Windows·비-root Linux 컨테이너 HWP view는 통과했지만 새 양 OS
+원격 성공 전이므로 H1의 크로스 플랫폼 완료 근거로 run `31700156231`을
+재사용하지 않는다. RHWP가 없으면 `.hwp`는 exit
 3(`unsupported_feature`)을 반환하고 `.hwpx` 직접 경로는 계속 동작한다.
 Windows의 `--media-dir`은 신뢰할 수 없는 junction이 될 수 있어 바이너리
 HWP staging에는 쓰지 않고 사용자별 OS 임시 루트를 사용한다.

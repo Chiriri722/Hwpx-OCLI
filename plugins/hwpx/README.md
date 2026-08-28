@@ -7,6 +7,14 @@ RHWP 변환기를 거쳐 OfficeCLI의 docx 명령(JSONL)으로 변환한다.
 Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 바이너리 HWP는
 선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
 
+## 한컴 공개 문서 표기
+
+본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+
+공개 문서의 원본 URL과 검증된 SHA-256은
+[`../../docs/spec-sources.md`](../../docs/spec-sources.md)에 기록한다. PDF 원본은 이
+저장소에서 재배포하지 않는다.
+
 ## 무엇을 하는가
 
 ```
@@ -47,9 +55,15 @@ scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 officecli plugins list
 ```
 
-OfficeCLI는 설치 경로별로 플러그인을 열거하므로 같은 매니페스트가
-두 행으로 보일 수 있다. 각 행의 `extensions`에 `.hwpx,.hwp`가 있는지
-확인하고, 실제 확장자 해석은 아래의 `officecli view`로 검증한다.
+OfficeCLI는 정규화된 실행 경로별로 플러그인을 열거하므로 같은 매니페스트가
+두 행으로 보일 수 있다. 내용까지 같은 등록은 이름 기반 명령에서 첫 discovery
+경로를 쓰고, 같은 이름의 매니페스트 내용이 다르면 각 행에 경고한 뒤
+`plugins info`/`lint <name>`을 모호성 오류로 거부한다. 이때는 목록의 절대
+실행 경로를 명시한다. 이름 기반 `plugins info` 재-probe의 전체 매니페스트가
+최초 snapshot과 달라져도 `plugin_manifest_changed`로 거부하며, 명시 경로는
+한 번만 probe한다. 전체 열거는 후보 256개, 후보 manifest 1MiB, 정상 manifest
+합계 16MiB, probe 합계 30초를 넘으면 부분 목록 없이 실패한다. 실제 확장자
+해석은 아래의 `officecli view`로 검증한다.
 
 Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로에 설치한다.
 
@@ -73,6 +87,14 @@ Windows에서는 심볼릭 링크 권한에 의존하지 않고 같은 바이너
 적용한다. 둘 사이의 순차 교체이므로 프로세스 강제 종료까지 포함한
 완전한 두 경로 원자성을 보장하지는 않는다.
 
+두 설치기는 절대 `HOME` 아래 `.officecli`부터 기존 관리 경로 조상을 먼저 검사하고,
+symlink/junction/reparse point 또는 디렉터리가 아닌 component가 있으면 설치와
+제거를 모두 중단한다. 같은 권한의 프로세스가 검사 직후 경로를 바꾸는 경쟁까지
+없애는 handle 기반 설치기는 아니므로, 설치 중에는 `HOME`을 신뢰 경계로 둔다.
+Unix 재설치의 각 target 복원은 앞선 정리 실패와 무관하게 끝까지 시도한다. 새
+설치 검증이 끝난 뒤 이전 버전 백업만 지우지 못하면 유효한 설치는 성공으로
+유지하고, 복구용 백업 위치를 경고로 남긴다.
+
 ## 포맷 판별
 
 확장자를 믿지 않고 매직 바이트로 판별한다. `.hwp`인데 실제로는 HWPX인 파일이
@@ -93,10 +115,13 @@ RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. RHWP가 �
 
 H3 브리지의 Linux/Windows 네이티브 게이트와 Windows의 기존 HWPX
 OfficeCLI discovery는 GitHub Actions run `31700156231`에서 통과했다.
-H1의 두 확장자
-매니페스트·설치 경로는 로컬에 구현했으나, 이 변경의 새 Linux/Windows
-`.hwp` discovery·`view` CI는 아직 실행하지 않았다. 그 결과 전에는 H1을
-크로스 플랫폼 완료로 간주하지 않는다.
+H1을 포함한 run `31890284597`, `32793306250`는 실패했다. 최신 run에서
+Linux는 `plugins list` 뒤 HWP `view`에서, Windows는 `plugins list`에서
+실패했으며 OfficeCLI 1.0.143의 오류 처리 중 `System.Private.Xml` 로드 오류가
+원래 예외를 가렸다. workflow는 체크섬을 검증한 OfficeCLI 1.0.145로
+갱신했고 같은 자산의 로컬 Windows와 비-root Linux 컨테이너 HWP view는
+통과했다. 새 Linux/Windows 원격 run이 성공하기 전에는 H1을 크로스 플랫폼
+완료로 간주하지 않는다.
 
 ```bash
 rhwp --version  # v0.8.4 이상

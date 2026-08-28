@@ -15,6 +15,8 @@ use serde_json::Value;
 use std::os::unix::fs::PermissionsExt;
 
 const BIN: &str = "officecli-dump-reader-hwpx";
+const HANCOM_NOTICE: &str =
+    "본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.";
 
 fn plugin() -> Command {
     Command::cargo_bin(BIN).expect("binary is built")
@@ -106,6 +108,41 @@ fn info_idle_timeout_default_is_nonzero_integer() {
         .as_u64()
         .expect("default must be an integer");
     assert!(d > 0, "0 is not allowed in the manifest");
+}
+
+#[test]
+fn info_includes_required_hancom_notice() {
+    let manifest = info_manifest();
+    let description = manifest["description"]
+        .as_str()
+        .expect("description must be a string");
+    assert!(
+        description.contains(HANCOM_NOTICE),
+        "--info description must include the required Hancom notice"
+    );
+}
+
+#[test]
+fn help_includes_required_hancom_notice() {
+    let out = plugin().arg("--help").assert().success();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8 stderr");
+    assert!(
+        stderr.contains(HANCOM_NOTICE),
+        "--help must include the required Hancom notice"
+    );
+}
+
+#[test]
+fn distributed_docs_include_required_hancom_notice() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in ["README.md", "NOTICE"] {
+        let text = std::fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            text.contains(HANCOM_NOTICE),
+            "{relative} must include the required Hancom notice"
+        );
+    }
 }
 
 #[test]

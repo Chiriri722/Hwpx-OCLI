@@ -287,6 +287,9 @@ pub const HELP_TEXT: &str = concat!(
     "\n",
     "The plugin writes one JSON BatchItem per line to stdout and exits.\n",
     "See docs/01-protocol-contract.md for the full contract.\n",
+    "\n",
+    "NOTICE:\n",
+    "본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.\n",
 );
 
 /// 명령을 실행한다. stdout/stderr는 호출자가 넘긴다(테스트 용이성).

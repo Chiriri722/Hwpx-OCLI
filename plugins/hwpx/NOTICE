@@ -1,0 +1,7 @@
+officecli-hwpx
+
+본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+
+The Hancom specification PDFs are not redistributed with this plugin. Their
+official source URLs and verified SHA-256 digests are recorded in
+../../docs/spec-sources.md.

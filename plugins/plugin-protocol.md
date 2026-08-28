@@ -149,8 +149,51 @@ Path conventions:
 
 - `<kind>` uses kebab-case (`dump-reader`, `format-handler`, `exporter`)
 - `<ext>` is the file extension without the leading dot (`doc`, `hwpx`, `pdf`)
-- On Windows, `(.exe)` is appended automatically when searching
+- Alias tokens contain ASCII letters and digits. Alias matching follows the
+  platform: case-insensitive on Windows; on POSIX, environment suffixes use
+  uppercase and executable aliases use lowercase, matching actual lookup.
+- On Windows, `.exe` is tried before an extensionless executable with the same
+  alias in the same PATH directory.
 - Symlinks are followed
+- Environment overrides and PATH directory entries MUST be fully-qualified.
+  Main ignores an invalid entry and continues with the next discovery class.
+- On Unix, main also ignores world-writable PATH directories.
+
+`officecli plugins list` probes all four discovery classes. Its registration
+identity is the normalized executable path (case-insensitive on Windows,
+case-sensitive elsewhere), so one executable is listed once while copies in
+different install slots remain separate rows. The manifest `name` remains the
+logical identity used by `plugins info` and `plugins lint`:
+
+- registrations with the same name and the same complete `--info` JSON use the
+  first discovery path; insignificant JSON whitespace, a leading BOM, and
+  object-property order do not change that comparison
+- registrations with the same name but non-identical complete manifests remain
+  visible with warnings, and name-based resolution fails with
+  `plugin_name_ambiguous`; pass an explicit executable path to select one
+- `plugins info <name>` re-probes the selected executable only to recover
+  unknown future fields and requires that identity to match the enumeration
+  snapshot; a change fails with `plugin_manifest_changed`. An explicit
+  executable path is probed exactly once.
+
+Full enumeration first deduplicates normalized, existing executable paths and
+then probes a complete snapshot. It fails with `plugin_discovery_limit` above
+256 candidates or `plugin_discovery_timeout` after a 30-second aggregate probe
+budget, or when accepted manifest stdout exceeds 16 MiB in aggregate; it never
+returns a partial list. Each `--info` probe has a five-second limit, requires
+strict UTF-8, and accepts at most 1 MiB on stdout. The deadline starts before
+the synchronous process launch; the OS launch API cannot be preempted portably,
+but a launch that returns after its deadline is rejected and receives no fresh
+post-launch budget. Diagnostic stderr is drained to avoid pipe deadlocks while
+only its first 16 KiB is kept in memory. Candidate collection also stops after
+4,096 managed-directory entries per root or 4,096 matching `officecli-*` PATH
+entries. Directory enumeration itself is filesystem-driven; a stalled network
+PATH mount can therefore delay candidate collection before the subprocess
+probe budget starts.
+
+PATH aliases such as `officecli-dump-reader-hwp` and `officecli-hwp` are manual
+or package-manager registrations. Per-extension installers MAY manage only the
+user plugin directory and need not create global PATH aliases.
 
 Main caches discovery results per process invocation. Adding a plugin between
 invocations is picked up immediately.
@@ -854,8 +897,9 @@ subprocess and standard-stream support works. .NET plugins can optionally use th
 
 **Q: How does main know which plugin to use when several are installed?**
 A: Discovery order (§3) is fixed and first-match-wins. For multiple installed
-plugins for the same extension, users select via env var or explicit
-`--plugin` flag.
+plugins for the same extension, users select the runtime plugin via its absolute
+environment-variable registration. The `plugins info` and `plugins lint`
+management commands also accept an explicit executable path.
 
 **Q: Can a plugin be closed-source / commercial?**
 A: Yes. Plugins are independent binaries with their own license. License
