@@ -125,7 +125,7 @@ jobs:
       - name: Smoke large-file verifier
         run: python scripts/verify-large-file.py --skip-officecli --sections 1 --text-mib 1
 
-      - name: Verify Linux native HWP discovery and view
+      - name: Verify Linux native Hancom discovery and view
         if: runner.os == 'Linux'
         shell: bash
         env:
@@ -174,11 +174,15 @@ jobs:
           [[ "$("${rhwp}" --version)" == "rhwp v0.8.4" ]]
 
           ./scripts/install.sh --no-build
-          hwp_plugin="${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
-          hwpx_plugin="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
-          [[ -x "${hwp_plugin}" && -x "${hwpx_plugin}" ]]
+          for extension in hwp hwpx owpml hml; do
+            plugin="${HOME}/.officecli/plugins/dump-reader/${extension}/plugin"
+            [[ -x "${plugin}" ]] || { echo "plugin was not installed at ${plugin}" >&2; exit 1; }
+          done
 
-          unset OFFICECLI_PLUGIN_DUMP_READER_HWP OFFICECLI_PLUGIN_DUMP_READER_HWPX
+          unset OFFICECLI_PLUGIN_DUMP_READER_HWP \
+            OFFICECLI_PLUGIN_DUMP_READER_HWPX \
+            OFFICECLI_PLUGIN_DUMP_READER_OWPML \
+            OFFICECLI_PLUGIN_DUMP_READER_HML
           "${officecli}" plugins list --json | python3 -c '
           import json
           import pathlib
@@ -190,14 +194,17 @@ jobs:
               plugin
               for plugin in payload.get("data", [])
               if plugin.get("name") == "officecli-hancom-hwp"
-              and {".hwp", ".hwpx"}.issubset(set(plugin.get("extensions", [])))
+              and {".hwp", ".hwpx", ".owpml", ".hml"}.issubset(
+                set(plugin.get("extensions", []))
+              )
           ]
           assert matches, payload
-          assert any(
-              tuple(pathlib.Path(plugin["path"]).parts[-3:])
-              == ("dump-reader", "hwp", "plugin")
-              for plugin in matches
-          ), matches
+          paths = {
+            tuple(pathlib.Path(plugin["path"]).parts[-3:])
+            for plugin in matches
+          }
+          for extension in ("hwp", "hwpx", "owpml", "hml"):
+            assert ("dump-reader", extension, "plugin") in paths, matches
           '
 
           before_hash="$(sha256sum "${fixture}" | awk '{print $1}')"
@@ -226,7 +233,36 @@ jobs:
           fi
           [[ -s "${smoke_dir}/english-direct.docx" ]]
 
-      - name: Verify Windows native HWP discovery and view
+          direct_owpml="${smoke_dir}/english-owpml.owpml"
+          cp "${direct_hwpx}" "${direct_owpml}"
+          owpml_output="$("${officecli}" view "${direct_owpml}" text)"
+          if [[ "${owpml_output}" != *"They have been married for fifty years."* ]]; then
+            echo "OfficeCLI OWPML discovery did not contain the expected text" >&2
+            exit 1
+          fi
+          [[ -s "${smoke_dir}/english-owpml.docx" ]]
+
+          hml_fixture="${smoke_dir}/discovery.hml"
+          python3 - "${hml_fixture}" <<'PY'
+          import pathlib
+          import sys
+
+          pathlib.Path(sys.argv[1]).write_text(
+              '<?xml version="1.0" encoding="UTF-8"?>'
+              '<HWPML Version="2.91"><BODY><SECTION><P><TEXT>'
+              '<CHAR>HML discovery success</CHAR>'
+              '</TEXT></P></SECTION></BODY></HWPML>',
+              encoding='utf-8',
+          )
+          PY
+          hml_output="$("${officecli}" view "${hml_fixture}" text)"
+          if [[ "${hml_output}" != *"HML discovery success"* ]]; then
+            echo "OfficeCLI HML discovery did not contain the expected text" >&2
+            exit 1
+          fi
+          [[ -s "${smoke_dir}/discovery.docx" ]]
+
+      - name: Verify Windows native Hancom discovery and view
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -275,16 +311,23 @@ jobs:
           }
 
           ./scripts/install.ps1 -NoBuild
-          $hwpPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwp\plugin.exe'
-          $hwpxPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
-          foreach ($plugin in @($hwpPlugin, $hwpxPlugin)) {
+          $installedPlugins = @('hwp', 'hwpx', 'owpml', 'hml') | ForEach-Object {
+            Join-Path $HOME ".officecli\plugins\dump-reader\$_\plugin.exe"
+          }
+          foreach ($plugin in $installedPlugins) {
             if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
               throw "plugin.exe was not installed at $plugin"
             }
           }
 
-          Remove-Item Env:OFFICECLI_PLUGIN_DUMP_READER_HWP -ErrorAction SilentlyContinue
-          Remove-Item Env:OFFICECLI_PLUGIN_DUMP_READER_HWPX -ErrorAction SilentlyContinue
+          foreach ($variable in @(
+            'OFFICECLI_PLUGIN_DUMP_READER_HWP',
+            'OFFICECLI_PLUGIN_DUMP_READER_HWPX',
+            'OFFICECLI_PLUGIN_DUMP_READER_OWPML',
+            'OFFICECLI_PLUGIN_DUMP_READER_HML'
+          )) {
+            Remove-Item "Env:$variable" -ErrorAction SilentlyContinue
+          }
           $pluginsRaw = (& $officecli plugins list --json 2>&1 | Out-String)
           if ($LASTEXITCODE -ne 0) {
             throw "officecli plugins list failed: $pluginsRaw"
@@ -296,19 +339,23 @@ jobs:
           $matches = @($plugins.data | Where-Object {
             ($_.name -eq 'officecli-hancom-hwp') -and
             ($_.extensions -contains '.hwp') -and
-            ($_.extensions -contains '.hwpx')
+            ($_.extensions -contains '.hwpx') -and
+            ($_.extensions -contains '.owpml') -and
+            ($_.extensions -contains '.hml')
           })
           if ($matches.Count -eq 0) {
-            throw "installed plugin did not declare both HWP extensions: $pluginsRaw"
+            throw "installed plugin did not declare all Hancom HWP extensions: $pluginsRaw"
           }
-          $hwpPathMatch = @($matches | Where-Object {
-            [StringComparer]::OrdinalIgnoreCase.Equals(
-              [IO.Path]::GetFullPath($_.path),
-              [IO.Path]::GetFullPath($hwpPlugin)
-            )
-          })
-          if ($hwpPathMatch.Count -eq 0) {
-            throw "plugins list did not enumerate the HWP user path: $pluginsRaw"
+          foreach ($plugin in $installedPlugins) {
+            $pathMatch = @($matches | Where-Object {
+              [StringComparer]::OrdinalIgnoreCase.Equals(
+                [IO.Path]::GetFullPath($_.path),
+                [IO.Path]::GetFullPath($plugin)
+              )
+            })
+            if ($pathMatch.Count -eq 0) {
+              throw "plugins list did not enumerate the user path $plugin`: $pluginsRaw"
+            }
           }
 
           $beforeHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -356,31 +403,57 @@ jobs:
             throw "OfficeCLI direct HWPX view did not create a non-empty sibling DOCX"
           }
 
-      - name: Uninstall HWP/HWPX plugin on Linux
+          $directOwpml = Join-Path $smokeDir 'english-owpml.owpml'
+          Copy-Item -LiteralPath $directHwpx -Destination $directOwpml
+          $owpmlOutput = (& $officecli view $directOwpml text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or
+              -not $owpmlOutput.Contains('They have been married for fifty years.')) {
+            throw "OfficeCLI OWPML discovery failed: $owpmlOutput"
+          }
+          $owpmlDocx = Join-Path $smokeDir 'english-owpml.docx'
+          if (-not (Test-Path -LiteralPath $owpmlDocx -PathType Leaf) -or
+              (Get-Item -LiteralPath $owpmlDocx).Length -le 0) {
+            throw "OfficeCLI OWPML view did not create a non-empty sibling DOCX"
+          }
+
+          $hmlFixture = Join-Path $smokeDir 'discovery.hml'
+          $hmlXml = '<?xml version="1.0" encoding="UTF-8"?><HWPML Version="2.91"><BODY><SECTION><P><TEXT><CHAR>HML discovery success</CHAR></TEXT></P></SECTION></BODY></HWPML>'
+          [IO.File]::WriteAllText($hmlFixture, $hmlXml, [Text.UTF8Encoding]::new($false))
+          $hmlOutput = (& $officecli view $hmlFixture text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or -not $hmlOutput.Contains('HML discovery success')) {
+            throw "OfficeCLI HML discovery failed: $hmlOutput"
+          }
+          $hmlDocx = Join-Path $smokeDir 'discovery.docx'
+          if (-not (Test-Path -LiteralPath $hmlDocx -PathType Leaf) -or
+              (Get-Item -LiteralPath $hmlDocx).Length -le 0) {
+            throw "OfficeCLI HML view did not create a non-empty sibling DOCX"
+          }
+
+      - name: Uninstall Hancom plugin on Linux
         if: ${{ always() && runner.os == 'Linux' }}
         shell: bash
         run: |
           if [[ -x ./scripts/install.sh ]]; then
             ./scripts/install.sh --uninstall
-            hwp_plugin="${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
-            hwpx_plugin="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
-            if [[ -e "${hwp_plugin}" || -L "${hwp_plugin}" ||
-                  -e "${hwpx_plugin}" || -L "${hwpx_plugin}" ]]; then
-              echo "HWP/HWPX plugin remained after uninstall" >&2
-              exit 1
-            fi
+            for extension in hwp hwpx owpml hml; do
+              plugin="${HOME}/.officecli/plugins/dump-reader/${extension}/plugin"
+              if [[ -e "${plugin}" || -L "${plugin}" ]]; then
+                echo "${extension} plugin remained after uninstall" >&2
+                exit 1
+              fi
+            done
           fi
 
-      - name: Uninstall HWP/HWPX plugin on Windows
+      - name: Uninstall Hancom plugin on Windows
         if: ${{ always() && runner.os == 'Windows' }}
         shell: pwsh
         run: |
           if (Test-Path -LiteralPath ./scripts/install.ps1 -PathType Leaf) {
             ./scripts/install.ps1 -Uninstall
-            $hwpPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwp\plugin.exe'
-            $hwpxPlugin = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
-            if ((Test-Path -LiteralPath $hwpPlugin) -or
-                (Test-Path -LiteralPath $hwpxPlugin)) {
-              throw "HWP/HWPX plugin remained after uninstall"
+            foreach ($extension in @('hwp', 'hwpx', 'owpml', 'hml')) {
+              $plugin = Join-Path $HOME ".officecli\plugins\dump-reader\$extension\plugin.exe"
+              if (Test-Path -LiteralPath $plugin) {
+                throw "$extension plugin remained after uninstall"
+              }
             }
           }

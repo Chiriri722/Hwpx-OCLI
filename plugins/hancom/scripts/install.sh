@@ -15,10 +15,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_NAME="officecli-dump-reader-hwpx"
+BIN_NAME="officecli-hancom-hwp"
 BUILT_BIN="${REPO_ROOT}/target/release/${BIN_NAME}"
 
 KIND="dump-reader"
+EXTENSIONS=("hwpx" "hwp" "owpml" "hml")
+ENV_SUFFIXES=("HWPX" "HWP" "OWPML" "HML")
+CANONICAL_INDEX=0
 DO_BUILD=1
 ACTION="install"
 
@@ -47,18 +50,25 @@ fi
 OFFICECLI_DIR="${HOME}/.officecli"
 PLUGINS_DIR="${OFFICECLI_DIR}/plugins"
 PLUGIN_ROOT="${PLUGINS_DIR}/${KIND}"
-HWP_INSTALL_DIR="${PLUGIN_ROOT}/hwp"
-HWPX_INSTALL_DIR="${PLUGIN_ROOT}/hwpx"
-HWP_INSTALL_PATH="${HWP_INSTALL_DIR}/plugin"
-HWPX_INSTALL_PATH="${HWPX_INSTALL_DIR}/plugin"
+INSTALL_DIRS=()
+INSTALL_PATHS=()
+LINK_TARGETS=()
+for extension in "${EXTENSIONS[@]}"; do
+  INSTALL_DIRS+=("${PLUGIN_ROOT}/${extension}")
+  INSTALL_PATHS+=("${PLUGIN_ROOT}/${extension}/plugin")
+  if [[ "${extension}" == "hwpx" ]]; then
+    LINK_TARGETS+=("")
+  else
+    LINK_TARGETS+=("../hwpx/plugin")
+  fi
+done
 
 assert_install_directories_not_links() {
   for dir in \
     "${OFFICECLI_DIR}" \
     "${PLUGINS_DIR}" \
     "${PLUGIN_ROOT}" \
-    "${HWPX_INSTALL_DIR}" \
-    "${HWP_INSTALL_DIR}"
+    "${INSTALL_DIRS[@]}"
   do
     if [[ -L "${dir}" ]]; then
       echo "error: refusing reparseable install directory: ${dir}" >&2
@@ -72,37 +82,36 @@ assert_install_directories_not_links() {
 }
 
 assert_install_targets_safe() {
-  if [[ -L "${HWPX_INSTALL_PATH}" ]]; then
-    echo "error: refusing reparseable install target: ${HWPX_INSTALL_PATH}" >&2
-    return 1
-  fi
-  if [[ -e "${HWPX_INSTALL_PATH}" && ! -f "${HWPX_INSTALL_PATH}" ]]; then
-    echo "error: refusing non-file install target: ${HWPX_INSTALL_PATH}" >&2
-    return 1
-  fi
-
-  if [[ -L "${HWP_INSTALL_PATH}" ]]; then
-    if [[ "$(readlink "${HWP_INSTALL_PATH}")" != "../hwpx/plugin" || \
-          ! -f "${HWPX_INSTALL_PATH}" ]]; then
-      echo "error: refusing unexpected or broken install target link: ${HWP_INSTALL_PATH}" >&2
+  local index path expected_link
+  for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+    path="${INSTALL_PATHS[$index]}"
+    expected_link="${LINK_TARGETS[$index]}"
+    if [[ -L "${path}" ]]; then
+      if [[ -z "${expected_link}" ]]; then
+        echo "error: refusing reparseable install target: ${path}" >&2
+        return 1
+      fi
+      if [[ "$(readlink "${path}")" != "${expected_link}" || \
+            ! -f "${INSTALL_PATHS[$CANONICAL_INDEX]}" ]]; then
+        echo "error: refusing unexpected or broken install target link: ${path}" >&2
+        return 1
+      fi
+    elif [[ -e "${path}" && ! -f "${path}" ]]; then
+      echo "error: refusing non-file install target: ${path}" >&2
       return 1
     fi
-  elif [[ -e "${HWP_INSTALL_PATH}" && ! -f "${HWP_INSTALL_PATH}" ]]; then
-    echo "error: refusing non-file install target: ${HWP_INSTALL_PATH}" >&2
-    return 1
-  fi
+  done
 }
 
 case "${ACTION}" in
   uninstall)
     assert_install_directories_not_links || exit 73  # EX_CANTCREAT
     assert_install_targets_safe || exit 73  # EX_CANTCREAT
-    for entry in \
-      "${HWP_INSTALL_PATH}|${HWP_INSTALL_DIR}" \
-      "${HWPX_INSTALL_PATH}|${HWPX_INSTALL_DIR}"
-    do
-      path="${entry%%|*}"
-      dir="${entry#*|}"
+    # Remove links before the canonical binary so every preflighted link remains
+    # resolvable until its own removal.
+    for ((index = ${#EXTENSIONS[@]} - 1; index >= 0; index--)); do
+      path="${INSTALL_PATHS[$index]}"
+      dir="${INSTALL_DIRS[$index]}"
       if [[ -e "${path}" || -L "${path}" ]]; then
         rm -f "${path}"
         echo "removed ${path}"
@@ -117,8 +126,9 @@ case "${ACTION}" in
 
   print-env)
     # §3 1순위: 환경변수. <KIND>와 <EXT>는 대문자, 하이픈은 밑줄.
-    echo "export OFFICECLI_PLUGIN_DUMP_READER_HWPX=\"${BUILT_BIN}\""
-    echo "export OFFICECLI_PLUGIN_DUMP_READER_HWP=\"${BUILT_BIN}\""
+    for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+      echo "export OFFICECLI_PLUGIN_DUMP_READER_${ENV_SUFFIXES[$index]}=\"${BUILT_BIN}\""
+    done
     exit 0
     ;;
 esac
@@ -151,49 +161,58 @@ fi
 
 assert_install_directories_not_links || exit 73  # EX_CANTCREAT
 assert_install_targets_safe || exit 73  # EX_CANTCREAT
-mkdir -p "${HWPX_INSTALL_DIR}" "${HWP_INSTALL_DIR}"
+for dir in "${INSTALL_DIRS[@]}"; do
+  mkdir -p "${dir}"
+done
 assert_install_directories_not_links || exit 73  # EX_CANTCREAT
 assert_install_targets_safe || exit 73  # EX_CANTCREAT
-chmod go-w "${HWPX_INSTALL_DIR}" "${HWP_INSTALL_DIR}"
+chmod go-w "${INSTALL_DIRS[@]}"
 
-STAGED_HWPX="$(mktemp "${HWPX_INSTALL_DIR}/.plugin.tmp.XXXXXX")"
-STAGED_HWP=""
-BACKUP_HWPX=""
-BACKUP_HWP=""
-HAD_HWPX=0
-HAD_HWP=0
-COMMITTED_HWPX=0
-COMMITTED_HWP=0
+STAGED=()
+BACKUPS=()
+HAD_EXISTING=()
+COMMITTED=()
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  STAGED+=("")
+  BACKUPS+=("")
+  HAD_EXISTING+=(0)
+  COMMITTED+=(0)
+done
 
 cleanup_staging() {
-  if [[ -n "${STAGED_HWPX}" ]] && ! rm -f "${STAGED_HWPX}"; then
-    echo "warning: could not remove staged HWPX plugin: ${STAGED_HWPX}" >&2
-  fi
-  if [[ -n "${STAGED_HWP}" ]] && ! rm -f "${STAGED_HWP}"; then
-    echo "warning: could not remove staged HWP link: ${STAGED_HWP}" >&2
-  fi
+  local index staged_path
+  for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+    staged_path="${STAGED[$index]}"
+    if [[ -n "${staged_path}" ]] && ! rm -f "${staged_path}"; then
+      echo "warning: could not remove staged ${ENV_SUFFIXES[$index]} target: ${staged_path}" >&2
+    fi
+  done
+  return 0
 }
 trap cleanup_staging EXIT
 
-install -m 0755 "${BUILT_BIN}" "${STAGED_HWPX}"
-if ! "${STAGED_HWPX}" --info >/dev/null 2>&1; then
+STAGED[$CANONICAL_INDEX]="$(mktemp "${INSTALL_DIRS[$CANONICAL_INDEX]}/.plugin.tmp.XXXXXX")"
+install -m 0755 "${BUILT_BIN}" "${STAGED[$CANONICAL_INDEX]}"
+if ! "${STAGED[$CANONICAL_INDEX]}" --info >/dev/null 2>&1; then
   echo "error: staged HWPX plugin failed its manifest check" >&2
   exit 70
 fi
 
-# The HWP resolver needs its own extension directory. Keep only one binary on
-# Unix and use the protocol-supported relative symlink for the HWP path.
-for _ in {1..32}; do
-  candidate="${HWP_INSTALL_DIR}/.plugin-link.$$.$RANDOM"
-  if ln -s "../hwpx/plugin" "${candidate}" 2>/dev/null; then
-    STAGED_HWP="${candidate}"
-    break
+# Each resolver needs its own extension directory. Keep one physical binary on
+# Unix and use protocol-supported relative links for every other extension.
+for ((index = 1; index < ${#EXTENSIONS[@]}; index++)); do
+  for _ in {1..32}; do
+    candidate="${INSTALL_DIRS[$index]}/.plugin-link.$$.$RANDOM"
+    if ln -s "${LINK_TARGETS[$index]}" "${candidate}" 2>/dev/null; then
+      STAGED[$index]="${candidate}"
+      break
+    fi
+  done
+  if [[ -z "${STAGED[$index]}" ]]; then
+    echo "error: could not stage the ${ENV_SUFFIXES[$index]} discovery link" >&2
+    exit 73
   fi
 done
-if [[ -z "${STAGED_HWP}" ]]; then
-  echo "error: could not stage the HWP discovery link" >&2
-  exit 73
-fi
 
 assert_install_directories_not_links || exit 73  # EX_CANTCREAT
 assert_install_targets_safe || exit 73  # EX_CANTCREAT
@@ -211,54 +230,50 @@ unique_backup() {
 }
 
 rollback_install() {
-  local hwp_unrecovered=0
-  local hwpx_unrecovered=0
+  local index path backup
+  local -a unrecovered=()
+  local rollback_incomplete=0
+  for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+    unrecovered+=(0)
+  done
 
-  if [[ "${COMMITTED_HWP}" -eq 1 ]]; then
-    if ! rm -f "${HWP_INSTALL_PATH}"; then
-      echo "warning: could not remove committed HWP target during rollback: ${HWP_INSTALL_PATH}" >&2
-      hwp_unrecovered=1
+  for ((index = ${#EXTENSIONS[@]} - 1; index >= 0; index--)); do
+    path="${INSTALL_PATHS[$index]}"
+    if [[ "${COMMITTED[$index]}" -eq 1 ]] && ! rm -f "${path}"; then
+      echo "warning: could not remove committed ${ENV_SUFFIXES[$index]} target during rollback: ${path}" >&2
+      unrecovered[$index]=1
     fi
-  fi
-  if [[ "${COMMITTED_HWPX}" -eq 1 ]]; then
-    if ! rm -f "${HWPX_INSTALL_PATH}"; then
-      echo "warning: could not remove committed HWPX target during rollback: ${HWPX_INSTALL_PATH}" >&2
-      hwpx_unrecovered=1
-    fi
-  fi
+  done
 
-  if [[ "${HAD_HWPX}" -eq 1 ]]; then
-    if [[ -n "${BACKUP_HWPX}" && ( -e "${BACKUP_HWPX}" || -L "${BACKUP_HWPX}" ) ]]; then
-      if mv "${BACKUP_HWPX}" "${HWPX_INSTALL_PATH}"; then
-        BACKUP_HWPX=""
-        hwpx_unrecovered=0
+  for ((index = ${#EXTENSIONS[@]} - 1; index >= 0; index--)); do
+    if [[ "${HAD_EXISTING[$index]}" -ne 1 ]]; then
+      continue
+    fi
+    path="${INSTALL_PATHS[$index]}"
+    backup="${BACKUPS[$index]}"
+    if [[ -n "${backup}" && ( -e "${backup}" || -L "${backup}" ) ]]; then
+      if mv "${backup}" "${path}"; then
+        BACKUPS[$index]=""
+        unrecovered[$index]=0
       else
-        echo "error: could not restore HWPX recovery backup: ${BACKUP_HWPX}" >&2
-        hwpx_unrecovered=1
+        echo "error: could not restore ${ENV_SUFFIXES[$index]} recovery backup: ${backup}" >&2
+        unrecovered[$index]=1
       fi
     else
-      echo "error: HWPX recovery backup is missing during rollback: ${BACKUP_HWPX}" >&2
-      hwpx_unrecovered=1
+      echo "error: ${ENV_SUFFIXES[$index]} recovery backup is missing during rollback: ${backup}" >&2
+      unrecovered[$index]=1
     fi
-  fi
-  if [[ "${HAD_HWP}" -eq 1 ]]; then
-    if [[ -n "${BACKUP_HWP}" && ( -e "${BACKUP_HWP}" || -L "${BACKUP_HWP}" ) ]]; then
-      if mv "${BACKUP_HWP}" "${HWP_INSTALL_PATH}"; then
-        BACKUP_HWP=""
-        hwp_unrecovered=0
-      else
-        echo "error: could not restore HWP recovery backup: ${BACKUP_HWP}" >&2
-        hwp_unrecovered=1
-      fi
-    else
-      echo "error: HWP recovery backup is missing during rollback: ${BACKUP_HWP}" >&2
-      hwp_unrecovered=1
-    fi
-  fi
+  done
 
-  if [[ "${hwp_unrecovered}" -ne 0 || "${hwpx_unrecovered}" -ne 0 ]]; then
+  for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+    if [[ "${unrecovered[$index]}" -ne 0 ]]; then
+      rollback_incomplete=1
+    fi
+  done
+  if [[ "${rollback_incomplete}" -ne 0 ]]; then
     echo "error: rollback incomplete; recovery backups were preserved where possible" >&2
   fi
+  return 0
 }
 
 cleanup_recovery_backup() {
@@ -269,52 +284,61 @@ cleanup_recovery_backup() {
   fi
 }
 
-if [[ -e "${HWPX_INSTALL_PATH}" || -L "${HWPX_INSTALL_PATH}" ]]; then
-  BACKUP_HWPX="$(unique_backup "${HWPX_INSTALL_DIR}" plugin)" || exit 73
-  mv "${HWPX_INSTALL_PATH}" "${BACKUP_HWPX}"
-  HAD_HWPX=1
-fi
-if [[ -e "${HWP_INSTALL_PATH}" || -L "${HWP_INSTALL_PATH}" ]]; then
-  BACKUP_HWP="$(unique_backup "${HWP_INSTALL_DIR}" plugin)" || {
-    rollback_install
-    exit 73
-  }
-  if ! mv "${HWP_INSTALL_PATH}" "${BACKUP_HWP}"; then
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  path="${INSTALL_PATHS[$index]}"
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    BACKUPS[$index]="$(unique_backup "${INSTALL_DIRS[$index]}" plugin)" || {
+      rollback_install
+      exit 73
+    }
+    if ! mv "${path}" "${BACKUPS[$index]}"; then
+      if [[ -e "${BACKUPS[$index]}" || -L "${BACKUPS[$index]}" ]]; then
+        HAD_EXISTING[$index]=1
+      fi
+      rollback_install
+      exit 73
+    fi
+    HAD_EXISTING[$index]=1
+  fi
+done
+
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  if ! mv "${STAGED[$index]}" "${INSTALL_PATHS[$index]}"; then
+    if [[ ! -e "${STAGED[$index]}" && ! -L "${STAGED[$index]}" && \
+          ( -e "${INSTALL_PATHS[$index]}" || -L "${INSTALL_PATHS[$index]}" ) ]]; then
+      STAGED[$index]=""
+      COMMITTED[$index]=1
+    fi
     rollback_install
     exit 73
   fi
-  HAD_HWP=1
-fi
+  STAGED[$index]=""
+  COMMITTED[$index]=1
+done
 
-if ! mv "${STAGED_HWPX}" "${HWPX_INSTALL_PATH}"; then
-  rollback_install
-  exit 73
-fi
-STAGED_HWPX=""
-COMMITTED_HWPX=1
-if ! mv "${STAGED_HWP}" "${HWP_INSTALL_PATH}"; then
-  rollback_install
-  exit 73
-fi
-STAGED_HWP=""
-COMMITTED_HWP=1
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  if ! "${INSTALL_PATHS[$index]}" --info >/dev/null 2>&1; then
+    echo "error: installed ${ENV_SUFFIXES[$index]} plugin failed its manifest check; rolling back" >&2
+    rollback_install
+    exit 70
+  fi
+done
 
-if ! "${HWPX_INSTALL_PATH}" --info >/dev/null 2>&1 || \
-   ! "${HWP_INSTALL_PATH}" --info >/dev/null 2>&1; then
-  echo "error: installed plugin failed its manifest check; rolling back" >&2
-  rollback_install
-  exit 70
-fi
-
-cleanup_recovery_backup "HWPX" "${BACKUP_HWPX}"
-cleanup_recovery_backup "HWP" "${BACKUP_HWP}"
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  cleanup_recovery_backup "${ENV_SUFFIXES[$index]}" "${BACKUPS[$index]}"
+done
 trap - EXIT
 
-echo "installed: ${HWPX_INSTALL_PATH}"
-echo "installed: ${HWP_INSTALL_PATH} -> ../hwpx/plugin"
+for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
+  if [[ -n "${LINK_TARGETS[$index]}" ]]; then
+    echo "installed: ${INSTALL_PATHS[$index]} -> ${LINK_TARGETS[$index]}"
+  else
+    echo "installed: ${INSTALL_PATHS[$index]}"
+  fi
+done
 echo
 echo "manifest reported by the installed plugin:"
-"${HWPX_INSTALL_PATH}" --info
+"${INSTALL_PATHS[$CANONICAL_INDEX]}" --info
 echo
 echo "verify discovery with:"
 echo "  officecli plugins list"

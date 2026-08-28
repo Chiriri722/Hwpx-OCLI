@@ -11,7 +11,7 @@ if ((@($Uninstall, $PrintEnv) | Where-Object { $_ }).Count -gt 1) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$binaryName = "officecli-dump-reader-hwpx.exe"
+$binaryName = "officecli-hancom-hwp.exe"
 $builtBinary = Join-Path $repoRoot "target\release\$binaryName"
 if (-not [IO.Path]::IsPathFullyQualified($HOME)) {
     throw "HOME must be an absolute path"
@@ -22,9 +22,13 @@ $pluginsDirectory = Join-Path $officeCliDirectory "plugins"
 $pluginRoot = Join-Path $pluginsDirectory "dump-reader"
 $hwpInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\hwp"
 $hwpxInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\hwpx"
+$owpmlInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\owpml"
+$hmlInstallDirectory = Join-Path $homeDirectory ".officecli\plugins\dump-reader\hml"
 $installTargets = @(
-    [PSCustomObject]@{ Extension = "hwp"; Directory = $hwpInstallDirectory; Path = (Join-Path $hwpInstallDirectory "plugin.exe") }
-    [PSCustomObject]@{ Extension = "hwpx"; Directory = $hwpxInstallDirectory; Path = (Join-Path $hwpxInstallDirectory "plugin.exe") }
+    [PSCustomObject]@{ Extension = "hwp"; EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_HWP"; Directory = $hwpInstallDirectory; Path = (Join-Path $hwpInstallDirectory "plugin.exe") }
+    [PSCustomObject]@{ Extension = "hwpx"; EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_HWPX"; Directory = $hwpxInstallDirectory; Path = (Join-Path $hwpxInstallDirectory "plugin.exe") }
+    [PSCustomObject]@{ Extension = "owpml"; EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_OWPML"; Directory = $owpmlInstallDirectory; Path = (Join-Path $owpmlInstallDirectory "plugin.exe") }
+    [PSCustomObject]@{ Extension = "hml"; EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_HML"; Directory = $hmlInstallDirectory; Path = (Join-Path $hmlInstallDirectory "plugin.exe") }
 )
 
 function Assert-InstallDirectoryNotReparse([string]$Path) {
@@ -80,8 +84,9 @@ if ($Uninstall) {
 }
 
 if ($PrintEnv) {
-    Write-Output "`$env:OFFICECLI_PLUGIN_DUMP_READER_HWPX = '$builtBinary'"
-    Write-Output "`$env:OFFICECLI_PLUGIN_DUMP_READER_HWP = '$builtBinary'"
+    foreach ($target in $installTargets) {
+        Write-Output "`$env:$($target.EnvironmentVariable) = '$builtBinary'"
+    }
     exit 0
 }
 

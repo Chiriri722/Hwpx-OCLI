@@ -1,28 +1,79 @@
-//! Installation/discovery contract for the two advertised source extensions.
+//! Installation/discovery contract for every advertised Hancom source extension.
 
 #[cfg(unix)]
 const UNIX_INSTALLER: &str = include_str!("../../../scripts/install.sh");
 const WINDOWS_INSTALLER: &str = include_str!("../../../scripts/install.ps1");
+const EXTENSIONS: [&str; 4] = ["hwp", "hwpx", "owpml", "hml"];
+const CANONICAL_BINARY: &str = "officecli-hancom-hwp";
 
 #[test]
-fn windows_installer_exposes_hwp_and_hwpx_environment_overrides() {
-    assert!(
-        WINDOWS_INSTALLER.contains("OFFICECLI_PLUGIN_DUMP_READER_HWPX ="),
-        "install.ps1 must expose the HWPX discovery override"
-    );
-    assert!(
-        WINDOWS_INSTALLER.contains("OFFICECLI_PLUGIN_DUMP_READER_HWP ="),
-        "install.ps1 must expose the HWP discovery override"
-    );
+fn windows_installer_exposes_every_environment_override() {
+    for extension in EXTENSIONS {
+        let variable = format!(
+            "OFFICECLI_PLUGIN_DUMP_READER_{}",
+            extension.to_ascii_uppercase()
+        );
+        assert!(
+            WINDOWS_INSTALLER.contains(&variable),
+            "install.ps1 must expose the {extension} discovery override"
+        );
+    }
 }
 
 #[test]
-fn windows_installer_manages_both_extension_directories() {
-    for extension in ["hwp", "hwpx"] {
-        let directory = format!("dump-reader\\{extension}\"");
+fn windows_installer_manages_every_extension_directory() {
+    for extension in EXTENSIONS {
+        let declaration = format!("Extension = \"{extension}\"");
         assert!(
-            WINDOWS_INSTALLER.contains(&directory),
-            "install.ps1 must manage {directory}"
+            WINDOWS_INSTALLER.contains(&declaration),
+            "install.ps1 must manage the {extension} directory"
+        );
+    }
+}
+
+#[test]
+fn installers_use_the_canonical_binary_name() {
+    assert!(
+        WINDOWS_INSTALLER.contains("$binaryName = \"officecli-hancom-hwp.exe\""),
+        "install.ps1 must install the canonical binary"
+    );
+    assert!(
+        !WINDOWS_INSTALLER.contains("$binaryName = \"officecli-dump-reader-hwpx.exe\""),
+        "install.ps1 must not source the legacy compatibility entry point"
+    );
+    #[cfg(unix)]
+    {
+        assert!(
+            UNIX_INSTALLER.contains("BIN_NAME=\"officecli-hancom-hwp\""),
+            "install.sh must install the canonical binary"
+        );
+        assert!(
+            !UNIX_INSTALLER.contains("BIN_NAME=\"officecli-dump-reader-hwpx\""),
+            "install.sh must not source the legacy compatibility entry point"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_installer_tracks_transaction_state_per_extension() {
+    for state in ["STAGED=()", "BACKUPS=()", "HAD_EXISTING=()", "COMMITTED=()"] {
+        assert!(
+            UNIX_INSTALLER.contains(state),
+            "install.sh must maintain {state} for all extension indexes"
+        );
+    }
+    for legacy_scalar in [
+        "STAGED_HWP=",
+        "STAGED_HWPX=",
+        "BACKUP_HWP=",
+        "BACKUP_HWPX=",
+        "COMMITTED_HWP=",
+        "COMMITTED_HWPX=",
+    ] {
+        assert!(
+            !UNIX_INSTALLER.contains(legacy_scalar),
+            "install.sh must not encode transaction state in {legacy_scalar}"
         );
     }
 }
@@ -134,11 +185,44 @@ fn fake_windows_installer_repo() -> tempfile::TempDir {
     std::fs::create_dir_all(&release).expect("create release dir");
     std::fs::write(scripts.join("install.ps1"), WINDOWS_INSTALLER).expect("copy Windows installer");
     std::fs::copy(
-        env!("CARGO_BIN_EXE_officecli-dump-reader-hwpx"),
-        release.join("officecli-dump-reader-hwpx.exe"),
+        env!("CARGO_BIN_EXE_officecli-hancom-hwp"),
+        release.join(format!("{CANONICAL_BINARY}.exe")),
     )
     .expect("copy test plugin");
     repo
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_print_env_registers_every_extension_with_the_canonical_binary() {
+    let home = tempfile::tempdir().expect("temporary Windows home");
+    let output = run_windows_installer(home.path(), "-PrintEnv");
+    assert!(
+        output.status.success(),
+        "print-env failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 installer output");
+    let assignments: Vec<_> = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(assignments.len(), EXTENSIONS.len());
+    for extension in EXTENSIONS {
+        let variable = format!(
+            "OFFICECLI_PLUGIN_DUMP_READER_{}",
+            extension.to_ascii_uppercase()
+        );
+        let assignment = assignments
+            .iter()
+            .find(|line| line.contains(&variable))
+            .unwrap_or_else(|| panic!("missing {extension} override: {stdout}"));
+        assert!(
+            assignment.contains(CANONICAL_BINARY),
+            "{extension} override must point at the canonical binary: {assignment}"
+        );
+    }
 }
 
 #[cfg(windows)]
@@ -177,14 +261,14 @@ fn physical_path_for_junction(
 #[cfg(windows)]
 #[test]
 fn windows_uninstall_rejects_reparse_points_in_every_existing_managed_component() {
-    const OLD_HWP: &[u8] = b"external HWP plugin must remain";
-    const OLD_HWPX: &[u8] = b"external HWPX plugin must remain";
     let managed_components = [
         ".officecli",
         ".officecli/plugins",
         ".officecli/plugins/dump-reader",
         ".officecli/plugins/dump-reader/hwp",
         ".officecli/plugins/dump-reader/hwpx",
+        ".officecli/plugins/dump-reader/owpml",
+        ".officecli/plugins/dump-reader/hml",
     ];
 
     for relative_junction in managed_components {
@@ -194,11 +278,18 @@ fn windows_uninstall_rejects_reparse_points_in_every_existing_managed_component(
         create_windows_junction(&junction, outside.path());
 
         let root = home.path().join(".officecli/plugins/dump-reader");
-        let logical_hwp = root.join("hwp/plugin.exe");
-        let logical_hwpx = root.join("hwpx/plugin.exe");
-        let physical_hwp = physical_path_for_junction(&logical_hwp, &junction, outside.path());
-        let physical_hwpx = physical_path_for_junction(&logical_hwpx, &junction, outside.path());
-        for (path, contents) in [(&physical_hwp, OLD_HWP), (&physical_hwpx, OLD_HWPX)] {
+        let physical_targets: Vec<_> = EXTENSIONS
+            .iter()
+            .map(|extension| {
+                let logical = root.join(extension).join("plugin.exe");
+                (
+                    *extension,
+                    physical_path_for_junction(&logical, &junction, outside.path()),
+                    format!("external {extension} plugin must remain"),
+                )
+            })
+            .collect();
+        for (_, path, contents) in &physical_targets {
             std::fs::create_dir_all(path.parent().expect("plugin parent"))
                 .expect("create plugin parent");
             std::fs::write(path, contents).expect("write protected plugin");
@@ -210,8 +301,10 @@ fn windows_uninstall_rejects_reparse_points_in_every_existing_managed_component(
         }
 
         let output = run_windows_installer(home.path(), "-Uninstall");
-        let hwp_after = std::fs::read(&physical_hwp).ok();
-        let hwpx_after = std::fs::read(&physical_hwpx).ok();
+        let contents_after: Vec<_> = physical_targets
+            .iter()
+            .map(|(_, path, _)| std::fs::read_to_string(path).ok())
+            .collect();
         std::fs::remove_dir(&junction).expect("remove test junction without following it");
 
         assert!(
@@ -220,16 +313,13 @@ fn windows_uninstall_rejects_reparse_points_in_every_existing_managed_component(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(
-            hwp_after.as_deref(),
-            Some(OLD_HWP),
-            "HWP target changed through junction component {relative_junction}"
-        );
-        assert_eq!(
-            hwpx_after.as_deref(),
-            Some(OLD_HWPX),
-            "HWPX target changed through junction component {relative_junction}"
-        );
+        for ((extension, _, expected), actual) in physical_targets.iter().zip(&contents_after) {
+            assert_eq!(
+                actual.as_deref(),
+                Some(expected.as_str()),
+                "{extension} target changed through junction component {relative_junction}"
+            );
+        }
     }
 }
 
@@ -242,6 +332,8 @@ fn windows_uninstall_rejects_non_directory_managed_components() {
         ".officecli/plugins/dump-reader",
         ".officecli/plugins/dump-reader/hwp",
         ".officecli/plugins/dump-reader/hwpx",
+        ".officecli/plugins/dump-reader/owpml",
+        ".officecli/plugins/dump-reader/hml",
     ] {
         let home = tempfile::tempdir().expect("temporary Windows home");
         let component = home.path().join(relative_file);
@@ -296,49 +388,96 @@ fn windows_uninstall_remains_idempotent_when_the_managed_tree_is_missing() {
 
 #[cfg(windows)]
 #[test]
-fn windows_install_restores_the_first_target_when_the_second_commit_is_locked() {
+fn windows_uninstall_removes_every_extension_and_preserves_unrelated_plugins() {
+    let home = tempfile::tempdir().expect("temporary Windows home");
+    let root = home.path().join(".officecli/plugins/dump-reader");
+    let targets: Vec<_> = EXTENSIONS
+        .iter()
+        .map(|extension| root.join(extension).join("plugin.exe"))
+        .collect();
+    for target in &targets {
+        std::fs::create_dir_all(target.parent().expect("extension parent"))
+            .expect("create extension dir");
+        std::fs::write(target, b"old plugin").expect("write old plugin");
+    }
+    let unrelated = root.join("other/plugin.exe");
+    std::fs::create_dir_all(unrelated.parent().expect("unrelated parent"))
+        .expect("create unrelated directory");
+    std::fs::write(&unrelated, b"unrelated plugin").expect("write unrelated plugin");
+
+    for attempt in 0..2 {
+        let output = run_windows_installer(home.path(), "-Uninstall");
+        assert!(
+            output.status.success(),
+            "uninstall attempt {attempt} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for (extension, target) in EXTENSIONS.iter().zip(&targets) {
+            assert!(!target.exists(), "{extension} target must be removed");
+        }
+        assert!(unrelated.exists(), "unrelated plugin must remain");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_install_restores_every_prior_target_when_a_later_commit_is_locked() {
     use std::os::windows::fs::OpenOptionsExt;
 
-    const OLD_HWP: &[u8] = b"known old HWP plugin";
-    const OLD_HWPX: &[u8] = b"known old HWPX plugin";
     let repo = fake_windows_installer_repo();
     let installer = repo.path().join("scripts/install.ps1");
     let home = tempfile::tempdir().expect("temporary Windows home");
     let root = home.path().join(".officecli/plugins/dump-reader");
-    let hwp = root.join("hwp/plugin.exe");
-    let hwpx = root.join("hwpx/plugin.exe");
-    std::fs::create_dir_all(hwp.parent().expect("HWP parent")).expect("create HWP dir");
-    std::fs::create_dir_all(hwpx.parent().expect("HWPX parent")).expect("create HWPX dir");
-    std::fs::write(&hwp, OLD_HWP).expect("write old HWP plugin");
-    std::fs::write(&hwpx, OLD_HWPX).expect("write old HWPX plugin");
+    let targets: Vec<_> = EXTENSIONS
+        .iter()
+        .map(|extension| {
+            (
+                *extension,
+                root.join(extension).join("plugin.exe"),
+                format!("known old {extension} plugin"),
+            )
+        })
+        .collect();
+    for (_, target, contents) in &targets {
+        std::fs::create_dir_all(target.parent().expect("extension parent"))
+            .expect("create extension dir");
+        std::fs::write(target, contents).expect("write old plugin");
+    }
 
+    let locked = targets
+        .iter()
+        .find(|(extension, _, _)| *extension == "owpml")
+        .expect("OWPML target");
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(0)
-        .open(&hwpx)
-        .expect("lock HWPX target against replacement");
+        .open(&locked.1)
+        .expect("lock OWPML target against replacement");
     let output = run_windows_installer_at(&installer, home.path(), "-NoBuild");
     drop(lock);
 
     assert!(
         !output.status.success(),
-        "locked second commit must fail installation"
+        "locked later commit must fail installation"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("failed to commit hwpx plugin"),
-        "test must reach the locked second commit: {stderr}"
+        stderr.contains("failed to commit owpml plugin"),
+        "test must reach the locked later commit: {stderr}"
     );
     assert!(
         !stderr.contains("rollback incomplete"),
         "first target rollback unexpectedly failed: {stderr}"
     );
-    assert_eq!(std::fs::read(&hwp).expect("restored HWP target"), OLD_HWP);
-    assert_eq!(
-        std::fs::read(&hwpx).expect("unchanged HWPX target"),
-        OLD_HWPX
-    );
-    for directory in [hwp.parent().unwrap(), hwpx.parent().unwrap()] {
+    for (extension, target, expected) in &targets {
+        assert_eq!(
+            std::fs::read_to_string(target).expect("restored target"),
+            expected.as_str(),
+            "{extension} target was not restored"
+        );
+    }
+    for (_, target, _) in &targets {
+        let directory = target.parent().expect("extension parent");
         let leftovers: Vec<_> = std::fs::read_dir(directory)
             .expect("read install directory")
             .filter_map(Result::ok)
@@ -369,7 +508,7 @@ fn windows_install_treats_brackets_in_home_as_literal_characters() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    for extension in ["hwp", "hwpx"] {
+    for extension in EXTENSIONS {
         assert!(
             home.join(format!(
                 ".officecli/plugins/dump-reader/{extension}/plugin.exe"
@@ -420,10 +559,10 @@ fn fake_installer_repo() -> tempfile::TempDir {
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755))
         .expect("make installer executable");
 
-    let binary = release.join("officecli-dump-reader-hwpx");
+    let binary = release.join(CANONICAL_BINARY);
     std::fs::write(
         &binary,
-        b"#!/bin/sh\nprintf '%s\\n' '{\"name\":\"officecli-hwpx\",\"protocol\":1,\"kinds\":[\"dump-reader\"],\"extensions\":[\".hwpx\",\".hwp\"],\"target\":\"docx\"}'\n",
+        b"#!/bin/sh\nprintf '%s\\n' '{\"name\":\"officecli-hancom-hwp\",\"protocol\":1,\"kinds\":[\"dump-reader\"],\"extensions\":[\".hwpx\",\".owpml\",\".hml\",\".hwp\"],\"target\":\"docx\"}'\n",
     )
     .expect("write fake plugin");
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
@@ -433,7 +572,7 @@ fn fake_installer_repo() -> tempfile::TempDir {
 
 #[cfg(unix)]
 #[test]
-fn unix_print_env_registers_both_extensions() {
+fn unix_print_env_registers_every_extension() {
     let home = tempfile::tempdir().expect("temporary home");
     let output = run_unix_installer(home.path(), "--print-env");
     assert!(
@@ -443,14 +582,20 @@ fn unix_print_env_registers_both_extensions() {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 installer output");
-    assert!(
-        stdout.contains("OFFICECLI_PLUGIN_DUMP_READER_HWPX="),
-        "missing HWPX override: {stdout}"
-    );
-    assert!(
-        stdout.contains("OFFICECLI_PLUGIN_DUMP_READER_HWP="),
-        "missing HWP override: {stdout}"
-    );
+    for extension in EXTENSIONS {
+        let variable = format!(
+            "OFFICECLI_PLUGIN_DUMP_READER_{}=",
+            extension.to_ascii_uppercase()
+        );
+        assert!(
+            stdout.contains(&variable),
+            "missing {extension} override: {stdout}"
+        );
+        assert!(
+            stdout.contains(CANONICAL_BINARY),
+            "override must point at the canonical binary: {stdout}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -462,18 +607,21 @@ fn unix_installer_rejects_relative_home_for_every_action() {
     for argument in ["--uninstall", "--print-env", "--no-build"] {
         let working = tempfile::tempdir().expect("temporary Unix working directory");
         let relative_home = std::path::Path::new("relative-home");
-        let hwp = working
-            .path()
-            .join(relative_home)
-            .join(".officecli/plugins/dump-reader/hwp/plugin");
-        let hwpx = working
-            .path()
-            .join(relative_home)
-            .join(".officecli/plugins/dump-reader/hwpx/plugin");
-        std::fs::create_dir_all(hwp.parent().expect("HWP parent")).expect("create HWP dir");
-        std::fs::create_dir_all(hwpx.parent().expect("HWPX parent")).expect("create HWPX dir");
-        std::fs::write(&hwp, b"known old HWP plugin").expect("write old HWP plugin");
-        std::fs::write(&hwpx, b"known old HWPX plugin").expect("write old HWPX plugin");
+        let targets: Vec<_> = EXTENSIONS
+            .iter()
+            .map(|extension| {
+                working
+                    .path()
+                    .join(relative_home)
+                    .join(format!(".officecli/plugins/dump-reader/{extension}/plugin"))
+            })
+            .collect();
+        for (extension, target) in EXTENSIONS.iter().zip(&targets) {
+            std::fs::create_dir_all(target.parent().expect("extension parent"))
+                .expect("create extension dir");
+            std::fs::write(target, format!("known old {extension} plugin"))
+                .expect("write old plugin");
+        }
 
         let output = std::process::Command::new(&installer)
             .arg(argument)
@@ -491,14 +639,12 @@ fn unix_installer_rejects_relative_home_for_every_action() {
             "{argument} must explain the invalid HOME: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(
-            std::fs::read(&hwp).expect("HWP target remains"),
-            b"known old HWP plugin"
-        );
-        assert_eq!(
-            std::fs::read(&hwpx).expect("HWPX target remains"),
-            b"known old HWPX plugin"
-        );
+        for (extension, target) in EXTENSIONS.iter().zip(&targets) {
+            assert_eq!(
+                std::fs::read_to_string(target).expect("extension target remains"),
+                format!("known old {extension} plugin")
+            );
+        }
     }
 }
 
@@ -524,15 +670,18 @@ fn unix_help_does_not_require_an_absolute_home() {
 
 #[cfg(unix)]
 #[test]
-fn unix_uninstall_removes_both_extensions() {
+fn unix_uninstall_removes_every_extension() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = home.path().join(".officecli/plugins/dump-reader");
-    let hwp = root.join("hwp/plugin");
-    let hwpx = root.join("hwpx/plugin");
-    std::fs::create_dir_all(hwp.parent().expect("hwp parent")).expect("create hwp dir");
-    std::fs::create_dir_all(hwpx.parent().expect("hwpx parent")).expect("create hwpx dir");
-    std::fs::write(&hwp, b"old hwp plugin").expect("write hwp plugin");
-    std::fs::write(&hwpx, b"old hwpx plugin").expect("write hwpx plugin");
+    let targets: Vec<_> = EXTENSIONS
+        .iter()
+        .map(|extension| root.join(extension).join("plugin"))
+        .collect();
+    for (extension, target) in EXTENSIONS.iter().zip(&targets) {
+        std::fs::create_dir_all(target.parent().expect("extension parent"))
+            .expect("create extension dir");
+        std::fs::write(target, format!("old {extension} plugin")).expect("write plugin");
+    }
     let unrelated = root.join("other/plugin");
     std::fs::create_dir_all(unrelated.parent().expect("other parent"))
         .expect("create unrelated dir");
@@ -544,8 +693,9 @@ fn unix_uninstall_removes_both_extensions() {
         "uninstall failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!hwp.exists(), "HWP plugin must be removed");
-    assert!(!hwpx.exists(), "HWPX plugin must be removed");
+    for (extension, target) in EXTENSIONS.iter().zip(&targets) {
+        assert!(!target.exists(), "{extension} plugin must be removed");
+    }
     assert!(unrelated.exists(), "unrelated plugins must be preserved");
 
     let repeated = run_unix_installer(home.path(), "--uninstall");
@@ -565,25 +715,27 @@ fn unix_uninstall_removes_both_extensions() {
 fn unix_uninstall_does_not_follow_a_symlinked_extension_directory() {
     use std::os::unix::fs::symlink;
 
-    let home = tempfile::tempdir().expect("temporary home");
-    let outside = tempfile::tempdir().expect("external directory");
-    let outside_plugin = outside.path().join("plugin");
-    std::fs::write(&outside_plugin, b"must remain outside plugin root")
-        .expect("write external plugin");
+    for extension in EXTENSIONS {
+        let home = tempfile::tempdir().expect("temporary home");
+        let outside = tempfile::tempdir().expect("external directory");
+        let outside_plugin = outside.path().join("plugin");
+        std::fs::write(&outside_plugin, b"must remain outside plugin root")
+            .expect("write external plugin");
 
-    let root = home.path().join(".officecli/plugins/dump-reader");
-    std::fs::create_dir_all(&root).expect("create plugin root");
-    symlink(outside.path(), root.join("hwp")).expect("link HWP extension outside root");
+        let root = home.path().join(".officecli/plugins/dump-reader");
+        std::fs::create_dir_all(&root).expect("create plugin root");
+        symlink(outside.path(), root.join(extension)).expect("link extension outside plugin root");
 
-    let output = run_unix_installer(home.path(), "--uninstall");
-    assert!(
-        !output.status.success(),
-        "uninstall must fail closed for a symlinked extension directory"
-    );
-    assert!(
-        outside_plugin.exists(),
-        "uninstall must not delete through an extension-directory symlink"
-    );
+        let output = run_unix_installer(home.path(), "--uninstall");
+        assert!(
+            !output.status.success(),
+            "uninstall must fail closed for a symlinked {extension} directory"
+        );
+        assert!(
+            outside_plugin.exists(),
+            "uninstall must not delete through the {extension} directory symlink"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -591,14 +743,14 @@ fn unix_uninstall_does_not_follow_a_symlinked_extension_directory() {
 fn unix_uninstall_rejects_symlinks_in_every_existing_managed_component() {
     use std::os::unix::fs::symlink;
 
-    const OLD_HWP: &[u8] = b"external HWP plugin must remain";
-    const OLD_HWPX: &[u8] = b"external HWPX plugin must remain";
     let managed_components = [
         ".officecli",
         ".officecli/plugins",
         ".officecli/plugins/dump-reader",
         ".officecli/plugins/dump-reader/hwp",
         ".officecli/plugins/dump-reader/hwpx",
+        ".officecli/plugins/dump-reader/owpml",
+        ".officecli/plugins/dump-reader/hml",
     ];
 
     for relative_link in managed_components {
@@ -609,17 +761,24 @@ fn unix_uninstall_rejects_symlinks_in_every_existing_managed_component() {
         symlink(outside.path(), &link).expect("create managed-path symlink");
 
         let root = home.path().join(".officecli/plugins/dump-reader");
-        let logical_hwp = root.join("hwp/plugin");
-        let logical_hwpx = root.join("hwpx/plugin");
         let physical = |logical: &std::path::Path| {
             logical.strip_prefix(&link).map_or_else(
                 |_| logical.to_path_buf(),
                 |suffix| outside.path().join(suffix),
             )
         };
-        let physical_hwp = physical(&logical_hwp);
-        let physical_hwpx = physical(&logical_hwpx);
-        for (path, contents) in [(&physical_hwp, OLD_HWP), (&physical_hwpx, OLD_HWPX)] {
+        let physical_targets: Vec<_> = EXTENSIONS
+            .iter()
+            .map(|extension| {
+                let logical = root.join(extension).join("plugin");
+                (
+                    *extension,
+                    physical(&logical),
+                    format!("external {extension} plugin must remain"),
+                )
+            })
+            .collect();
+        for (_, path, contents) in &physical_targets {
             std::fs::create_dir_all(path.parent().expect("plugin parent"))
                 .expect("create plugin parent");
             std::fs::write(path, contents).expect("write protected plugin");
@@ -628,8 +787,10 @@ fn unix_uninstall_rejects_symlinks_in_every_existing_managed_component() {
         }
 
         let output = run_unix_installer(home.path(), "--uninstall");
-        let hwp_after = std::fs::read(&physical_hwp).ok();
-        let hwpx_after = std::fs::read(&physical_hwpx).ok();
+        let contents_after: Vec<_> = physical_targets
+            .iter()
+            .map(|(_, path, _)| std::fs::read_to_string(path).ok())
+            .collect();
         std::fs::remove_file(&link).expect("remove test symlink without following it");
 
         assert!(
@@ -638,16 +799,13 @@ fn unix_uninstall_rejects_symlinks_in_every_existing_managed_component() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(
-            hwp_after.as_deref(),
-            Some(OLD_HWP),
-            "HWP target changed through symlink component {relative_link}"
-        );
-        assert_eq!(
-            hwpx_after.as_deref(),
-            Some(OLD_HWPX),
-            "HWPX target changed through symlink component {relative_link}"
-        );
+        for ((extension, _, expected), actual) in physical_targets.iter().zip(&contents_after) {
+            assert_eq!(
+                actual.as_deref(),
+                Some(expected.as_str()),
+                "{extension} target changed through symlink component {relative_link}"
+            );
+        }
     }
 }
 
@@ -660,6 +818,8 @@ fn unix_uninstall_rejects_non_directory_managed_components() {
         ".officecli/plugins/dump-reader",
         ".officecli/plugins/dump-reader/hwp",
         ".officecli/plugins/dump-reader/hwpx",
+        ".officecli/plugins/dump-reader/owpml",
+        ".officecli/plugins/dump-reader/hml",
     ] {
         let home = tempfile::tempdir().expect("temporary Unix home");
         let component = home.path().join(relative_file);
@@ -700,22 +860,25 @@ fn unix_uninstall_rejects_a_broken_ancestor_symlink() {
 
 #[cfg(unix)]
 #[test]
-fn unix_uninstall_preflights_both_targets_before_removing_either() {
-    for invalid_extension in ["hwp", "hwpx"] {
+fn unix_uninstall_preflights_every_target_before_removing_any() {
+    for invalid_extension in EXTENSIONS {
         let home = tempfile::tempdir().expect("temporary Unix home");
         let root = home.path().join(".officecli/plugins/dump-reader");
-        let hwp = root.join("hwp/plugin");
-        let hwpx = root.join("hwpx/plugin");
-        std::fs::create_dir_all(hwp.parent().expect("HWP parent")).expect("create HWP dir");
-        std::fs::create_dir_all(hwpx.parent().expect("HWPX parent")).expect("create HWPX dir");
-        let (invalid, valid) = if invalid_extension == "hwp" {
-            (&hwp, &hwpx)
-        } else {
-            (&hwpx, &hwp)
-        };
-        std::fs::create_dir(invalid).expect("create invalid target directory");
-        std::fs::write(invalid.join("keep"), b"keep").expect("write directory sentinel");
-        std::fs::write(valid, b"known old peer plugin").expect("write valid peer plugin");
+        let targets: Vec<_> = EXTENSIONS
+            .iter()
+            .map(|extension| (*extension, root.join(extension).join("plugin")))
+            .collect();
+        for (extension, target) in &targets {
+            std::fs::create_dir_all(target.parent().expect("extension parent"))
+                .expect("create extension dir");
+            if *extension == invalid_extension {
+                std::fs::create_dir(target).expect("create invalid target directory");
+                std::fs::write(target.join("keep"), b"keep").expect("write directory sentinel");
+            } else {
+                std::fs::write(target, format!("known old {extension} peer plugin"))
+                    .expect("write valid peer plugin");
+            }
+        }
 
         let output = run_unix_installer(home.path(), "--uninstall");
 
@@ -723,36 +886,44 @@ fn unix_uninstall_preflights_both_targets_before_removing_either() {
             !output.status.success(),
             "{invalid_extension} directory target must fail uninstall preflight"
         );
-        assert_eq!(
-            std::fs::read(valid).expect("valid peer target remains"),
-            b"known old peer plugin"
-        );
-        assert!(
-            invalid.join("keep").exists(),
-            "invalid target must remain untouched"
-        );
+        for (extension, target) in &targets {
+            if *extension == invalid_extension {
+                assert!(
+                    target.join("keep").exists(),
+                    "invalid target must remain untouched"
+                );
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(target).expect("valid peer target remains"),
+                    format!("known old {extension} peer plugin")
+                );
+            }
+        }
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn unix_install_preflights_both_targets_before_staging_or_backup() {
-    for invalid_extension in ["hwp", "hwpx"] {
+fn unix_install_preflights_every_target_before_staging_or_backup() {
+    for invalid_extension in EXTENSIONS {
         let repo = fake_installer_repo();
         let home = tempfile::tempdir().expect("temporary Unix home");
         let root = home.path().join(".officecli/plugins/dump-reader");
-        let hwp = root.join("hwp/plugin");
-        let hwpx = root.join("hwpx/plugin");
-        std::fs::create_dir_all(hwp.parent().expect("HWP parent")).expect("create HWP dir");
-        std::fs::create_dir_all(hwpx.parent().expect("HWPX parent")).expect("create HWPX dir");
-        let (invalid, valid) = if invalid_extension == "hwp" {
-            (&hwp, &hwpx)
-        } else {
-            (&hwpx, &hwp)
-        };
-        std::fs::create_dir(invalid).expect("create invalid target directory");
-        std::fs::write(invalid.join("keep"), b"keep").expect("write directory sentinel");
-        std::fs::write(valid, b"known old peer plugin").expect("write valid peer plugin");
+        let targets: Vec<_> = EXTENSIONS
+            .iter()
+            .map(|extension| (*extension, root.join(extension).join("plugin")))
+            .collect();
+        for (extension, target) in &targets {
+            std::fs::create_dir_all(target.parent().expect("extension parent"))
+                .expect("create extension dir");
+            if *extension == invalid_extension {
+                std::fs::create_dir(target).expect("create invalid target directory");
+                std::fs::write(target.join("keep"), b"keep").expect("write directory sentinel");
+            } else {
+                std::fs::write(target, format!("known old {extension} peer plugin"))
+                    .expect("write valid peer plugin");
+            }
+        }
 
         let output = run_unix_installer_at(
             &repo.path().join("scripts/install.sh"),
@@ -764,20 +935,25 @@ fn unix_install_preflights_both_targets_before_staging_or_backup() {
             !output.status.success(),
             "{invalid_extension} directory target must fail install preflight"
         );
-        assert_eq!(
-            std::fs::read(valid).expect("valid peer target remains"),
-            b"known old peer plugin"
-        );
-        assert!(
-            invalid.join("keep").exists(),
-            "invalid target must remain untouched"
-        );
+        for (extension, target) in &targets {
+            if *extension == invalid_extension {
+                assert!(
+                    target.join("keep").exists(),
+                    "invalid target must remain untouched"
+                );
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(target).expect("valid peer target remains"),
+                    format!("known old {extension} peer plugin")
+                );
+            }
+        }
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn unix_install_places_an_executable_and_relative_hwp_link() {
+fn unix_install_places_one_executable_and_relative_links_for_other_extensions() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = fake_installer_repo();
@@ -791,7 +967,6 @@ fn unix_install_places_an_executable_and_relative_hwp_link() {
     );
 
     let root = home.path().join(".officecli/plugins/dump-reader");
-    let hwp = root.join("hwp/plugin");
     let hwpx = root.join("hwpx/plugin");
     assert!(
         hwpx.exists(),
@@ -807,16 +982,22 @@ fn unix_install_places_an_executable_and_relative_hwp_link() {
         "HWPX plugin must be executable"
     );
 
-    let hwp_metadata = std::fs::symlink_metadata(&hwp).expect("installed HWP link");
-    assert!(hwp_metadata.file_type().is_symlink());
-    assert_eq!(
-        std::fs::read_link(&hwp).expect("HWP link target"),
-        std::path::Path::new("../hwpx/plugin")
-    );
-    assert_eq!(
-        std::fs::read(&hwp).expect("read through HWP link"),
-        std::fs::read(&hwpx).expect("read HWPX plugin")
-    );
+    for extension in ["hwp", "owpml", "hml"] {
+        let link = root.join(extension).join("plugin");
+        let metadata = std::fs::symlink_metadata(&link).expect("installed discovery link");
+        assert!(
+            metadata.file_type().is_symlink(),
+            "{extension} target must be a symlink"
+        );
+        assert_eq!(
+            std::fs::read_link(&link).expect("discovery link target"),
+            std::path::Path::new("../hwpx/plugin")
+        );
+        assert_eq!(
+            std::fs::read(&link).expect("read through discovery link"),
+            std::fs::read(&hwpx).expect("read HWPX plugin")
+        );
+    }
 
     let repeated = run_unix_installer_at(&installer, home.path(), "--no-build");
     assert!(
@@ -824,11 +1005,15 @@ fn unix_install_places_an_executable_and_relative_hwp_link() {
         "reinstall failed: {}",
         String::from_utf8_lossy(&repeated.stderr)
     );
-    assert_eq!(
-        std::fs::read_link(&hwp).expect("reinstalled HWP link target"),
-        std::path::Path::new("../hwpx/plugin")
-    );
-    for directory in [root.join("hwp"), root.join("hwpx")] {
+    for extension in ["hwp", "owpml", "hml"] {
+        assert_eq!(
+            std::fs::read_link(root.join(extension).join("plugin"))
+                .expect("reinstalled discovery link target"),
+            std::path::Path::new("../hwpx/plugin")
+        );
+    }
+    for extension in EXTENSIONS {
+        let directory = root.join(extension);
         let leftovers: Vec<_> = std::fs::read_dir(&directory)
             .expect("read install directory")
             .filter_map(Result::ok)
@@ -875,8 +1060,9 @@ fn unix_install_rolls_back_when_hwp_staging_fails() {
         b"known old plugin"
     );
     assert!(!hwp_dir.join("plugin").exists());
-    for directory in [&hwp_dir, &hwpx_dir] {
-        let leftovers: Vec<_> = std::fs::read_dir(directory)
+    for extension in EXTENSIONS {
+        let directory = root.join(extension);
+        let leftovers: Vec<_> = std::fs::read_dir(&directory)
             .expect("read install directory")
             .filter_map(Result::ok)
             .filter(|entry| {
@@ -1037,24 +1223,33 @@ fn unix_install_keeps_a_valid_install_when_backup_cleanup_fails() {
 fn unix_rollback_continues_after_committed_target_removal_fails() {
     use std::os::unix::fs::PermissionsExt;
 
-    const OLD_HWP: &[u8] = b"known old HWP plugin";
-    const OLD_HWPX: &[u8] = b"known old HWPX plugin";
     let repo = fake_installer_repo();
     let home = tempfile::tempdir().expect("temporary home");
     let root = home.path().join(".officecli/plugins/dump-reader");
-    let hwp = root.join("hwp/plugin");
     let hwpx = root.join("hwpx/plugin");
-    std::fs::create_dir_all(hwp.parent().expect("HWP parent")).expect("create HWP dir");
-    std::fs::create_dir_all(hwpx.parent().expect("HWPX parent")).expect("create HWPX dir");
-    std::fs::write(&hwp, OLD_HWP).expect("write old HWP plugin");
-    std::fs::write(&hwpx, OLD_HWPX).expect("write old HWPX plugin");
+    let owpml = root.join("owpml/plugin");
+    let targets: Vec<_> = EXTENSIONS
+        .iter()
+        .map(|extension| {
+            (
+                *extension,
+                root.join(extension).join("plugin"),
+                format!("known old {extension} plugin"),
+            )
+        })
+        .collect();
+    for (_, target, contents) in &targets {
+        std::fs::create_dir_all(target.parent().expect("extension parent"))
+            .expect("create extension dir");
+        std::fs::write(target, contents).expect("write old plugin");
+    }
 
     let wrapper_dir = repo.path().join("test-bin");
     std::fs::create_dir(&wrapper_dir).expect("create wrapper dir");
     let mv_wrapper = wrapper_dir.join("mv");
     std::fs::write(
         &mv_wrapper,
-        b"#!/bin/sh\ndest=\nfor arg do dest=$arg; done\ncase \"$1\" in */.plugin-link.*) [ \"$dest\" = \"$FAIL_HWP_COMMIT_DEST\" ] && exit 1 ;; esac\nexec /bin/mv \"$@\"\n",
+        b"#!/bin/sh\ndest=\nfor arg do dest=$arg; done\ncase \"$1\" in */.plugin-link.*) [ \"$dest\" = \"$FAIL_COMMIT_DEST\" ] && exit 1 ;; esac\nexec /bin/mv \"$@\"\n",
     )
     .expect("write mv wrapper");
     std::fs::set_permissions(&mv_wrapper, std::fs::Permissions::from_mode(0o755))
@@ -1077,14 +1272,14 @@ fn unix_rollback_continues_after_committed_target_removal_fails() {
         .arg("--no-build")
         .env("HOME", home.path())
         .env("PATH", test_path)
-        .env("FAIL_HWP_COMMIT_DEST", &hwp)
+        .env("FAIL_COMMIT_DEST", &owpml)
         .env("FAIL_RM_TARGET", &hwpx)
         .output()
         .expect("run installer with failing commit and rollback removal");
 
     assert!(
         !output.status.success(),
-        "injected HWP commit failure must fail installation"
+        "injected OWPML commit failure must fail installation"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr)
@@ -1092,9 +1287,11 @@ fn unix_rollback_continues_after_committed_target_removal_fails() {
         "rollback must diagnose the failed removal: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(std::fs::read(&hwp).expect("restored HWP target"), OLD_HWP);
-    assert_eq!(
-        std::fs::read(&hwpx).expect("restored HWPX target"),
-        OLD_HWPX
-    );
+    for (extension, target, expected) in &targets {
+        assert_eq!(
+            std::fs::read_to_string(target).expect("restored target"),
+            expected.as_str(),
+            "{extension} target was not restored"
+        );
+    }
 }
