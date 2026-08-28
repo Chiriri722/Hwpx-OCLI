@@ -13,11 +13,11 @@
 
 | 필드 | 타입 | 우리 값 |
 |---|---|---|
-| `name` | string, kebab-case | `officecli-hwpx` |
+| `name` | string, kebab-case | `officecli-hancom-hwp` |
 | `version` | string, SemVer | `0.1.0` |
 | `protocol` | integer | `1` (불일치 시 메인이 exit 5로 거부) |
 | `kinds` | array | `["dump-reader"]` |
-| `extensions` | array, 점 포함 | `[".hwpx", ".hwp"]` |
+| `extensions` | array, 점 포함 | `[".hwpx", ".owpml", ".hml", ".hwp"]` |
 | `idle_timeout_seconds` | object | `{"default":60,"verbs":{"dump":30}}` |
 | `runtime` | string | `"rust"` |
 | `target` | string | `"docx"` — dump-reader는 **필수**, `docx`/`xlsx`/`pptx` 중 하나 |
@@ -127,11 +127,28 @@
 실패하면 가능한 범위에서 기존 복사본을 복원하지만 강제 종료까지 포함한
 두 경로 완전 원자성은 보장하지 않는다.
 
+통합 매니페스트는 네 확장자를 선언하지만, T1-3 시점의 설치 스크립트는 기존
+HWPX/HWP 두 사용자 경로만 관리한다. `.owpml`/`.hml` 리더와 직접 실행 계약은
+이미 활성화됐으며, 두 사용자 경로 추가는 T1-4의 4경로 트랜잭션에서 처리한다.
+
 `plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가 두 행으로
 보일 수 있다. 이는 `(kind, ext)`별 resolution 실패를 의미하지 않는다.
 실제 확인에는 `officecli view <복사본>.hwp text`를 사용한다. 이 명령은
 입력 파일 옆에 같은 stem의 `.docx`를 만들 수 있으므로 원본이 아닌
 복사본으로 실행한다.
+
+## C10. HWPML 단일 XML 경계
+
+HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요구하고,
+2.1/2.8/2.9/2.91의 보수적 공통 부분집합만 허용한다. 허용 목록은 각 리비전의
+전체 문법 지원을 주장하지 않는다. 본문은 `BODY/SECTION/P/TEXT/CHAR`, 표 셀은
+`TABLE/ROW/CELL/PARALIST/P` 부모 경로를 검증한다.
+
+`TAB`과 `LINEBREAK`는 공용 inline으로, 묶음 빈 칸 `NBSPACE`는 U+00A0으로
+보존한다. 코드 포인트를 단정할 수 없는 `HYPEN`/`FWSPACE`와 내용이 있는 미지원
+컨트롤은 exit 3으로 실패한다. 잘못된 네임스페이스, XML 선언, 엔티티, 매핑 ID,
+표 좌표는 exit 2다. DTD는 포맷 판별 후 엔티티 확장 없이 exit 3으로 거부한다.
+파싱이 끝난 뒤에만 JSONL을 emit하므로 어떤 실패도 부분 stdout을 남기지 않는다.
 
 ---
 
@@ -189,14 +206,10 @@ RHWP v0.8.4의 UTF-8 argv 제약 때문에 원본은 private scratch의 `source.
 Unix scratch/source는 `0700`/`0600`, Windows scratch는 protected owner+SYSTEM
 DACL과 원자 create+handle 경계로 보호한다. 총 120초 제한, bounded stderr,
 Unix process group, Windows Job Object와 active-process drain을 적용한다.
-이 경계의 Linux/Windows 네이티브 검증은 GitHub Actions run
-`31700156231`에서 통과했다. 후속 H1에서 `.hwp` 매니페스트와 양 확장자
-설치 경로를 로컬 구현했다. H1 run `31890284597`, `32793306250`는
-OfficeCLI 1.0.143의 오류 처리 중 `System.Private.Xml` 로드 오류가 최초
-예외를 가려 실패했다. workflow는 OfficeCLI 1.0.145로 갱신했고 같은 고정
-자산의 로컬 Windows·비-root Linux 컨테이너 HWP view는 통과했지만 새 양 OS
-원격 성공 전이므로 H1의 크로스 플랫폼 완료 근거로 run `31700156231`을
-재사용하지 않는다. RHWP가 없으면 `.hwp`는 exit
-3(`unsupported_feature`)을 반환하고 `.hwpx` 직접 경로는 계속 동작한다.
+이 경계의 최신 Linux/Windows 네이티브 검증은 통합 진입점·HWPML 강화 커밋
+`17b65ea5`의 GitHub Actions run
+[`33170785021`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170785021)에서
+성공했다. RHWP가 없으면 `.hwp`는 exit 3(`unsupported_feature`)을 반환하고
+XML 기반 직접 경로는 계속 동작한다.
 Windows의 `--media-dir`은 신뢰할 수 없는 junction이 될 수 있어 바이너리
 HWP staging에는 쓰지 않고 사용자별 OS 임시 루트를 사용한다.

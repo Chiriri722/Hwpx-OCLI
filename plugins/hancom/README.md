@@ -1,11 +1,13 @@
-# officecli-hwpx
+# officecli-hancom-hwp
 
-[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **HWP/HWPX(한글 문서)
-dump-reader 플러그인**. `.hwpx`는 직접 읽고, 바이너리 `.hwp`는 선택적
-RHWP 변환기를 거쳐 OfficeCLI의 docx 명령(JSONL)으로 변환한다.
+[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **한글 문서 dump-reader
+플러그인**. `.hwpx`·`.owpml` ZIP과 legacy `.hml` 단일 XML은 직접 읽고,
+바이너리 `.hwp`는 선택적 RHWP 변환기를 거쳐 OfficeCLI의 docx 명령(JSONL)으로
+변환한다.
 
-Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 바이너리 HWP는
-선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
+Rust 단일 바이너리이며 HWPX/OWPML/HWPML 경로에는 런타임 의존성이 없다.
+바이너리 HWP만 선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를
+변환기로 사용한다.
 
 ## 한컴 공개 문서 표기
 
@@ -18,16 +20,21 @@ Rust 단일 바이너리이며 HWPX 경로에는 런타임 의존성이 없다. 
 ## 무엇을 하는가
 
 ```
-.hwpx  ──[이 플러그인]──▶  BatchItem JSONL  ──[officecli]──▶  .docx
-.hwp   ──[RHWP, 선택]──▶  임시 .hwpx ──[이 플러그인]──────▶  .docx
+.hwpx/.owpml ──[이 플러그인]──▶ BatchItem JSONL ──[officecli]──▶ .docx
+.hml          ──[이 플러그인]──▶ BatchItem JSONL ──[officecli]──▶ .docx
+.hwp          ──[RHWP, 선택]──▶ 임시 .hwpx ──[이 플러그인]──────▶ .docx
 ```
 
-OfficeCLI가 `.hwpx` 또는 `.hwp` 파일을 열면 이 플러그인을 `dump`로
+OfficeCLI가 `.hwpx`, `.owpml`, `.hml`, 또는 `.hwp` 파일을 열면 이 플러그인을 `dump`로
 실행하고, 표준출력의 명령을 재생해 원본 옆에 `.docx` 형제 파일을
-만든다. 편집은 그 `.docx`에 대해 이뤄지며 원본 HWP/HWPX는 읽기
+만든다. 편집은 그 `.docx`에 대해 이뤄지며 원본 한글 문서는 읽기
 전용으로 취급한다.
 
 ## 설치
+
+현재 설치 스크립트는 기존 `.hwpx`·`.hwp` 사용자 경로를 관리한다. `.owpml`·`.hml`
+직접 실행은 이미 지원하지만, 두 확장자의 OfficeCLI 사용자 경로 등록은 통합 계획
+T1-4에서 설치 트랜잭션을 4개 경로로 일반화한 뒤 제공한다.
 
 ```bash
 scripts/install.sh
@@ -102,7 +109,8 @@ Unix 재설치의 각 target 복원은 앞선 정리 실패와 무관하게 끝�
 
 | 포맷 | 처리 |
 |---|---|
-| HWPX (ZIP + OWPML) | 직접 읽는다 |
+| HWPX/OWPML (ZIP + OWPML) | 직접 읽는다 |
+| HWPML (`.hml`, 단일 XML) | 문단·문자·기본 스타일·표 공통 부분집합을 직접 읽는다 |
 | HWP 5.x (CFB) | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
 | HWP 3.0 | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
 | 그 밖 (`.docx` 등) | exit 2와 원인 명시 |
@@ -110,23 +118,18 @@ Unix 재설치의 각 target 복원은 앞선 정리 실패와 무관하게 끝�
 바이너리 HWP 지원 계획은 `docs/04-hwp-support-plan.md`.
 
 RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. RHWP가 없으면
-`.hwp` 호출은 exit 3(`unsupported_feature`)으로 종료하지만 `.hwpx`는
+`.hwp` 호출은 exit 3(`unsupported_feature`)으로 종료하지만 세 XML 기반 형식은
 계속 외부 런타임 없이 동작한다.
 
-H3 브리지의 Linux/Windows 네이티브 게이트와 Windows의 기존 HWPX
-OfficeCLI discovery는 GitHub Actions run `31700156231`에서 통과했다.
-H1을 포함한 run `31890284597`, `32793306250`는 실패했다. 최신 run에서
-Linux는 `plugins list` 뒤 HWP `view`에서, Windows는 `plugins list`에서
-실패했으며 OfficeCLI 1.0.143의 오류 처리 중 `System.Private.Xml` 로드 오류가
-원래 예외를 가렸다. workflow는 체크섬을 검증한 OfficeCLI 1.0.145로
-갱신했고 같은 자산의 로컬 Windows와 비-root Linux 컨테이너 HWP view는
-통과했다. 새 Linux/Windows 원격 run이 성공하기 전에는 H1을 크로스 플랫폼
-완료로 간주하지 않는다.
+통합 진입점과 HWPML 강화 커밋 `17b65ea5`는 GitHub Actions run
+[`33170785021`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170785021)에서
+Linux/Windows 테스트·clippy·release·MSRV 1.88·host 계약과 실제 HWP/HWPX
+설치/조회/제거를 모두 통과했다.
 
 ```bash
 rhwp --version  # v0.8.4 이상
 export OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp
-officecli-dump-reader-hwpx dump 문서.hwp
+officecli-hancom-hwp dump 문서.hwp
 # 주의: 원본 옆에 문서.docx를 만든다. 복사본으로 검증할 것.
 OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp officecli view 문서.hwp text
 ```
@@ -153,23 +156,24 @@ cargo run --release --example detect -- 문서1.hwp 문서2.hwpx
 
 ```bash
 # 매니페스트
-officecli-dump-reader-hwpx --info
+officecli-hancom-hwp --info
 
 # 변환 결과 보기
-officecli-dump-reader-hwpx dump /path/to/문서.hwpx
+officecli-hancom-hwp dump /path/to/문서.hwpx
+officecli-hancom-hwp dump /path/to/문서.hml
 
 # 조용히 (진단 출력 없이)
-officecli-dump-reader-hwpx dump 문서.hwpx --quiet
+officecli-hancom-hwp dump 문서.hwpx --quiet
 
 # 진단을 파일로
-officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
+officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 ```
 
 표준출력은 JSONL 전용이다. 진단은 stderr 또는 `--log-file`로 나간다.
 
 ## 커버리지
 
-| HWPX | docx 매핑 |
+| HWPX/OWPML | docx 매핑 |
 |---|---|
 | 문단 (`hp:p`) | `add /body --type paragraph` |
 | 글자 런 (`hp:run`) | `add /body/p[last()] --type run` |
@@ -193,6 +197,13 @@ officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
 | 셀 안 여러 문단 | 첫 문단은 `set <cell>/p[1]`, 이후는 `add <cell> --type paragraph` |
 | 다중 섹션 | `content.hpf` spine 순서로 연결 |
 
+HWPML은 공식 2.8 문법의 공통 경로(`HWPML/BODY/SECTION/P/TEXT/CHAR`)와
+2.1/2.8/2.9/2.91 상호운용 허용 목록을 사용한다. 이 목록은 각 버전의 전체 문법
+지원을 뜻하지 않는다. `TAB`, `LINEBREAK`, `NBSPACE`, 기본 글자·문단 모양, 표는
+보존한다. 의미를 안전하게 투영할 수 없는 문자 제어와 내용이 있는 미지원 컨트롤은
+부분 출력을 만들지 않고 exit 3으로 실패한다. 잘못된 네임스페이스·ID·표 구조·XML은
+exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
+
 ### 아직 안 되는 것
 
 - 각주/미주 (`hp:footNote` / `hp:endNote`)
@@ -208,6 +219,7 @@ officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
 cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 34개
+cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
 cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
@@ -261,8 +273,10 @@ crates/
     src/error.rs        공용 에러 → 종료코드 매핑
     tests/core_contract.rs 공용 경계 계약 테스트
   hancom-hwp/
-    src/bin/officecli-dump-reader-hwpx.rs 진입점
+    src/bin/officecli-hancom-hwp.rs 통합 진입점
+    src/bin/officecli-dump-reader-hwpx.rs 하위 호환 진입점
     src/converter.rs    선택적 RHWP HWP→HWPX 변환 경계
+    src/hwpml.rs        legacy HWPML 단일 XML 리더
     src/lib.rs          인자 파싱 + 명령 디스패치
     src/manifest.rs     --info 매니페스트 (§4)
     src/{format,error,emit}/ 공용 core 임시 호환 re-export

@@ -11,9 +11,9 @@
 
 | 계열 | 확장자 | 목표 kind | 목표 target | 현재 |
 |---|---|---|---|---|
-| 한글 | `.hwpx`, `.owpml` | dump-reader → format-handler | docx | `.hwpx`만 dump-reader |
+| 한글 | `.hwpx`, `.owpml` | dump-reader → format-handler | docx | 통합 dump-reader 직접 지원 |
 | 한글 | `.hwp` | dump-reader | docx | RHWP 경유 (Phase 6 완료) |
-| 한글 | `.hml` | dump-reader | docx | 없음 |
+| 한글 | `.hml` | dump-reader | docx | HWPML 공통 부분집합 직접 지원 |
 | 한셀 | `.cell`, `.nxl` | dump-reader | **xlsx** | 없음 |
 | 한쇼 | `.show` | dump-reader | **pptx** | 없음 |
 
@@ -184,8 +184,18 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
       Linux/Windows의 동일 회귀·MSRV·정확한 .NET 10.0.302 host 계약·실제 HWP/HWPX 설치/조회/제거를
       모두 통과했고,
       [action pin run 33162799808](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33162799808)도 성공했다.
-- [ ] T1-3 · `officecli-hancom-hwp` 바이너리로 기존 기능 이관 + `.owpml`·`.hml` 확장자 추가
+- [x] T1-3 · `officecli-hancom-hwp` 바이너리로 기존 기능 이관 + `.owpml`·`.hml` 확장자 추가
       (`.owpml`은 HWPX와 동일 컨테이너 → 판별기만 확장. `.hml`은 단일 XML → 신규 리더).
+      커밋 `7681206f`에서 통합 진입점·4확장자 매니페스트·HWPML 리더를 추가하고,
+      `86ffc6fd`에서 stable lint를 정리했으며, `17b65ea5`에서 공식 HWPML 2.8 문법을
+      기준으로 XML 선언/인코딩/DTD/엔티티/네임스페이스/부모 경로/매핑 ID/표 좌표와
+      자원예산을 fail-closed로 강화했다. 2.1/2.8/2.9/2.91은 전체 문법이 아닌 공통
+      부분집합 상호운용 허용 목록이다. canonical/legacy 진입점과 변환기 성공·실패
+      바이트 동등성도 고정했다. 로컬 workspace 테스트 297개, Rust 1.88 check,
+      stable clippy, release build를 통과했고,
+      [HWPX plugin run 33170785021](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170785021)과
+      [action pin run 33170784965](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170784965)이
+      Linux/Windows·MSRV·host·실제 설치/조회/제거까지 모두 성공했다.
 - [ ] T1-4 · 설치 스크립트를 다중 확장자·다중 바이너리로 일반화. 확장자별 커밋 플래그를
       개별 추적하고(기존 H1 교훈), uninstall 전 symlink/reparse 가드 유지.
 - [ ] T1-5 · 하위 호환: 기존 `~/.officecli/plugins/dump-reader/hwpx/` 설치본 마이그레이션 경로.
@@ -275,7 +285,6 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
    R5 `dvc` 검증기로 대체 가능할 수 있다.
 5. **Q5** JVM 의존(R6/R7)을 런타임에 허용할 것인가? 현재 판단은 **참조용만**이나, HWPX 쓰기를
    빨리 원하면 `hwpxlib` 사이드카가 가장 빠른 길이다. 단일 바이너리 원칙과 충돌한다.
-6. **Q6** `.hml`(단일 XML)의 실사용 빈도. 낮으면 P1에서 빼고 후순위로 내린다.
 7. **Q7** 한글 계열이 format-handler로 승격되면 `.hwp`/`.hml`은 별도 바이너리로 분리해야
    하는가? (제약 2 + 제약 5 상호작용) → T3-5에서 확정.
 
@@ -320,21 +329,26 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 10. T1-1에서는 기존 `officecli-hwpx` package를 `crates/hancom-hwp`에 그대로 두고, 공용 core
     추출과 바이너리 이름 변경은 각각 T1-2/T1-3으로 분리한다. 구조 이동과 동작 변경을 한
     커밋에 섞지 않는다.
+11. Q6은 해소했다. 공식 HWPML 문법과 실제 2.91 공개 코퍼스를 확보했고 통합 바이너리의
+    증분 비용이 작으므로 `.hml`을 P1에 유지한다. 미지원 컨트롤은 누락시키지 않고 exit 3으로
+    실패한다.
 
 ## Status
 
-**P0 완료 · P1 진행 중(T1-1~T1-2 완료, T1-3 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0 완료 · P1 진행 중(T1-1~T1-3 완료, T1-4 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
 T1-2는 공용 core와 기존 HWP 호환 re-export를 구현했고 run `33162799813`/`33162799808`로
 같은 양 OS 게이트를 다시 통과했다.
+T1-3은 `officecli-hancom-hwp`와 `.owpml`/`.hml` 직접 읽기, strict HWPML 경계를 구현했고
+run `33170785021`/`33170784965`로 같은 게이트를 통과했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T1-3에서 한글 계열 진입점과 `.owpml`·`.hml` 지원을 RED 테스트부터 구현한다.
-2. T1-4/T1-5에서 다중 확장자 설치와 기존 설치본 마이그레이션을 계약 테스트로 고정한다.
+1. T1-4에서 4개 한글 확장자 설치를 확장자별 트랜잭션 계약으로 일반화한다.
+2. T1-5에서 기존 HWPX/HWP 설치본 마이그레이션을 계약 테스트로 고정한다.
 3. 현재 브랜치의 upstream 지연은 workspace 재편과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
 5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
