@@ -32,19 +32,18 @@ OfficeCLI가 `.hwpx`, `.owpml`, `.hml`, 또는 `.hwp` 파일을 열면 이 플�
 
 ## 설치
 
-현재 설치 스크립트는 기존 `.hwpx`·`.hwp` 사용자 경로를 관리한다. `.owpml`·`.hml`
-직접 실행은 이미 지원하지만, 두 확장자의 OfficeCLI 사용자 경로 등록은 통합 계획
-T1-4에서 설치 트랜잭션을 4개 경로로 일반화한 뒤 제공한다.
+설치 스크립트는 `.hwpx`·`.hwp`·`.owpml`·`.hml` 네 OfficeCLI 사용자 경로를 한
+트랜잭션으로 관리한다. 기존 HWPX 경로만 설치된 환경도 같은 명령으로 네 경로
+구성으로 마이그레이션되며, 실패하면 기존 설치본을 복원한다.
 
 ```bash
 scripts/install.sh
 ```
 
-Unix에서는 `~/.officecli/plugins/dump-reader/hwpx/plugin`에 실제
-바이너리를 설치하고,
-`~/.officecli/plugins/dump-reader/hwp/plugin -> ../hwpx/plugin` 상대 심볼릭 링크를
-만든다(프로토콜 §3 탐색 순서 2순위). 두 확장자 경로를 항상 함께
-설치·제거하며 별도의 `--with-hwp` 옵션은 없다.
+Unix에서는 `~/.officecli/plugins/dump-reader/hwpx/plugin`에 실제 바이너리를
+설치하고 `hwp`·`owpml`·`hml` 경로에는 각각 `../hwpx/plugin` 상대 심볼릭 링크를
+만든다(프로토콜 §3 탐색 순서 2순위). 네 확장자 경로를 항상 함께 설치·제거하며
+별도의 포맷 선택 옵션은 없다.
 
 ```bash
 scripts/install.sh --no-build    # 이미 빌드된 바이너리 사용
@@ -53,8 +52,9 @@ scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 ```
 
 `--print-env`는 같은 바이너리를 가리키는
-`OFFICECLI_PLUGIN_DUMP_READER_HWPX`와
-`OFFICECLI_PLUGIN_DUMP_READER_HWP` 두 설정을 출력한다.
+`OFFICECLI_PLUGIN_DUMP_READER_HWPX`, `OFFICECLI_PLUGIN_DUMP_READER_HWP`,
+`OFFICECLI_PLUGIN_DUMP_READER_OWPML`, `OFFICECLI_PLUGIN_DUMP_READER_HML` 네
+설정을 출력한다.
 
 확인:
 
@@ -81,18 +81,20 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 .\scripts\install.ps1 -PrintEnv
 ```
 
-설치 위치는 다음 두 곳이다.
+설치 위치는 다음 네 곳이다.
 
 ```text
 $HOME\.officecli\plugins\dump-reader\hwpx\plugin.exe
 $HOME\.officecli\plugins\dump-reader\hwp\plugin.exe
+$HOME\.officecli\plugins\dump-reader\owpml\plugin.exe
+$HOME\.officecli\plugins\dump-reader\hml\plugin.exe
 ```
 
-Windows에서는 심볼릭 링크 권한에 의존하지 않고 같은 바이너리를 두
-경로에 복사한다. 두 임시 복사본의 SHA-256과 `--info`를 먼저 검증한
-뒤 교체하고, 중간 실패 시 기존 파일을 복원하는 best-effort rollback을
-적용한다. 둘 사이의 순차 교체이므로 프로세스 강제 종료까지 포함한
-완전한 두 경로 원자성을 보장하지는 않는다.
+Windows에서는 심볼릭 링크 권한에 의존하지 않고 같은 바이너리를 네 경로에
+복사한다. 네 임시 복사본의 SHA-256과 `--info`를 먼저 검증한 뒤 교체하고,
+중간 실패 시 확장자별 커밋 상태를 역순으로 되돌려 기존 파일을 복원한다. 경로를
+순차 교체하므로 프로세스 강제 종료까지 포함한 완전한 다중 경로 원자성을
+보장하지는 않는다.
 
 두 설치기는 절대 `HOME` 아래 `.officecli`부터 기존 관리 경로 조상을 먼저 검사하고,
 symlink/junction/reparse point 또는 디렉터리가 아닌 component가 있으면 설치와
@@ -123,8 +125,10 @@ RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. RHWP가 �
 
 통합 진입점과 HWPML 강화 커밋 `17b65ea5`는 GitHub Actions run
 [`33170785021`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170785021)에서
-Linux/Windows 테스트·clippy·release·MSRV 1.88·host 계약과 실제 HWP/HWPX
-설치/조회/제거를 모두 통과했다.
+Linux/Windows 테스트·clippy·release·MSRV 1.88·host 계약을 통과했다. 네 확장자의
+실제 설치·조회·제거는
+[`33172696561`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33172696561)에서
+모두 통과했다.
 
 ```bash
 rhwp --version  # v0.8.4 이상
@@ -288,8 +292,8 @@ crates/
       xml.rs            quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)
     tests/              파서·프로토콜·설치·골든·호환 회귀
 scripts/
-  install.sh            Unix의 HWPX 실파일 + HWP 상대 심볼릭 링크 설치
-  install.ps1           Windows 양 확장자 경로에 검증된 plugin.exe 복사
+  install.sh            Unix의 HWPX 실파일 + HWP/OWPML/HML 상대 링크 설치
+  install.ps1           Windows 네 확장자 경로에 검증된 plugin.exe 복사
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
   verify-roundtrip.sh   실제 officecli로 43개 항목 왕복 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증

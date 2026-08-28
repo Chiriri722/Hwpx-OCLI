@@ -196,9 +196,16 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
       [HWPX plugin run 33170785021](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170785021)과
       [action pin run 33170784965](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33170784965)이
       Linux/Windows·MSRV·host·실제 설치/조회/제거까지 모두 성공했다.
-- [ ] T1-4 · 설치 스크립트를 다중 확장자·다중 바이너리로 일반화. 확장자별 커밋 플래그를
-      개별 추적하고(기존 H1 교훈), uninstall 전 symlink/reparse 가드 유지.
-- [ ] T1-5 · 하위 호환: 기존 `~/.officecli/plugins/dump-reader/hwpx/` 설치본 마이그레이션 경로.
+- [x] T1-4 · 설치 스크립트를 네 확장자 경로로 일반화. 커밋 `bc3d273c`에서 Unix는
+      HWPX 실파일과 HWP/OWPML/HML 상대 링크, Windows는 네 검증 복사본을 설치하도록
+      바꾸고, 확장자별 커밋 상태·역순 롤백·uninstall 전 symlink/reparse 가드를 계약
+      테스트와 실제 OfficeCLI `view` CI로 고정했다.
+- [x] T1-5 · 하위 호환: 커밋 `449e1c8c`에서 기존 HWPX 단독 설치본의 네 경로
+      마이그레이션 성공·실패 복원·재시도·멱등성을 양 OS 계약 테스트로 고정했다.
+      [HWPX plugin run 33172696561](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33172696561)의
+      Linux/Windows 전체 회귀·MSRV·host·네 확장자 실제 설치/조회/제거와
+      [action pin run 33172696668](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33172696668)이
+      모두 성공했다.
 
 ### P2 — 한글 계열 커버리지 완성 (target=docx)
 
@@ -335,7 +342,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0 완료 · P1 진행 중(T1-1~T1-3 완료, T1-4 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1 완료 · P2 진행 중(T2-1 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -343,13 +350,15 @@ T1-2는 공용 core와 기존 HWP 호환 re-export를 구현했고 run `33162799
 같은 양 OS 게이트를 다시 통과했다.
 T1-3은 `officecli-hancom-hwp`와 `.owpml`/`.hml` 직접 읽기, strict HWPML 경계를 구현했고
 run `33170785021`/`33170784965`로 같은 게이트를 통과했다.
+T1-4/T1-5는 네 확장자 설치 트랜잭션과 HWPX 단독 설치 마이그레이션을 구현했고 run
+`33172696561`/`33172696668`로 양 OS 전체 회귀와 실제 네 확장자 경로를 통과했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T1-4에서 4개 한글 확장자 설치를 확장자별 트랜잭션 계약으로 일반화한다.
-2. T1-5에서 기존 HWPX/HWP 설치본 마이그레이션을 계약 테스트로 고정한다.
-3. 현재 브랜치의 upstream 지연은 workspace 재편과 섞지 않고 별도 통합 변경으로 처리한다.
+1. T2-1부터 공식 스키마와 실제 샘플을 함께 고정하며 각주/미주 구조 보존을 구현한다.
+2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
+3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
 5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.
