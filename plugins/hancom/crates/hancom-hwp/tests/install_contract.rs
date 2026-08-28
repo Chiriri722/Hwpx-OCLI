@@ -493,6 +493,101 @@ fn windows_install_restores_every_prior_target_when_a_later_commit_is_locked() {
 
 #[cfg(windows)]
 #[test]
+fn windows_install_migrates_a_legacy_hwpx_only_layout_idempotently() {
+    const LEGACY_PLUGIN: &[u8] = b"legacy officecli-dump-reader-hwpx installation";
+
+    let repo = fake_windows_installer_repo();
+    let installer = repo.path().join("scripts/install.ps1");
+    let source = repo.path().join("target/release/officecli-hancom-hwp.exe");
+    let expected = std::fs::read(&source).expect("canonical source binary");
+    let home = tempfile::tempdir().expect("temporary Windows home");
+    let root = home.path().join(".officecli/plugins/dump-reader");
+    let legacy = root.join("hwpx/plugin.exe");
+    std::fs::create_dir_all(legacy.parent().expect("legacy HWPX parent"))
+        .expect("create legacy HWPX directory");
+    std::fs::write(&legacy, LEGACY_PLUGIN).expect("write legacy HWPX plugin");
+
+    for attempt in 0..2 {
+        let output = run_windows_installer_at(&installer, home.path(), "-NoBuild");
+        assert!(
+            output.status.success(),
+            "migration attempt {attempt} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for extension in EXTENSIONS {
+            let target = root.join(extension).join("plugin.exe");
+            assert_eq!(
+                std::fs::read(&target).expect("migrated plugin"),
+                expected,
+                "{extension} did not receive the canonical binary"
+            );
+            let leftovers: Vec<_> = std::fs::read_dir(target.parent().expect("extension parent"))
+                .expect("read extension directory")
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name() != "plugin.exe")
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "migration left artifacts for {extension}: {leftovers:?}"
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_failed_migration_restores_the_legacy_hwpx_only_install() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const LEGACY_PLUGIN: &[u8] = b"legacy officecli-dump-reader-hwpx installation";
+    const CONFLICTING_OWPML: &[u8] = b"pre-existing OWPML plugin";
+
+    let repo = fake_windows_installer_repo();
+    let installer = repo.path().join("scripts/install.ps1");
+    let home = tempfile::tempdir().expect("temporary Windows home");
+    let root = home.path().join(".officecli/plugins/dump-reader");
+    let legacy = root.join("hwpx/plugin.exe");
+    let locked_target = root.join("owpml/plugin.exe");
+    for target in [&legacy, &locked_target] {
+        std::fs::create_dir_all(target.parent().expect("target parent"))
+            .expect("create target directory");
+    }
+    std::fs::write(&legacy, LEGACY_PLUGIN).expect("write legacy HWPX plugin");
+    std::fs::write(&locked_target, CONFLICTING_OWPML).expect("write OWPML plugin");
+
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&locked_target)
+        .expect("lock later migration target");
+    let output = run_windows_installer_at(&installer, home.path(), "-NoBuild");
+    drop(lock);
+
+    assert!(!output.status.success(), "locked migration must fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to commit owpml plugin"),
+        "migration did not reach the injected failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&legacy).expect("restored legacy HWPX plugin"),
+        LEGACY_PLUGIN
+    );
+    assert_eq!(
+        std::fs::read(&locked_target).expect("unchanged OWPML plugin"),
+        CONFLICTING_OWPML
+    );
+    for extension in ["hwp", "hml"] {
+        assert!(
+            !root.join(extension).join("plugin.exe").exists(),
+            "failed migration left a new {extension} target"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn windows_install_treats_brackets_in_home_as_literal_characters() {
     let repo = fake_windows_installer_repo();
     let installer = repo.path().join("scripts/install.ps1");
@@ -1023,6 +1118,124 @@ fn unix_install_places_one_executable_and_relative_links_for_other_extensions() 
             leftovers.is_empty(),
             "reinstall left staging or backup files in {}: {leftovers:?}",
             directory.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_install_migrates_a_legacy_hwpx_only_layout_idempotently() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const LEGACY_PLUGIN: &[u8] = b"legacy officecli-dump-reader-hwpx installation";
+
+    let repo = fake_installer_repo();
+    let installer = repo.path().join("scripts/install.sh");
+    let source = repo.path().join("target/release").join(CANONICAL_BINARY);
+    let expected = std::fs::read(&source).expect("canonical source binary");
+    let home = tempfile::tempdir().expect("temporary Unix home");
+    let root = home.path().join(".officecli/plugins/dump-reader");
+    let legacy = root.join("hwpx/plugin");
+    std::fs::create_dir_all(legacy.parent().expect("legacy HWPX parent"))
+        .expect("create legacy HWPX directory");
+    std::fs::write(&legacy, LEGACY_PLUGIN).expect("write legacy HWPX plugin");
+
+    for attempt in 0..2 {
+        let output = run_unix_installer_at(&installer, home.path(), "--no-build");
+        assert!(
+            output.status.success(),
+            "migration attempt {attempt} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let canonical = root.join("hwpx/plugin");
+        let metadata = std::fs::metadata(&canonical).expect("migrated canonical plugin");
+        assert_ne!(
+            metadata.permissions().mode() & 0o111,
+            0,
+            "canonical plugin must remain executable"
+        );
+        assert_eq!(
+            std::fs::read(&canonical).expect("canonical plugin"),
+            expected
+        );
+        for extension in ["hwp", "owpml", "hml"] {
+            let target = root.join(extension).join("plugin");
+            assert_eq!(
+                std::fs::read_link(&target).expect("migrated discovery link"),
+                std::path::Path::new("../hwpx/plugin")
+            );
+            assert_eq!(
+                std::fs::read(&target).expect("read through migrated link"),
+                expected,
+                "{extension} did not resolve to the canonical binary"
+            );
+        }
+        for extension in EXTENSIONS {
+            let directory = root.join(extension);
+            let leftovers: Vec<_> = std::fs::read_dir(&directory)
+                .expect("read extension directory")
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name() != "plugin")
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "migration left artifacts for {extension}: {leftovers:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_failed_migration_restores_the_legacy_hwpx_only_install() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const LEGACY_PLUGIN: &[u8] = b"legacy officecli-dump-reader-hwpx installation";
+
+    let repo = fake_installer_repo();
+    let home = tempfile::tempdir().expect("temporary Unix home");
+    let root = home.path().join(".officecli/plugins/dump-reader");
+    let legacy = root.join("hwpx/plugin");
+    let owpml = root.join("owpml/plugin");
+    std::fs::create_dir_all(legacy.parent().expect("legacy HWPX parent"))
+        .expect("create legacy HWPX directory");
+    std::fs::write(&legacy, LEGACY_PLUGIN).expect("write legacy HWPX plugin");
+
+    let wrapper_dir = repo.path().join("migration-test-bin");
+    std::fs::create_dir(&wrapper_dir).expect("create wrapper dir");
+    let mv_wrapper = wrapper_dir.join("mv");
+    std::fs::write(
+        &mv_wrapper,
+        b"#!/bin/sh\ndest=\nfor arg do dest=$arg; done\ncase \"$1\" in */.plugin-link.*) [ \"$dest\" = \"$FAIL_COMMIT_DEST\" ] && exit 1 ;; esac\nexec /bin/mv \"$@\"\n",
+    )
+    .expect("write mv wrapper");
+    std::fs::set_permissions(&mv_wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("make mv wrapper executable");
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let test_path = std::env::join_paths(
+        std::iter::once(wrapper_dir).chain(std::env::split_paths(&current_path)),
+    )
+    .expect("compose test PATH");
+
+    let output = std::process::Command::new(repo.path().join("scripts/install.sh"))
+        .arg("--no-build")
+        .env("HOME", home.path())
+        .env("PATH", test_path)
+        .env("FAIL_COMMIT_DEST", &owpml)
+        .output()
+        .expect("run failing legacy migration");
+
+    assert!(!output.status.success(), "injected migration must fail");
+    assert_eq!(
+        std::fs::read(&legacy).expect("restored legacy HWPX plugin"),
+        LEGACY_PLUGIN
+    );
+    for extension in ["hwp", "owpml", "hml"] {
+        let target = root.join(extension).join("plugin");
+        assert!(
+            std::fs::symlink_metadata(&target).is_err(),
+            "failed migration left a new {extension} target"
         );
     }
 }

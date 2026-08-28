@@ -173,11 +173,16 @@ jobs:
           [[ "$("${officecli}" --version)" == "1.0.145" ]]
           [[ "$("${rhwp}" --version)" == "rhwp v0.8.4" ]]
 
+          legacy_hwpx="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
+          mkdir -p "$(dirname "${legacy_hwpx}")"
+          printf '%s\n' 'legacy officecli-dump-reader-hwpx installation' >"${legacy_hwpx}"
+
           ./scripts/install.sh --no-build
           for extension in hwp hwpx owpml hml; do
             plugin="${HOME}/.officecli/plugins/dump-reader/${extension}/plugin"
             [[ -x "${plugin}" ]] || { echo "plugin was not installed at ${plugin}" >&2; exit 1; }
           done
+          cmp --silent ./target/release/officecli-hancom-hwp "${legacy_hwpx}"
 
           unset OFFICECLI_PLUGIN_DUMP_READER_HWP \
             OFFICECLI_PLUGIN_DUMP_READER_HWPX \
@@ -310,6 +315,10 @@ jobs:
             throw "unexpected RHWP version: $rhwpVersion"
           }
 
+          $legacyHwpx = Join-Path $HOME '.officecli\plugins\dump-reader\hwpx\plugin.exe'
+          [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($legacyHwpx)) | Out-Null
+          [IO.File]::WriteAllText($legacyHwpx, 'legacy officecli-dump-reader-hwpx installation')
+
           ./scripts/install.ps1 -NoBuild
           $installedPlugins = @('hwp', 'hwpx', 'owpml', 'hml') | ForEach-Object {
             Join-Path $HOME ".officecli\plugins\dump-reader\$_\plugin.exe"
@@ -318,6 +327,12 @@ jobs:
             if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
               throw "plugin.exe was not installed at $plugin"
             }
+          }
+          $canonicalBinary = Join-Path $PWD 'target\release\officecli-hancom-hwp.exe'
+          $canonicalHash = (Get-FileHash -LiteralPath $canonicalBinary -Algorithm SHA256).Hash
+          $migratedHash = (Get-FileHash -LiteralPath $legacyHwpx -Algorithm SHA256).Hash
+          if ($migratedHash -ne $canonicalHash) {
+            throw "legacy HWPX path was not replaced by the canonical binary"
           }
 
           foreach ($variable in @(
