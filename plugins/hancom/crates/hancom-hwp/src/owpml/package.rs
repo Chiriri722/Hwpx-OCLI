@@ -15,14 +15,14 @@ use std::sync::Arc;
 
 use crate::error::{PluginError, Result};
 
-pub const MIMETYPE_ENTRY: &str = "mimetype";
-pub const MIMETYPE_VALUE: &str = "application/hwp+zip";
+pub use officecli_hancom_core::container::{
+    HWPX_MIMETYPE_ENTRY as MIMETYPE_ENTRY, HWPX_MIMETYPE_VALUE as MIMETYPE_VALUE,
+    HWPX_SECTION_PREFIX as SECTION_PREFIX, MAX_MIMETYPE_BYTES,
+};
 pub const HPF_ENTRY: &str = "Contents/content.hpf";
 pub const HEADER_ENTRY: &str = "Contents/header.xml";
-pub const SECTION_PREFIX: &str = "Contents/section";
 pub const BINDATA_PREFIX: &str = "BinData/";
 
-pub const MAX_MIMETYPE_BYTES: u64 = 4 * 1024;
 const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BINARY_ENTRY_BYTES: u64 = 64 * 1024 * 1024;

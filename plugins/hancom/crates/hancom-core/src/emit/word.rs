@@ -21,8 +21,8 @@
 use base64::Engine;
 
 use super::batch::BatchItem;
-use crate::owpml::model::{
-    Block, Cell, CharStyle, CheckBox, Document, Image, Inline, Paragraph, ParaStyle, Table,
+use crate::model::{
+    Block, Cell, CharStyle, CheckBox, Document, Image, Inline, ParaStyle, Paragraph, Table,
     TextField, VertAlign,
 };
 
@@ -145,8 +145,7 @@ fn emit_paragraph_children(p: &Paragraph, parent: &str, out: &mut Vec<BatchItem>
         if !pending.is_empty() {
             let text = std::mem::take(pending);
             out.push(
-                BatchItem::add(parent, TYPE_RUN)
-                    .prop("text", normalize_breaks(&text, SOFT_BREAK)),
+                BatchItem::add(parent, TYPE_RUN).prop("text", normalize_breaks(&text, SOFT_BREAK)),
             );
         }
     }
@@ -221,7 +220,10 @@ fn is_safe_field_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 40
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// 문단·런 `text` 값. 줄바꿈은 `\v`, 탭은 `\t`.
@@ -308,7 +310,10 @@ fn apply_para_props(mut item: BatchItem, s: &ParaStyle) -> BatchItem {
     if let Some(v) = s.space_after_twip.filter(|v| *v != 0) {
         item = item.prop("spaceAfter", v.to_string());
     }
-    if let Some(r) = s.line_spacing_ratio.filter(|r| (*r - 1.0).abs() > f64::EPSILON) {
+    if let Some(r) = s
+        .line_spacing_ratio
+        .filter(|r| (*r - 1.0).abs() > f64::EPSILON)
+    {
         // `lineSpacing`은 배수 표기(`1.5x`)를 받는다 (`_shared/paragraph.json`).
         item = item.prop("lineSpacing", format!("{}x", trim_float(r)));
     }
@@ -357,7 +362,8 @@ fn image_item(para_path: &str, img: &Image) -> Option<BatchItem> {
         .unwrap_or("application/octet-stream");
     let b64 = base64::engine::general_purpose::STANDARD.encode(data.as_ref());
 
-    let mut item = BatchItem::add(para_path, TYPE_PICTURE).prop("src", format!("data:{ctype};base64,{b64}"));
+    let mut item =
+        BatchItem::add(para_path, TYPE_PICTURE).prop("src", format!("data:{ctype};base64,{b64}"));
     item = item.prop_opt("alt", img.alt.clone());
     // 반드시 단위를 붙인다. 스키마 경고:
     // "Always pass a unit (cm/in/pt) — a bare number is interpreted as raw EMU
@@ -584,7 +590,6 @@ fn emit_cell_content(cell_path: &str, cell: &Cell, out: &mut Vec<BatchItem>) {
     }
 }
 
-
 /// `10` → `"10"`, `10.5` → `"10.5"`. 불필요한 `.0`을 없앤다.
 fn trim_float(v: f64) -> String {
     if (v.fract()).abs() < 1e-9 {
@@ -598,7 +603,7 @@ fn trim_float(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::owpml::model::TextRun;
+    use crate::model::TextRun;
 
     fn text_run(t: &str, style: CharStyle) -> Inline {
         Inline::Text(TextRun {
@@ -685,10 +690,7 @@ mod tests {
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     style: ParaStyle::default(),
-                    inlines: vec![
-                        text_run("가", CharStyle::default()),
-                        text_run("나", bold()),
-                    ],
+                    inlines: vec![text_run("가", CharStyle::default()), text_run("나", bold())],
                 }),
                 Block::Table(Table {
                     rows: 1,
@@ -709,10 +711,7 @@ mod tests {
                 }),
                 Block::Paragraph(Paragraph {
                     style: ParaStyle::default(),
-                    inlines: vec![
-                        text_run("다", CharStyle::default()),
-                        text_run("라", bold()),
-                    ],
+                    inlines: vec![text_run("다", CharStyle::default()), text_run("라", bold())],
                 }),
             ],
         };
@@ -888,10 +887,7 @@ mod tests {
             rows: 1,
             cols: 3,
             col_widths_twip: vec![],
-            cells: vec![
-                plain_cell(0, 0, "A", 1, 2),
-                plain_cell(0, 2, "B", 1, 1),
-            ],
+            cells: vec![plain_cell(0, 0, "A", 1, 2), plain_cell(0, 2, "B", 1, 1)],
         };
         let (order, cells) = table_cells(t);
         assert_eq!(
@@ -1048,7 +1044,10 @@ mod tests {
             .skip(1)
             .map(|i| i.r#type.unwrap_or("?"))
             .collect();
-        assert_eq!(kinds, vec![TYPE_RUN, TYPE_FORMFIELD, TYPE_RUN, TYPE_FORMFIELD]);
+        assert_eq!(
+            kinds,
+            vec![TYPE_RUN, TYPE_FORMFIELD, TYPE_RUN, TYPE_FORMFIELD]
+        );
     }
 
     #[test]
@@ -1122,7 +1121,11 @@ mod tests {
         assert!(!field.props.contains_key("name"), "빈 이름은 생략");
 
         // 순서: 텍스트 런 → 폼필드
-        let kinds: Vec<&str> = items.iter().skip(1).map(|i| i.r#type.unwrap_or("?")).collect();
+        let kinds: Vec<&str> = items
+            .iter()
+            .skip(1)
+            .map(|i| i.r#type.unwrap_or("?"))
+            .collect();
         assert_eq!(kinds, vec![TYPE_RUN, TYPE_FORMFIELD]);
     }
 
@@ -1163,10 +1166,10 @@ mod tests {
         // 실측: 공시송달공고문은 본문 전체가 표 1칸 안에 있고 문단이 14개였다.
         // 예전 구현은 이것을 문단 1개로 뭉갰다.
         let aligns = [
-            Some(crate::owpml::model::Align::Center),
-            Some(crate::owpml::model::Align::Right),
+            Some(crate::model::Align::Center),
+            Some(crate::model::Align::Right),
             None,
-            Some(crate::owpml::model::Align::Justify),
+            Some(crate::model::Align::Justify),
         ];
         let blocks: Vec<Block> = aligns
             .iter()
@@ -1205,7 +1208,8 @@ mod tests {
         let cell_paras: Vec<&BatchItem> = items
             .iter()
             .filter(|i| {
-                (i.command == "set" && i.path.as_deref() == Some("/body/tbl[last()]/tr[1]/tc[1]/p[1]"))
+                (i.command == "set"
+                    && i.path.as_deref() == Some("/body/tbl[last()]/tr[1]/tc[1]/p[1]"))
                     || (i.command == "add"
                         && i.r#type == Some(TYPE_PARAGRAPH)
                         && i.parent.as_deref() == Some("/body/tbl[last()]/tr[1]/tc[1]"))
@@ -1256,7 +1260,8 @@ mod tests {
                             text_run("보통", CharStyle::default()),
                             text_run("굵게", bold()),
                         ],
-                    })],
+                    }),
+                ],
             }],
         };
         let doc = Document {
@@ -1286,7 +1291,10 @@ mod tests {
             rows: 1,
             cols: 2,
             col_widths_twip: vec![],
-            cells: vec![plain_cell(0, 0, "내부A", 1, 1), plain_cell(0, 1, "내부B", 1, 1)],
+            cells: vec![
+                plain_cell(0, 0, "내부A", 1, 1),
+                plain_cell(0, 1, "내부B", 1, 1),
+            ],
         };
         let outer = Table {
             rows: 1,
@@ -1347,10 +1355,7 @@ mod tests {
     #[test]
     fn distribute_align_maps_to_its_own_value() {
         // `officecli help docx paragraph`: values include `distribute`
-        assert_eq!(
-            crate::owpml::model::Align::Distribute.as_docx(),
-            "distribute"
-        );
+        assert_eq!(crate::model::Align::Distribute.as_docx(), "distribute");
     }
 
     #[test]
@@ -1395,7 +1400,8 @@ mod tests {
                     Block::Paragraph(Paragraph {
                         style: ParaStyle::default(),
                         inlines: vec![text_run("둘", CharStyle::default())],
-                    })],
+                    }),
+                ],
             }],
         };
         let sets = table_sets(t);
@@ -1472,7 +1478,8 @@ mod tests {
                             Block::Paragraph(Paragraph {
                                 style: ParaStyle::default(),
                                 inlines: vec![text_run("둘", CharStyle::default())],
-                            })],
+                            }),
+                        ],
                     }],
                 }),
             ],
@@ -1534,7 +1541,11 @@ mod tests {
         );
         let cell = items
             .iter()
-            .find(|i| i.path.as_deref().is_some_and(|p| p.ends_with(CELL_TEXT_PARAGRAPH)))
+            .find(|i| {
+                i.path
+                    .as_deref()
+                    .is_some_and(|p| p.ends_with(CELL_TEXT_PARAGRAPH))
+            })
             .expect("cell paragraph item");
         assert_eq!(cell.props["text"], "셀\u{000B}안");
     }
@@ -1607,7 +1618,10 @@ mod tests {
             })],
         };
         let items = emit_document(&doc);
-        let pic = items.iter().find(|i| i.r#type == Some(TYPE_PICTURE)).expect("picture");
+        let pic = items
+            .iter()
+            .find(|i| i.r#type == Some(TYPE_PICTURE))
+            .expect("picture");
         for key in ["width", "height"] {
             let v = pic.props[key].as_str().expect("string");
             assert!(
@@ -1631,7 +1645,7 @@ mod tests {
         let doc = Document {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle {
-                    align: Some(crate::owpml::model::Align::Center),
+                    align: Some(crate::model::Align::Center),
                     indent_left_twip: Some(400),
                     indent_first_twip: Some(200),
                     indent_hanging_twip: None,
@@ -1704,7 +1718,6 @@ mod tests {
         assert_eq!(p["underline"], "true");
     }
 
-
     #[test]
     fn multi_paragraph_cell_becomes_multiple_paragraphs() {
         let doc = Document {
@@ -1727,7 +1740,8 @@ mod tests {
                         Block::Paragraph(Paragraph {
                             style: ParaStyle::default(),
                             inlines: vec![text_run("둘", CharStyle::default())],
-                        })],
+                        }),
+                    ],
                 }],
             })],
         };

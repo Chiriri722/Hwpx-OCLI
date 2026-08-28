@@ -14,6 +14,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use error::{ExitCode, PluginError, Result};
+pub use officecli_hancom_core::diagnostics::escape_diagnostic_text;
+use officecli_hancom_core::diagnostics::diagnostic_path;
 
 /// 파싱된 명령줄.
 #[derive(Debug, PartialEq)]
@@ -121,26 +123,6 @@ where
 fn next_os_value<I: Iterator<Item = OsString>>(it: &mut I, flag: &str) -> Result<OsString> {
     it.next()
         .ok_or_else(|| PluginError::invalid_argument(format!("{flag} requires a value")))
-}
-
-/// 터미널·한 줄 로그에 안전한 진단 문자열로 바꾼다.
-///
-/// 파일명에는 개행과 ESC 같은 제어 문자가 들어갈 수 있다. 진단 경계에서 이들을
-/// 가시적인 이스케이프로 바꿔 로그 위조와 터미널 제어 시퀀스 실행을 막는다.
-pub fn escape_diagnostic_text(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}') {
-            escaped.extend(ch.escape_default());
-        } else {
-            escaped.push(ch);
-        }
-    }
-    escaped
-}
-
-fn diagnostic_path(path: &Path) -> String {
-    escape_diagnostic_text(&path.to_string_lossy())
 }
 
 fn ensure_log_is_not_source(source: &Path, log: &Path) -> Result<()> {

@@ -270,13 +270,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "officecli-hancom-core"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "cfb",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "officecli-hwpx"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "base64",
  "cfb",
  "libc",
+ "officecli-hancom-core",
  "predicates",
  "quick-xml",
  "serde",

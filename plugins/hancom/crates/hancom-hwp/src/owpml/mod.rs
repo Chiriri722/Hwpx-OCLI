@@ -11,6 +11,7 @@ use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 use crate::error::{PluginError, Result};
+use officecli_hancom_core::budget::ResourceBudget;
 use model::{Block, Document, Inline};
 use package::Package;
 use styles::StyleTable;
@@ -18,40 +19,34 @@ use styles::StyleTable;
 const MAX_IMAGE_REFERENCES: usize = 512;
 const MAX_EMBEDDED_IMAGE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Default)]
 struct ImageBudget {
-    references: usize,
-    output_bytes: u64,
+    references: ResourceBudget,
+    output_bytes: ResourceBudget,
+}
+
+impl Default for ImageBudget {
+    fn default() -> Self {
+        Self {
+            references: ResourceBudget::new(
+                "image reference count",
+                u64::try_from(MAX_IMAGE_REFERENCES).expect("constant fits in u64"),
+            ),
+            output_bytes: ResourceBudget::new(
+                "embedded image bytes",
+                MAX_EMBEDDED_IMAGE_OUTPUT_BYTES,
+            ),
+        }
+    }
 }
 
 impl ImageBudget {
     fn record_reference(&mut self) -> Result<()> {
-        self.references = self
-            .references
-            .checked_add(1)
-            .ok_or_else(|| image_resource_limit("image reference count overflow"))?;
-        if self.references > MAX_IMAGE_REFERENCES {
-            return Err(image_resource_limit(format!(
-                "image reference count {} exceeds maximum {MAX_IMAGE_REFERENCES}",
-                self.references
-            )));
-        }
-        Ok(())
+        self.references.consume(1)
     }
 
     fn record_output_bytes(&mut self, bytes: usize) -> Result<()> {
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
-        self.output_bytes = self
-            .output_bytes
-            .checked_add(bytes)
-            .ok_or_else(|| image_resource_limit("embedded image output size overflow"))?;
-        if self.output_bytes > MAX_EMBEDDED_IMAGE_OUTPUT_BYTES {
-            return Err(image_resource_limit(format!(
-                "embedded image bytes {} exceed maximum {MAX_EMBEDDED_IMAGE_OUTPUT_BYTES}",
-                self.output_bytes
-            )));
-        }
-        Ok(())
+        self.output_bytes.consume(bytes)
     }
 }
 
@@ -131,8 +126,4 @@ fn resolve_in_inlines<R: Read + Seek>(
         }
     }
     Ok(())
-}
-
-fn image_resource_limit(message: impl Into<String>) -> PluginError {
-    PluginError::corrupt(format!("image resource limit exceeded: {}", message.into()))
 }

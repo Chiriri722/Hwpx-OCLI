@@ -206,13 +206,12 @@ officecli-dump-reader-hwpx dump 문서.hwpx --log-file /tmp/plugin.log
 ## 개발
 
 ```bash
-cargo test                          # 전체(플랫폼별 전용 검사 포함)
-cargo test --lib                    # 단위 검사
-cargo test --test parse_owpml       # OWPML 파싱 34개
-cargo test --test protocol_contract # 프로토콜 계약 E2E + 플랫폼별 전용 검사
-cargo test --test golden            # 골든파일 회귀 3개
-cargo clippy --all-targets -- -D warnings
-cargo build --release
+cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 34개
+cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E
+cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
+cargo clippy --workspace --locked --all-targets -- -D warnings
+cargo build --workspace --locked --release
 ```
 
 ### 실제 문서 코퍼스 회귀
@@ -251,30 +250,29 @@ UPDATE_GOLDEN=1 cargo test --test golden
 ### 구조
 
 ```
-src/
-  main.rs           진입점, 종료코드 반환
-  format.rs         입력 포맷 판별 (매직 바이트)
-  converter.rs      선택적 RHWP HWP→HWPX 변환 경계
-  lib.rs            인자 파싱 + 명령 디스패치
-  manifest.rs       --info 매니페스트 (§4)
-  error.rs          에러 → 종료코드 매핑 (§6.5/§6.6)
-  owpml/
-    package.rs      ZIP 컨테이너, content.hpf spine, BinData 해석
-    styles.rs       header.xml 글자/문단 모양 표
-    section.rs      본문 파싱, 표/문단 구조 평탄화
-    model.rs        중간 문서 모델 + 단위 변환
-    xml.rs          quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)
-  emit/
-    batch.rs        BatchItem 직렬화
-    word.rs         문서모델 → docx 어휘
-    mod.rs          JSONL 스트리밍 (행별 flush)
-tests/
-  common/mod.rs         실제 ZIP+OWPML 픽스처 빌더
-  parse_owpml.rs        파서 통합 테스트
-  protocol_contract.rs  플러그인 바이너리 실행 계약 검증
-  install_contract.rs   HWP/HWPX 설치·제거 경로 계약 검증
-  golden.rs             전체 파이프라인 회귀
-  golden/canonical.jsonl
+crates/
+  hancom-core/
+    src/container.rs    CFB/ZIP 매직바이트 판별
+    src/model.rs        공용 문서모델 + 단위 변환
+    src/emit/           BatchItem 직렬화 + docx JSONL emitter
+    src/budget.rs       overflow-safe 공용 자원예산
+    src/diagnostics.rs  단일행·터미널 안전 진단 경계
+    src/heartbeat.rs    호스트 watchdog heartbeat
+    src/error.rs        공용 에러 → 종료코드 매핑
+    tests/core_contract.rs 공용 경계 계약 테스트
+  hancom-hwp/
+    src/bin/officecli-dump-reader-hwpx.rs 진입점
+    src/converter.rs    선택적 RHWP HWP→HWPX 변환 경계
+    src/lib.rs          인자 파싱 + 명령 디스패치
+    src/manifest.rs     --info 매니페스트 (§4)
+    src/{format,error,emit}/ 공용 core 임시 호환 re-export
+    src/owpml/
+      package.rs        ZIP 컨테이너, content.hpf spine, BinData 해석
+      styles.rs         header.xml 글자/문단 모양 표
+      section.rs        본문 파싱, 표/문단 구조 평탄화
+      model.rs          공용 model 임시 호환 re-export
+      xml.rs            quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)
+    tests/              파서·프로토콜·설치·골든·호환 회귀
 scripts/
   install.sh            Unix의 HWPX 실파일 + HWP 상대 심볼릭 링크 설치
   install.ps1           Windows 양 확장자 경로에 검증된 plugin.exe 복사
@@ -292,7 +290,8 @@ docs/
   04-hwp-support-plan.md .hwp(바이너리) 지원 계획
 ```
 
-파서와 emitter는 중간 문서 모델로 분리되어 있어 각각 독립적으로 테스트된다.
+`hancom-hwp`는 기존 공개 경로를 임시 re-export하면서 `hancom-core`의 공용 모델과
+보안 경계를 사용한다. 파서와 emitter는 중간 문서 모델을 사이에 두고 독립적으로 테스트된다.
 
 ## 라이선스
 

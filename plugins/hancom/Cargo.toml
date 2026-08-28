@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hancom-hwp"]
+members = ["crates/hancom-core", "crates/hancom-hwp"]
 default-members = ["crates/hancom-hwp"]
 
 # Release settings live at the workspace root so every future Hancom binary

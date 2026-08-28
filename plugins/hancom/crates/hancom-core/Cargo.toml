@@ -1,0 +1,20 @@
+[package]
+name = "officecli-hancom-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Shared protocol, model, container, and safety primitives for OfficeCLI Hancom plugins"
+license = "MIT"
+repository = "https://github.com/Chiriri722/Hwpx-OCLI"
+
+[lib]
+name = "officecli_hancom_core"
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.23.0"
+cfb = "0.14.0"
+quick-xml = "0.41.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
