@@ -18,17 +18,17 @@
   - [x] 실제 Windows OfficeCLI `plugins list` 디스커버리 CI 첫 결과 확인
   - [x] Linux/Windows 선언 MSRV 1.88 전용 CI 첫 결과 확인
   - [x] macOS 합성 48MiB 표본 1회 wall-time/RSS 및 실제 OfficeCLI watchdog 실측
-- [ ] Phase 6: 바이너리 HWP 선택적 지원
+- [x] Phase 6: 바이너리 HWP 선택적 지원
   - [x] H3a: RHWP v0.8.4 CLI 계약과 배포 체크섬 재검증
   - [x] H3b: 변환기 탐색·실행·임시 산출물 정리 경계를 TDD로 구현
   - [x] H3c: 변환 실패·출력 누락·비 HWPX 출력·원본 불변 보안 회귀 검증
   - [x] H3d: UTF-8 staging, bounded stderr, Unix process group, Windows Job Object 보강
   - [x] H3e: Linux/Windows 네이티브 브리지·프로세스 트리 CI 첫 결과 확인
-  - [ ] H1: H3 완료 뒤에만 `.hwp` 디스커버리와 설치 경로를 활성화
+  - [x] H1: H3 완료 뒤에만 `.hwp` 디스커버리와 설치 경로를 활성화
     - [x] H1a: 매니페스트·두 환경변수·두 사용자 설치 경로의 로컬 구현
     - [x] H1b: Unix/PowerShell 설치·제거 계약과 로컬 OfficeCLI smoke
-    - [ ] H1c: Linux/Windows 네이티브 `.hwp` discovery와 실제 RHWP `view` CI
-    - [ ] H1d: 새 원격 증거를 반영한 공개 문서의 정식 지원 승격
+    - [x] H1c: Linux/Windows 네이티브 `.hwp` discovery와 실제 RHWP `view` CI
+    - [x] H1d: 새 원격 증거를 반영한 공개 문서의 정식 지원 승격
   - [x] H4: 실제 HWP/HWPX 쌍과 공식 4표본 동등성 및 OfficeCLI 왕복 검증
   - [x] H5: README·ADR·인수인계 문서 갱신
 - [x] Phase 7: OfficeCLI host discovery·공급망 하드닝을 별도 원자 변경으로 진행
@@ -85,7 +85,12 @@
 - 로컬 OfficeCLI host 계약 35/35가 통과했다. 무한 stdout/stderr는 외부 8초 process-tree kill로 격리하고, 실제 `plugins list/info`, 16MiB 합계 예산, snapshot 변경, heartbeat reset, 후보 256개 및 비정상 사용자 프로필 경계를 포함한다.
 - 실행파일 탐색 Python 6/6, action pin 17/17, workflow YAML 8개 parse, PowerShell parse, Bash 구문, 두 shell script LF 고정, `git diff --check`가 통과했다.
 - 공식 OfficeCLI 1.0.145 양 OS 자산과 RHWP 0.8.4로 로컬 Windows 및 고정 digest 비-root Linux 컨테이너에서 실제 `english.hwp` discovery/view, 기대 텍스트, DOCX 생성, 원본 hash/mtime 불변, 중간 HWPX 미생성과 직접 HWPX 회귀를 확인했다.
-- 로컬 Windows에는 고정 SDK 10.0.302 대신 10.0.400만 있다. 10.0.400 직접 MSBuild로 기본 solution과 계약 harness 35개를 빌드·실행했고, 공식 Linux SDK 10.0.302 이미지(`sha256:7a91ccecc26d71bf7688c627a6b5eae2e27bb2cd1e37e8abe738348904245692`)에서는 프로필 경계 추가 전 host 계약 34/34를 통과했다. 최신 35개 정확한 양 OS 검증은 새 CI job에 고정했다.
+- 로컬 Windows에는 고정 SDK 10.0.302 대신 10.0.400만 있다. 10.0.400 직접 MSBuild로 기본 solution과 계약 harness 35개를 빌드·실행했고, 공식 Linux SDK 10.0.302 이미지(`sha256:7a91ccecc26d71bf7688c627a6b5eae2e27bb2cd1e37e8abe738348904245692`)에서는 프로필 경계 추가 전 host 계약 34/34를 통과했다. 정확한 SDK 10.0.302의 최신 35개 계약은 아래 양 OS CI에서 통과했다.
+
+## 2026-08-28 Final Remote Validation
+- 커밋 `e77fb77c5851c6c12926ad689a9c1f6fa82963a4`의 [HWPX plugin run 33157787880](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33157787880)에서 Linux/Windows OfficeCLI host 계약 35개, Rust 1.88 MSRV, 전체 test·clippy·release·대용량 verifier가 모두 통과했다.
+- 같은 run의 Linux/Windows 네이티브 job은 OfficeCLI 1.0.145와 RHWP 0.8.4로 실제 `english.hwp` discovery/view, 기대 텍스트, DOCX 생성, 원본 hash/mtime 불변, 중간 HWPX 미생성, 직접 HWPX 회귀와 uninstall을 모두 통과했다.
+- [Workflow action pins run 33157787944](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33157787944)도 성공해 커밋된 8개 workflow와 25개 외부 action/Docker 참조의 고정 정책을 원격에서 확인했다.
 
 ## Errors Encountered
 - 2026-08-28 최종 공급망 감사에서 action pin 검사가 정규식으로 YAML을 흉내 내 flow-style과 escape된 `uses` 키를 놓치고, `run` 문자열 내부 가짜 키와 folded scalar를 오탐하는 RED를 확인했다. 후속 재감사에서는 임의 디렉터리/mixed-case composite action 누락, `$/` self-reference 오탐, 작은 merge-anchor 폭탄, 명시 mapping 폭을 숨긴 aggregate merge 폭탄, symlink 무제한 선읽기와 fork checkout opt-in 누락을 RED로 재현했다. 해시 고정 PyYAML의 의미 파싱 앞에 regular-file·bounded-read·문서별 및 전체 구조 복잡도 예산을 두고, 저장소 전역 action metadata, immutable Docker digest 및 base-trusted data-only PR 검사를 17개 계약으로 고정했다.
@@ -114,9 +119,9 @@
 - Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
-**Phase 7 locally complete; Phase 6 / H1 remote gate pending** - H1a/H1b 로컬 구현·회귀·실제 OfficeCLI/RHWP smoke와 Phase 7 host/installer/공급망 하드닝은 완료했다. H1c의 두 push run은 OfficeCLI 1.0.143 오류 처리 중 원래 예외가 가려져 실패했다. 공식 1.0.145 자산·체크섬으로 workflow를 고쳤고 로컬 Windows와 비-root Linux 컨테이너 HWP view는 통과했지만 새 양 OS 원격 run 전까지 H1c/H1d와 Phase 6을 완료하지 않는다.
+**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. H1c/H1d와 Phase 6을 완료 처리하며, 후속 확장은 `specs/001-hancom-unified/task-plan.md`의 P1부터 진행한다.
 
 ## Next Action Plan
-1. 2026-08-28에 받은 publication 승인으로 현재 원자 변경을 commit/push하고 새 Linux/Windows workflow를 실행한다.
-2. 양 OS의 실제 `.hwp` discovery·RHWP `view`·원본 불변·직접 HWPX 회귀가 모두 성공하면 run 링크를 기록하고 H1c/H1d와 Phase 6을 완료한다.
-3. 현재 브랜치는 `upstream/main`보다 22커밋 뒤이므로, H1 게이트와 섞지 말고 별도 승인·변경으로 최신 upstream 통합과 전체 회귀를 수행한다.
+1. `specs/001-hancom-unified/task-plan.md`의 P1 workspace 재편을 동작 변화 0의 원자 변경으로 진행한다.
+2. P1 전후에 기존 Rust·host·installer·실제 HWP/HWPX 회귀를 같은 기준으로 비교한다.
+3. 현재 브랜치는 `upstream/main`보다 22커밋 뒤이므로, workspace 이동과 섞지 않고 별도 통합 변경으로 최신 upstream을 반영한다.
