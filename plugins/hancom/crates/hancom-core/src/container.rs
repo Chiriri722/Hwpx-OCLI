@@ -222,21 +222,26 @@ fn detect_xml<R: Read + Seek>(reader: R) -> Result<SourceFormat> {
         match xml.read_event_into(&mut buf) {
             Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
                 let raw = element.name();
-                let local = xml_local_name(raw.as_ref());
-                return if local.eq_ignore_ascii_case(b"HWPML") {
+                let mut has_default_namespace = false;
+                for attribute in element.attributes().with_checks(true) {
+                    let attribute = attribute?;
+                    if attribute.key.as_ref() == b"xmlns" && !attribute.value.as_ref().is_empty() {
+                        has_default_namespace = true;
+                    }
+                }
+                return if raw.as_ref() == b"HWPML" && !has_default_namespace {
                     Ok(SourceFormat::Hwpml)
                 } else {
                     Err(PluginError::corrupt(format!(
                         "XML root <{}> is not an HWPML document",
-                        String::from_utf8_lossy(local)
+                        String::from_utf8_lossy(raw.as_ref())
                     )))
                 };
             }
-            Ok(Event::DocType(_)) => {
-                return Err(PluginError::corrupt(
-                    "HWPML XML document type declarations are not supported",
-                ));
-            }
+            // Recognition and parsing policy are deliberately separate. A DTD
+            // does not change the root format; the HWPML parser will reject it
+            // as an unsupported feature without enabling entity expansion.
+            Ok(Event::DocType(_)) => {}
             Ok(Event::Eof) => {
                 if truncated {
                     return Err(PluginError::corrupt(format!(
@@ -352,10 +357,6 @@ fn looks_like_utf16_xml(head: &[u8]) -> bool {
         bom_encoding(head),
         Some((XmlEncoding::Utf16Le | XmlEncoding::Utf16Be, 2))
     )
-}
-
-fn xml_local_name(raw: &[u8]) -> &[u8] {
-    raw.rsplit(|byte| *byte == b':').next().unwrap_or(raw)
 }
 
 /// EOF를 오류로 보지 않고 읽은 만큼 돌려준다.
@@ -585,6 +586,29 @@ mod tests {
             SourceFormat::Hwpml
         );
         assert_eq!(SourceFormat::Hwpml.label(), "hwpml");
+    }
+
+    #[test]
+    fn detection_classifies_hwpml_even_when_a_doctype_precedes_the_root() {
+        let xml = br#"<?xml version="1.0"?>
+<!DOCTYPE HWPML [<!ELEMENT HWPML ANY>]>
+<HWPML Version="2.91"><BODY/></HWPML>"#;
+        assert_eq!(
+            detect_reader(Cursor::new(xml)).expect("recognizes the HWPML container"),
+            SourceFormat::Hwpml
+        );
+    }
+
+    #[test]
+    fn detection_requires_the_exact_unprefixed_hwpml_root_name() {
+        for xml in [
+            br#"<hwpml Version="2.91"><BODY/></hwpml>"#.as_slice(),
+            br#"<h:HWPML xmlns:h="urn:not-hwpml" Version="2.91"><BODY/></h:HWPML>"#.as_slice(),
+            br#"<HWPML xmlns="urn:not-hwpml" Version="2.91"><BODY/></HWPML>"#.as_slice(),
+        ] {
+            let error = detect_reader(Cursor::new(xml)).expect_err("not exact HWPML");
+            assert!(error.message.contains("not an HWPML"), "got: {error}");
+        }
     }
 
     #[test]

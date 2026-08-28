@@ -27,6 +27,56 @@ fn canonical_plugin() -> Command {
     Command::cargo_bin(CANONICAL_BIN).expect("canonical binary is built")
 }
 
+fn dump_with(
+    command: &mut Command,
+    path: &std::path::Path,
+    home: &std::path::Path,
+) -> std::process::Output {
+    command
+        .arg("dump")
+        .arg(path)
+        .env_remove("OFFICECLI_HWPX_CONVERTER")
+        .env("PATH", "")
+        .env("HOME", home)
+        .output()
+        .expect("run plugin entrypoint")
+}
+
+fn assert_entrypoint_parity(path: &std::path::Path, home: &std::path::Path) {
+    let legacy = dump_with(&mut plugin(), path, home);
+    let canonical = dump_with(&mut canonical_plugin(), path, home);
+    assert_eq!(
+        legacy.status.code(),
+        canonical.status.code(),
+        "exit status differs for {}",
+        path.display()
+    );
+    assert_eq!(
+        legacy.stdout,
+        canonical.stdout,
+        "stdout differs for {}",
+        path.display()
+    );
+    assert_eq!(
+        legacy.stderr,
+        canonical.stderr,
+        "stderr differs for {}",
+        path.display()
+    );
+}
+
+fn simple_hwpml(text: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<HWPML Version="2.91"><HEAD SecCnt="1"><MAPPINGTABLE>
+<CHARSHAPELIST Count="1"><CHARSHAPE Id="0" Height="1000"/></CHARSHAPELIST>
+<PARASHAPELIST Count="1"><PARASHAPE Id="0" Align="Left"><PARAMARGIN/></PARASHAPE></PARASHAPELIST>
+</MAPPINGTABLE></HEAD><BODY><SECTION Id="0"><P ParaShape="0">
+<TEXT CharShape="0"><CHAR>{text}</CHAR></TEXT>
+</P></SECTION></BODY></HWPML>"#
+    )
+}
+
 // ─────────────────────────── C1. --info 매니페스트 ───────────────────────────
 
 fn info_manifest() -> Value {
@@ -109,7 +159,9 @@ fn info_declares_dump_reader_kind_and_all_hancom_hwp_extensions() {
 fn info_declares_valid_target_for_dump_reader() {
     // §4.1: dump-reader는 target 필수, docx/xlsx/pptx 중 하나
     let m = info_manifest();
-    let t = m["target"].as_str().expect("target must exist and be a string");
+    let t = m["target"]
+        .as_str()
+        .expect("target must exist and be a string");
     assert!(["docx", "xlsx", "pptx"].contains(&t), "target = {t}");
 }
 
@@ -164,7 +216,10 @@ fn info_does_not_declare_reserved_kinds() {
     let m = info_manifest();
     for k in m["kinds"].as_array().expect("array") {
         let s = k.as_str().expect("string");
-        assert!(!["engine", "transformer"].contains(&s), "reserved kind: {s}");
+        assert!(
+            !["engine", "transformer"].contains(&s),
+            "reserved kind: {s}"
+        );
     }
 }
 
@@ -211,11 +266,7 @@ fn info_output_uses_lf_not_crlf() {
 
 fn dump_stdout(builder: &HwpxBuilder) -> String {
     let (_dir, path) = builder.write_to_temp("sample.hwpx");
-    let out = plugin()
-        .arg("dump")
-        .arg(&path)
-        .assert()
-        .success();
+    let out = plugin().arg("dump").arg(&path).assert().success();
     String::from_utf8(out.get_output().stdout.clone()).expect("utf-8 stdout")
 }
 
@@ -233,39 +284,97 @@ fn dump_emits_one_json_object_per_line() {
 
 #[test]
 fn canonical_binary_reads_owpml_and_single_xml_hml() {
-    let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"])
-        .write_to_temp("sample.owpml");
+    let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"]).write_to_temp("sample.owpml");
     let owpml_out = canonical_plugin()
         .arg("dump")
         .arg(&owpml)
         .assert()
         .success();
-    assert!(
-        String::from_utf8_lossy(&owpml_out.get_output().stdout).contains("OWPML 확장자")
-    );
+    assert!(String::from_utf8_lossy(&owpml_out.get_output().stdout).contains("OWPML 확장자"));
 
     let hml_dir = tempfile::tempdir().expect("tempdir");
     let hml = hml_dir.path().join("sample.hml");
-    std::fs::write(
-        &hml,
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<HWPML Version="2.91"><HEAD SecCnt="1"><MAPPINGTABLE>
-<CHARSHAPELIST Count="1"><CHARSHAPE Id="0" Height="1000"/></CHARSHAPELIST>
-<PARASHAPELIST Count="1"><PARASHAPE Id="0" Align="Left"><PARAMARGIN/></PARASHAPE></PARASHAPELIST>
-</MAPPINGTABLE></HEAD><BODY><SECTION Id="0"><P ParaShape="0">
-<TEXT CharShape="0"><CHAR>HML 단일 XML 성공</CHAR></TEXT>
-</P></SECTION></BODY></HWPML>"#
-            .as_bytes(),
-    )
-    .expect("write hml");
-    let hml_out = canonical_plugin()
-        .arg("dump")
-        .arg(&hml)
-        .assert()
-        .success();
-    assert!(
-        String::from_utf8_lossy(&hml_out.get_output().stdout).contains("HML 단일 XML 성공")
-    );
+    std::fs::write(&hml, simple_hwpml("HML 단일 XML 성공")).expect("write hml");
+    let hml_out = canonical_plugin().arg("dump").arg(&hml).assert().success();
+    assert!(String::from_utf8_lossy(&hml_out.get_output().stdout).contains("HML 단일 XML 성공"));
+}
+
+#[test]
+fn content_detection_reads_single_xml_hwpml_even_when_named_hwp() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("single-xml.hwp");
+    std::fs::write(&path, simple_hwpml("확장자보다 내용 우선")).expect("write HWPML");
+
+    let out = canonical_plugin().arg("dump").arg(path).assert().success();
+    assert!(String::from_utf8_lossy(&out.get_output().stdout).contains("확장자보다 내용 우선"));
+}
+
+#[test]
+fn legacy_and_canonical_entrypoints_are_byte_for_byte_compatible() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures = [
+        ("success.hwpx", simple_doc(&["HWPX 별칭 동일"]).build()),
+        ("success.owpml", simple_doc(&["OWPML 별칭 동일"]).build()),
+        ("success.hml", simple_hwpml("HML 별칭 동일").into_bytes()),
+        ("hml-content.hwp", simple_hwpml("확장자 무관 동일").into_bytes()),
+        ("generic.hml", b"<html><body>not HWPML</body></html>".to_vec()),
+        (
+            "namespace.hml",
+            b"<HWPML xmlns=\"urn:not-hwpml\" Version=\"2.91\"><BODY/></HWPML>".to_vec(),
+        ),
+        (
+            "unsupported-version.hml",
+            b"<HWPML Version=\"99\"><BODY/></HWPML>".to_vec(),
+        ),
+        (
+            "doctype.hml",
+            b"<!DOCTYPE HWPML><HWPML Version=\"2.91\"><BODY/></HWPML>".to_vec(),
+        ),
+        (
+            "unsupported-control.hml",
+            b"<HWPML Version=\"2.91\"><BODY><SECTION><P><TEXT><EQUATION/></TEXT></P></SECTION></BODY></HWPML>".to_vec(),
+        ),
+        (
+            "truncated-after-text.hml",
+            b"<HWPML Version=\"2.91\"><BODY><SECTION><P><TEXT><CHAR>partial must stay buffered</CHAR></TEXT>".to_vec(),
+        ),
+        ("binary.hwp", minimal_hwp5(5, 1, 0x01)),
+    ];
+
+    for (name, bytes) in fixtures {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("write parity fixture");
+        assert_entrypoint_parity(&path, dir.path());
+    }
+}
+
+#[test]
+fn legacy_and_canonical_converter_contracts_are_byte_for_byte_compatible() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("converter-parity.hwp");
+    std::fs::write(&source, minimal_hwp5(5, 1, 0x01)).expect("write HWP5");
+    let converted = dir.path().join("converted.hwpx");
+    std::fs::write(&converted, simple_doc(&["변환 별칭 동일"]).build()).expect("write HWPX");
+    let converter = fake_converter(dir.path());
+
+    for mode in ["copy", "nonzero", "invalid", "missing"] {
+        let run = |mut command: Command, log_name: &str| {
+            command
+                .arg("dump")
+                .arg(&source)
+                .env("OFFICECLI_HWPX_CONVERTER", &converter)
+                .env("MOCK_MODE", mode)
+                .env("MOCK_HWPX", &converted)
+                .env("MOCK_ARGS", dir.path().join(log_name))
+                .output()
+                .expect("run converter parity case")
+        };
+        let legacy = run(plugin(), "legacy-args");
+        let canonical = run(canonical_plugin(), "canonical-args");
+        assert_eq!(legacy.status.code(), canonical.status.code(), "mode={mode}");
+        assert_eq!(legacy.stdout, canonical.stdout, "mode={mode}");
+        assert_eq!(legacy.stderr, canonical.stderr, "mode={mode}");
+    }
 }
 
 #[test]
@@ -276,6 +385,31 @@ fn generic_xml_is_not_misclassified_as_hwpml() {
     let out = canonical_plugin().arg("dump").arg(path).assert().code(2);
     assert!(out.get_output().stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.get_output().stderr).contains("not an HWPML"));
+}
+
+#[test]
+fn namespace_confused_hwpml_exits_two_without_stdout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures = [
+        (
+            "root-namespace.hml",
+            b"<HWPML xmlns=\"urn:not-hwpml\" Version=\"2.91\"><BODY/></HWPML>".to_vec(),
+        ),
+        (
+            "nested-namespace.hml",
+            simple_hwpml("본문")
+                .replacen("<BODY>", "<BODY xmlns=\"urn:not-hwpml\">", 1)
+                .into_bytes(),
+        ),
+    ];
+
+    for (name, bytes) in fixtures {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("write namespace fixture");
+        let out = canonical_plugin().arg("dump").arg(path).assert().code(2);
+        assert!(out.get_output().stdout.is_empty());
+        assert!(!out.get_output().stderr.is_empty());
+    }
 }
 
 #[test]
@@ -294,9 +428,20 @@ fn unsupported_hwpml_control_exits_three_without_partial_stdout() {
 
     let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
     assert!(out.get_output().stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&out.get_output().stderr).contains("EQUATION")
-    );
+    assert!(String::from_utf8_lossy(&out.get_output().stderr).contains("EQUATION"));
+}
+
+#[test]
+fn hwpml_doctype_is_recognized_then_rejected_with_exit_three() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("doctype.hml");
+    let xml =
+        simple_hwpml("본문").replacen("<HWPML", "<!DOCTYPE HWPML [<!ELEMENT HWPML ANY>]><HWPML", 1);
+    std::fs::write(&path, xml).expect("write HWPML with DTD");
+
+    let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
+    assert!(out.get_output().stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.get_output().stderr).contains("document type"));
 }
 
 #[test]
@@ -317,8 +462,8 @@ fn dump_never_emits_top_level_array() {
 fn dump_lines_use_documented_batch_item_fields() {
     // wiki command-batch.md "Input Format" 표
     const ALLOWED: &[&str] = &[
-        "command", "path", "parent", "type", "from", "index", "after", "before", "to",
-        "path2", "props", "selector", "mode", "depth", "part", "xpath", "action", "xml",
+        "command", "path", "parent", "type", "from", "index", "after", "before", "to", "path2",
+        "props", "selector", "mode", "depth", "part", "xpath", "action", "xml",
     ];
     const COMMANDS: &[&str] = &[
         "get", "query", "set", "add", "remove", "move", "swap", "view", "raw", "raw-set",
@@ -330,7 +475,11 @@ fn dump_lines_use_documented_batch_item_fields() {
     let bold = b.char_pr(CharPr::bold());
     let pp = b.para_pr(ParaPr::centered());
     let mut body = para_with_runs(&pp, &[(&cp, "보통 "), (&bold, "굵게")]);
-    body.push_str(&table(1, 2, &[CellSpec::new(0, 0, "가"), CellSpec::new(0, 1, "나")]));
+    body.push_str(&table(
+        1,
+        2,
+        &[CellSpec::new(0, 0, "가"), CellSpec::new(0, 1, "나")],
+    ));
     b.section(body);
 
     let stdout = dump_stdout(&b);
@@ -347,7 +496,10 @@ fn dump_lines_use_documented_batch_item_fields() {
         assert!(COMMANDS.contains(&cmd), "unknown command {cmd}: {line}");
 
         for k in obj.keys() {
-            assert!(ALLOWED.contains(&k.as_str()), "undocumented field {k}: {line}");
+            assert!(
+                ALLOWED.contains(&k.as_str()),
+                "undocumented field {k}: {line}"
+            );
         }
     }
 }
@@ -417,7 +569,10 @@ fn dump_keeps_diagnostics_off_stdout() {
     }
     // 기본값에서는 요약이 stderr로 나간다.
     let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8");
-    assert!(stderr.contains("dumped"), "stderr summary missing: {stderr:?}");
+    assert!(
+        stderr.contains("dumped"),
+        "stderr summary missing: {stderr:?}"
+    );
 }
 
 #[test]
