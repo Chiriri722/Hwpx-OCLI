@@ -2232,6 +2232,29 @@ fn resolves_outline_numbering_per_section_and_ignores_dormant_lossy_templates() 
 }
 
 #[test]
+fn ignores_a_dormant_tenth_hwp_numbering_level() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "3", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="3" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        // RHWP preserves HWP's tenth definition level. DOCX has only levels
+        // 0..=8, but this entry is dormant when authored paragraphs use level 0.
+        r#"<hh:paraHead start="1" level="10" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="99" textOffsetType="PERCENT" textOffset="25" numFormat="CIRCLED_HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="1">^1.^A</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    b.section(para(&cp, &numbered, "첫 단계만 활성"));
+
+    let levels: Vec<_> = emit_document(&parse(&b))
+        .into_iter()
+        .filter(|item| item.r#type == Some("level"))
+        .collect();
+    assert_eq!(levels.len(), 1);
+    assert_eq!(levels[0].props["ilvl"], "0");
+}
+
+#[test]
 fn preserves_pua_bullet_and_verified_marker_character_style() {
     let mut b = HwpxBuilder::new();
     let body_cp = b.char_pr(CharPr::plain());

@@ -367,16 +367,17 @@ fn materialize_number_levels(
 ) -> Result<Vec<NumberingLevel>> {
     let mut selected: BTreeMap<u8, &RawLevel> = BTreeMap::new();
     for level in &raw.levels {
-        let source_level = parse_u8(level.level.as_deref(), "numbering paraHead level")?;
+        let source_level = parse_u16(level.level.as_deref(), "numbering paraHead level")?;
         if source_level == 0 {
             return Err(PluginError::corrupt(format!(
                 "numbering id {source_id} has invalid one-based paraHead level 0"
             )));
         }
         let target_level = source_level - 1;
-        if target_level > max_level {
+        if target_level > u16::from(max_level) {
             continue;
         }
+        let target_level = u8::try_from(target_level).expect("bounded by active DOCX level");
         if selected.insert(target_level, level).is_some() {
             return Err(PluginError::corrupt(format!(
                 "numbering id {source_id} repeats paraHead level {source_level}"
@@ -671,6 +672,11 @@ fn parse_u8(raw: Option<&str>, label: &str) -> Result<u8> {
                 )))
             }
         })
+}
+
+fn parse_u16(raw: Option<&str>, label: &str) -> Result<u16> {
+    raw.and_then(|value| value.trim().parse::<u16>().ok())
+        .ok_or_else(|| PluginError::corrupt(format!("missing or invalid {label}")))
 }
 
 fn parse_u32(raw: Option<&str>, label: &str) -> Result<u32> {
