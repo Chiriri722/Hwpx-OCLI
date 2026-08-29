@@ -17,8 +17,10 @@ use quick_xml::Reader;
 use super::model::{
     Block, Cell, Equation, EquationMode, HeaderFooter, HeaderFooterPage, Image, Inline, Note,
     NoteKind, NoteLine, NoteLineType, NoteLineWidth, NoteNumberFormat, NoteNumberRestart,
-    NotePosition, NoteProperties, NoteSpacing, PageNumberField, PageNumberKind, Paragraph, Section,
-    Table, TextField, TextRun,
+    NotePosition, NoteProperties, NoteSpacing, PageNumberField, PageNumberKind, Paragraph,
+    Rectangle, RectangleHorizontalPosition, RectangleLine, RectangleMargins, RectanglePlacement,
+    RectangleText, RectangleWrap, RectangleWrapSide, Section, ShapeGeometry, Table, TextBoxAnchor,
+    TextBoxDirection, TextField, TextRun,
 };
 use super::styles::{normalize_color, SectionStyles, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
@@ -30,6 +32,19 @@ const MAX_TABLE_ROWS: usize = 32_768;
 const MAX_TABLE_COLS: usize = 512;
 const MAX_TABLE_CELLS: usize = 100_000;
 const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
+const UNSUPPORTED_SHAPE_ELEMENTS: &[&str] = &[
+    "line",
+    "arc",
+    "polygon",
+    "curve",
+    "connectLine",
+    "container",
+    "textart",
+    "ole",
+    "video",
+    // T2-7 owns semantic chart conversion. Until then, fail closed.
+    "chart",
+];
 
 pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Section> {
     parse_section_with_outline(xml, styles).map(|(section, _)| section)
@@ -928,6 +943,47 @@ fn parse_paragraph(
                             .inlines
                             .push(Inline::Equation(parse_equation(reader, &owned)?));
                     }
+                    "rect" | "ellipse" if note_context.is_some() => {
+                        return Err(PluginError::unsupported_feature(
+                            "shape inside a footnote or endnote cannot be hosted by the current DOCX drawing surface",
+                        ));
+                    }
+                    "rect" if depth < MAX_DEPTH => {
+                        let owned = e.into_owned();
+                        current.inlines.push(Inline::Rectangle(parse_rectangle(
+                            reader,
+                            &owned,
+                            styles,
+                            depth + 1,
+                        )?));
+                    }
+                    "rect" => {
+                        return Err(PluginError::corrupt(format!(
+                            "rectangle nesting exceeds the maximum depth of {MAX_DEPTH}"
+                        )));
+                    }
+                    "ellipse" if depth < MAX_DEPTH => {
+                        let owned = e.into_owned();
+                        current.inlines.push(Inline::Rectangle(parse_ellipse(
+                            reader,
+                            &owned,
+                            styles,
+                            depth + 1,
+                        )?));
+                    }
+                    "ellipse" => {
+                        return Err(PluginError::corrupt(format!(
+                            "ellipse nesting exceeds the maximum depth of {MAX_DEPTH}"
+                        )));
+                    }
+                    name if UNSUPPORTED_SHAPE_ELEMENTS
+                        .iter()
+                        .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+                    {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "active {name} shape is not yet representable as an editable DOCX object"
+                        )));
+                    }
                     "footNote" | "endNote" if depth < MAX_DEPTH => {
                         let owned = e.into_owned();
                         current.inlines.push(Inline::Note(parse_note(
@@ -1048,6 +1104,1077 @@ fn parse_paragraph(
     }
 
     Ok(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SimpleShapeKind {
+    Rectangle,
+    Ellipse,
+}
+
+const EMU_PER_HWPUNIT: u64 = 127;
+const DOCX_MAX_COORDINATE_EMU: u64 = i32::MAX as u64;
+const DOCX_MAX_WRAP_DISTANCE_EMU: u64 = u32::MAX as u64;
+const DOCX_MAX_LINE_WIDTH_EMU: u64 = 20_116_800;
+
+impl SimpleShapeKind {
+    fn element_name(self) -> &'static str {
+        match self {
+            Self::Rectangle => "rect",
+            Self::Ellipse => "ellipse",
+        }
+    }
+
+    fn is_geometry_cache(self, name: &str) -> bool {
+        match self {
+            Self::Rectangle => matches!(
+                name,
+                "offset" | "orgSz" | "curSz" | "renderingInfo" | "pt0" | "pt1" | "pt2" | "pt3"
+            ),
+            Self::Ellipse => matches!(
+                name,
+                "offset"
+                    | "orgSz"
+                    | "curSz"
+                    | "renderingInfo"
+                    | "center"
+                    | "ax1"
+                    | "ax2"
+                    | "start1"
+                    | "end1"
+                    | "start2"
+                    | "end2"
+            ),
+        }
+    }
+}
+
+fn parse_rectangle(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    styles: &SectionStyles<'_>,
+    depth: usize,
+) -> Result<Rectangle> {
+    parse_simple_shape(reader, start, styles, depth, SimpleShapeKind::Rectangle)
+}
+
+fn parse_ellipse(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    styles: &SectionStyles<'_>,
+    depth: usize,
+) -> Result<Rectangle> {
+    parse_simple_shape(reader, start, styles, depth, SimpleShapeKind::Ellipse)
+}
+
+/// Parse the closed, evidence-backed `hp:rect`/`hp:ellipse` subset. The final
+/// `sz` and `pos` elements are authoritative for DOCX layout; rendering
+/// matrices and point caches are producer caches, while every active visual
+/// feature is validated explicitly.
+fn parse_simple_shape(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    styles: &SectionStyles<'_>,
+    depth: usize,
+    kind: SimpleShapeKind,
+) -> Result<Rectangle> {
+    let shape_name = kind.element_name();
+    let common_attributes = &[
+        "id",
+        "zOrder",
+        "numberingType",
+        "textWrap",
+        "textFlow",
+        "lock",
+        "dropcapstyle",
+        "href",
+        "groupLevel",
+        "instid",
+        "instId",
+    ];
+    match kind {
+        SimpleShapeKind::Rectangle => {
+            let mut allowed = common_attributes.to_vec();
+            allowed.push("ratio");
+            validate_shape_attributes(start, shape_name, &allowed)?;
+        }
+        SimpleShapeKind::Ellipse => {
+            let mut allowed = common_attributes.to_vec();
+            allowed.extend(["intervalDirty", "hasArcPr", "arcType"]);
+            validate_shape_attributes(start, shape_name, &allowed)?;
+        }
+    }
+
+    let geometry = match kind {
+        SimpleShapeKind::Rectangle => {
+            let corner_radius_percent = parse_optional_u32(start, "rect", "ratio", 0)?;
+            if corner_radius_percent > 50 {
+                return Err(PluginError::unsupported_feature(format!(
+                    "rect corner ratio {corner_radius_percent}% exceeds the verified 0..=50 range"
+                )));
+            }
+            ShapeGeometry::Rectangle {
+                corner_radius_percent,
+            }
+        }
+        SimpleShapeKind::Ellipse => {
+            if parse_optional_u32(start, "ellipse", "intervalDirty", 0)? != 0 {
+                return Err(PluginError::unsupported_feature(
+                    "ellipse intervalDirty metadata is active and outside the verified profile",
+                ));
+            }
+            if parse_required_shape_bool(start, "ellipse", "hasArcPr")? {
+                return Err(PluginError::unsupported_feature(
+                    "ellipse arc properties are outside the verified whole-ellipse profile",
+                ));
+            }
+            let arc_type = required_shape_attr(start, "ellipse", "arcType")?;
+            if !arc_type.eq_ignore_ascii_case("normal") {
+                return Err(PluginError::unsupported_feature(format!(
+                    "ellipse arcType {arc_type} is outside the verified NORMAL profile"
+                )));
+            }
+            ShapeGeometry::Ellipse
+        }
+    };
+
+    let z_order = parse_required_u32(start, shape_name, "zOrder")?;
+    let numbering_type = required_shape_attr(start, shape_name, "numberingType")?;
+    match numbering_type.trim().to_ascii_uppercase().as_str() {
+        "NONE" | "PICTURE" => {}
+        other => {
+            return Err(PluginError::unsupported_feature(format!(
+                "{shape_name} numberingType {other} requires an unsupported caption/numbering mapping"
+            )));
+        }
+    }
+    let wrap = match required_shape_attr(start, shape_name, "textWrap")?
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "SQUARE" => RectangleWrap::Square,
+        "TOP_AND_BOTTOM" => RectangleWrap::TopAndBottom,
+        "BEHIND_TEXT" => RectangleWrap::BehindText,
+        "IN_FRONT_OF_TEXT" => RectangleWrap::InFrontOfText,
+        other => {
+            return Err(PluginError::corrupt(format!(
+                "{shape_name} has invalid textWrap {other}"
+            )));
+        }
+    };
+    let wrap_side = match required_shape_attr(start, shape_name, "textFlow")?
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "BOTH_SIDES" => RectangleWrapSide::BothSides,
+        "LEFT_ONLY" => RectangleWrapSide::Left,
+        "RIGHT_ONLY" => RectangleWrapSide::Right,
+        "LARGEST_ONLY" => RectangleWrapSide::Largest,
+        other => {
+            return Err(PluginError::corrupt(format!(
+                "{shape_name} has invalid textFlow {other}"
+            )));
+        }
+    };
+    if parse_required_shape_bool(start, shape_name, "lock")? {
+        return Err(PluginError::unsupported_feature(format!(
+            "locked {shape_name} cannot be preserved by the editable DOCX shape surface"
+        )));
+    }
+    if attr(start, "dropcapstyle").is_some_and(|value| !value.eq_ignore_ascii_case("none")) {
+        return Err(PluginError::unsupported_feature(format!(
+            "{shape_name} drop-cap layout is not representable as a DOCX drawing"
+        )));
+    }
+    if attr(start, "href").is_some_and(|value| !value.trim().is_empty()) {
+        return Err(PluginError::unsupported_feature(format!(
+            "hyperlinked {shape_name} is not supported by the typed DOCX shape surface"
+        )));
+    }
+    if parse_optional_u32(start, shape_name, "groupLevel", 0)? != 0 {
+        return Err(PluginError::unsupported_feature(format!(
+            "grouped {shape_name} requires group geometry preservation"
+        )));
+    }
+    let mut line = None;
+    let mut fill = None;
+    let mut saw_shadow = false;
+    let mut size = None;
+    let mut placement = None;
+    let mut outer_margins = None;
+    let mut saw_shape_comment = false;
+    let mut description = None;
+    let mut text = None;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected end of XML inside {shape_name}"
+                )));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                let owned = event.into_owned();
+                match name.as_str() {
+                    "lineShape" => {
+                        if line.is_some() {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one lineShape"
+                            )));
+                        }
+                        line = Some(parse_rectangle_line(&owned, shape_name)?);
+                        skip_element(reader, "lineShape")?;
+                    }
+                    "fillBrush" => {
+                        if fill.is_some() {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one fillBrush"
+                            )));
+                        }
+                        fill = Some(parse_rectangle_fill(reader, &owned, shape_name)?);
+                    }
+                    "shadow" => {
+                        if saw_shadow {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one shadow"
+                            )));
+                        }
+                        validate_rectangle_shadow(&owned, shape_name)?;
+                        saw_shadow = true;
+                        skip_element(reader, "shadow")?;
+                    }
+                    "drawText" => {
+                        if kind == SimpleShapeKind::Ellipse {
+                            return Err(PluginError::unsupported_feature(
+                                "ellipse drawText has no native round-trip evidence",
+                            ));
+                        }
+                        if text.is_some() {
+                            return Err(PluginError::corrupt(
+                                "rect contains more than one drawText",
+                            ));
+                        }
+                        text = Some(parse_rectangle_text(reader, &owned, styles, depth)?);
+                    }
+                    "sz" => {
+                        if size.is_some() {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one sz"
+                            )));
+                        }
+                        size = Some(parse_rectangle_size(&owned, shape_name)?);
+                        skip_element(reader, "sz")?;
+                    }
+                    "pos" => {
+                        if placement.is_some() {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one pos"
+                            )));
+                        }
+                        placement = Some(parse_rectangle_position(&owned, shape_name)?);
+                        skip_element(reader, "pos")?;
+                    }
+                    "outMargin" => {
+                        if outer_margins.is_some() {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one outMargin"
+                            )));
+                        }
+                        outer_margins = Some(parse_rectangle_margins(
+                            &owned,
+                            &format!("{shape_name}/outMargin"),
+                            DOCX_MAX_WRAP_DISTANCE_EMU,
+                            "wp:anchor wrap distance",
+                        )?);
+                        skip_element(reader, "outMargin")?;
+                    }
+                    "flip" => {
+                        let label = format!("{shape_name}/flip");
+                        validate_shape_attributes(&owned, &label, &["horizontal", "vertical"])?;
+                        if parse_optional_shape_bool(&owned, &label, "horizontal", false)?
+                            || parse_optional_shape_bool(&owned, &label, "vertical", false)?
+                        {
+                            return Err(PluginError::unsupported_feature(format!(
+                                "flipped {shape_name} is outside the verified DOCX shape subset"
+                            )));
+                        }
+                        skip_element(reader, "flip")?;
+                    }
+                    "rotationInfo" => {
+                        let label = format!("{shape_name}/rotationInfo");
+                        validate_shape_attributes(
+                            &owned,
+                            &label,
+                            &["angle", "centerX", "centerY", "rotateimage"],
+                        )?;
+                        if parse_optional_i64(&owned, &label, "angle", 0)? != 0 {
+                            return Err(PluginError::unsupported_feature(format!(
+                                "rotated {shape_name} is outside the verified DOCX shape subset"
+                            )));
+                        }
+                        skip_element(reader, "rotationInfo")?;
+                    }
+                    "shapeComment" => {
+                        if saw_shape_comment {
+                            return Err(PluginError::corrupt(format!(
+                                "{shape_name} contains more than one shapeComment"
+                            )));
+                        }
+                        saw_shape_comment = true;
+                        let comment = read_text_until_end(reader, "shapeComment")?;
+                        if !comment.trim().is_empty() {
+                            description = Some(comment);
+                        }
+                    }
+                    // Geometry provenance and rendering caches do not change the
+                    // final axis-aligned rect once sz/pos/rotation/flip pass.
+                    _ if kind.is_geometry_cache(&name) => skip_element(reader, &name)?,
+                    "caption" => {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "{shape_name} caption cannot be preserved by the typed DOCX shape surface"
+                        )));
+                    }
+                    other => {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "{shape_name} contains unsupported active child {other}"
+                        )));
+                    }
+                }
+            }
+            Event::Text(value) if !value.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{shape_name} contains direct text"
+                )));
+            }
+            Event::CData(value) if !String::from_utf8_lossy(value.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{shape_name} contains direct CDATA"
+                )));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "{shape_name} contains an unexpected entity reference"
+                )));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == shape_name => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let (width_hwpunit, height_hwpunit) =
+        size.ok_or_else(|| PluginError::corrupt(format!("{shape_name} is missing required sz")))?;
+    Ok(Rectangle {
+        width_hwpunit,
+        height_hwpunit,
+        geometry,
+        placement: placement
+            .ok_or_else(|| PluginError::corrupt(format!("{shape_name} is missing required pos")))?,
+        wrap,
+        wrap_side,
+        outer_margins: outer_margins.ok_or_else(|| {
+            PluginError::corrupt(format!("{shape_name} is missing required outMargin"))
+        })?,
+        z_order,
+        fill: match kind {
+            SimpleShapeKind::Rectangle => Some(
+                fill.ok_or_else(|| PluginError::corrupt("rect is missing required fillBrush"))?,
+            ),
+            SimpleShapeKind::Ellipse => fill,
+        },
+        line: line.ok_or_else(|| {
+            PluginError::corrupt(format!("{shape_name} is missing required lineShape"))
+        })?,
+        description,
+        text,
+    })
+}
+
+fn parse_rectangle_line(
+    event: &quick_xml::events::BytesStart<'_>,
+    shape_name: &str,
+) -> Result<RectangleLine> {
+    let label = format!("{shape_name}/lineShape");
+    validate_shape_attributes(
+        event,
+        &label,
+        &[
+            "color",
+            "width",
+            "style",
+            "endCap",
+            "headStyle",
+            "tailStyle",
+            "headfill",
+            "tailfill",
+            "headSz",
+            "tailSz",
+            "outlineStyle",
+            "alpha",
+        ],
+    )?;
+    let style = required_shape_attr(event, &label, "style")?
+        .trim()
+        .to_ascii_uppercase();
+    let visible = match style.as_str() {
+        "SOLID" => true,
+        "NONE" => false,
+        _ => {
+            return Err(PluginError::unsupported_feature(format!(
+                "{shape_name} line style {style} is outside the verified SOLID/NONE subset"
+            )));
+        }
+    };
+    for (name, expected) in [
+        ("endCap", "FLAT"),
+        ("headStyle", "NORMAL"),
+        ("tailStyle", "NORMAL"),
+        ("outlineStyle", "NORMAL"),
+    ] {
+        if attr(event, name).is_some_and(|value| !value.eq_ignore_ascii_case(expected)) {
+            return Err(PluginError::unsupported_feature(format!(
+                "{shape_name} line {name} is outside the verified {expected} profile"
+            )));
+        }
+    }
+    if parse_optional_u32(event, &label, "alpha", 0)? != 0 {
+        return Err(PluginError::unsupported_feature(format!(
+            "transparent {shape_name} outlines are not supported by the verified typed mapping"
+        )));
+    }
+    let raw_color = required_shape_attr(event, &label, "color")?;
+    let color = if visible {
+        normalize_color(raw_color).ok_or_else(|| {
+            PluginError::corrupt(format!("{shape_name}/lineShape has invalid color"))
+        })?
+    } else {
+        // The color is not rendered for style=NONE. Hancom commonly serializes
+        // the literal sentinel `none`; retain a harmless canonical value.
+        normalize_color(raw_color).unwrap_or_else(|| "#000000".to_string())
+    };
+    let width_hwpunit = parse_required_u32(event, &label, "width")?;
+    if visible {
+        ensure_hwpunit_fits_docx_unsigned(
+            width_hwpunit,
+            DOCX_MAX_LINE_WIDTH_EMU,
+            &format!("{label} width"),
+            "a:ln width",
+        )?;
+    }
+    Ok(RectangleLine {
+        visible,
+        color,
+        width_hwpunit,
+    })
+}
+
+fn parse_rectangle_fill(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'_>,
+    shape_name: &str,
+) -> Result<String> {
+    let label = format!("{shape_name}/fillBrush");
+    let brush_label = format!("{label}/winBrush");
+    validate_shape_attributes(start, &label, &[])?;
+    let mut color = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected end of XML inside {label}"
+                )));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                let owned = event.into_owned();
+                if name != "winBrush" {
+                    return Err(PluginError::unsupported_feature(format!(
+                        "{shape_name} fill uses unsupported {name}"
+                    )));
+                }
+                if color.is_some() {
+                    return Err(PluginError::corrupt(format!(
+                        "{label} contains more than one winBrush"
+                    )));
+                }
+                validate_shape_attributes(
+                    &owned,
+                    &brush_label,
+                    &["faceColor", "hatchColor", "alpha"],
+                )?;
+                if parse_optional_u32(&owned, &brush_label, "alpha", 0)? != 0 {
+                    return Err(PluginError::unsupported_feature(format!(
+                        "transparent {shape_name} fill is outside the verified opaque mapping"
+                    )));
+                }
+                color = Some(
+                    normalize_color(required_shape_attr(&owned, &brush_label, "faceColor")?)
+                        .ok_or_else(|| {
+                            PluginError::corrupt(format!("{brush_label} has invalid faceColor"))
+                        })?,
+                );
+                skip_element(reader, "winBrush")?;
+            }
+            Event::Text(value) if !value.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{label} contains direct text"
+                )));
+            }
+            Event::CData(value) if !String::from_utf8_lossy(value.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{label} contains direct CDATA"
+                )));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "fillBrush" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    color.ok_or_else(|| PluginError::corrupt(format!("{label} is missing winBrush")))
+}
+
+fn validate_rectangle_shadow(
+    event: &quick_xml::events::BytesStart<'_>,
+    shape_name: &str,
+) -> Result<()> {
+    let label = format!("{shape_name}/shadow");
+    validate_shape_attributes(
+        event,
+        &label,
+        &["type", "color", "offsetX", "offsetY", "alpha"],
+    )?;
+    let kind = required_shape_attr(event, &label, "type")?;
+    if !kind.eq_ignore_ascii_case("none") {
+        return Err(PluginError::unsupported_feature(format!(
+            "{shape_name} shadow type {kind} is outside the verified no-shadow subset"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_rectangle_size(
+    event: &quick_xml::events::BytesStart<'_>,
+    shape_name: &str,
+) -> Result<(u32, u32)> {
+    let label = format!("{shape_name}/sz");
+    validate_shape_attributes(
+        event,
+        &label,
+        &["width", "widthRelTo", "height", "heightRelTo", "protect"],
+    )?;
+    for name in ["widthRelTo", "heightRelTo"] {
+        let value = required_shape_attr(event, &label, name)?;
+        if !value.eq_ignore_ascii_case("absolute") {
+            return Err(PluginError::unsupported_feature(format!(
+                "{label} {name}={value} is relative and cannot be lowered without its layout frame"
+            )));
+        }
+    }
+    if parse_optional_shape_bool(event, &label, "protect", false)? {
+        return Err(PluginError::unsupported_feature(format!(
+            "protected {shape_name} size cannot be preserved by the editable DOCX shape surface"
+        )));
+    }
+    let width = parse_required_u32(event, &label, "width")?;
+    let height = parse_required_u32(event, &label, "height")?;
+    if width == 0 || height == 0 {
+        return Err(PluginError::corrupt(format!(
+            "{label} width and height must both be positive"
+        )));
+    }
+    ensure_hwpunit_fits_docx_unsigned(
+        width,
+        DOCX_MAX_COORDINATE_EMU,
+        &format!("{label} width"),
+        "wp:extent/a:ext coordinate",
+    )?;
+    ensure_hwpunit_fits_docx_unsigned(
+        height,
+        DOCX_MAX_COORDINATE_EMU,
+        &format!("{label} height"),
+        "wp:extent/a:ext coordinate",
+    )?;
+    Ok((width, height))
+}
+
+fn parse_rectangle_position(
+    event: &quick_xml::events::BytesStart<'_>,
+    shape_name: &str,
+) -> Result<RectanglePlacement> {
+    let label = format!("{shape_name}/pos");
+    validate_shape_attributes(
+        event,
+        &label,
+        &[
+            "treatAsChar",
+            "affectLSpacing",
+            "flowWithText",
+            "allowOverlap",
+            "holdAnchorAndSO",
+            "vertRelTo",
+            "horzRelTo",
+            "vertAlign",
+            "horzAlign",
+            "vertOffset",
+            "horzOffset",
+        ],
+    )?;
+    let inline = parse_required_shape_bool(event, &label, "treatAsChar")?;
+    if parse_required_shape_bool(event, &label, "affectLSpacing")? {
+        return Err(PluginError::unsupported_feature(format!(
+            "{label} affectLSpacing=1 is outside the verified inline layout profile"
+        )));
+    }
+    let flow_with_text = parse_required_shape_bool(event, &label, "flowWithText")?;
+    let allow_overlap = parse_required_shape_bool(event, &label, "allowOverlap")?;
+    if parse_required_shape_bool(event, &label, "holdAnchorAndSO")? {
+        return Err(PluginError::unsupported_feature(format!(
+            "{label} holdAnchorAndSO=1 is outside the verified layout profile"
+        )));
+    }
+    let vert_rel = required_shape_attr(event, &label, "vertRelTo")?;
+    let horz_rel = required_shape_attr(event, &label, "horzRelTo")?;
+    let vert_align = required_shape_attr(event, &label, "vertAlign")?;
+    let horz_align = required_shape_attr(event, &label, "horzAlign")?;
+    // Both attributes remain schema-validated integers, but alignment makes
+    // the offset on that axis semantically inactive. Hancom writes unsigned
+    // sentinel values for CENTER, so do not range-convert or emit that X.
+    let y = parse_required_i64(event, &label, "vertOffset")?;
+    let x = parse_required_i64(event, &label, "horzOffset")?;
+
+    if inline {
+        // Hancom ignores the relative-frame coordinates for treatAsChar=1;
+        // wp:inline carries only the final extent and outer distances. The
+        // official grammar likewise limits flowWithText/allowOverlap to
+        // floating objects, so producer defaults in those fields are inert.
+        return Ok(RectanglePlacement::Inline);
+    }
+    if flow_with_text && vert_rel.eq_ignore_ascii_case("para") {
+        return Err(PluginError::unsupported_feature(format!(
+            "floating {shape_name} constrained to the paragraph text area has no verified DOCX mapping"
+        )));
+    }
+    if !vert_rel.eq_ignore_ascii_case("paper")
+        || !horz_rel.eq_ignore_ascii_case("paper")
+        || !vert_align.eq_ignore_ascii_case("top")
+    {
+        return Err(PluginError::unsupported_feature(format!(
+            "floating {shape_name} requires verified PAPER/PAPER TOP placement, got {vert_rel}/{horz_rel} {vert_align}/{horz_align}"
+        )));
+    }
+    ensure_hwpunit_fits_docx_position(y, shape_name)?;
+    let horizontal = if horz_align.eq_ignore_ascii_case("left") {
+        ensure_hwpunit_fits_docx_position(x, shape_name)?;
+        RectangleHorizontalPosition::Offset(x)
+    } else if horz_align.eq_ignore_ascii_case("center") {
+        RectangleHorizontalPosition::Center
+    } else {
+        return Err(PluginError::unsupported_feature(format!(
+            "floating {shape_name} horizontal alignment {horz_align} is outside the verified LEFT/CENTER profile"
+        )));
+    };
+    Ok(RectanglePlacement::Page {
+        horizontal,
+        y_hwpunit: y,
+        allow_overlap,
+    })
+}
+
+fn parse_rectangle_margins(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    max_emu: u64,
+    docx_domain: &str,
+) -> Result<RectangleMargins> {
+    validate_shape_attributes(event, label, &["left", "right", "top", "bottom"])?;
+    let margins = RectangleMargins {
+        left_hwpunit: parse_required_u32(event, label, "left")?,
+        right_hwpunit: parse_required_u32(event, label, "right")?,
+        top_hwpunit: parse_required_u32(event, label, "top")?,
+        bottom_hwpunit: parse_required_u32(event, label, "bottom")?,
+    };
+    for (name, value) in [
+        ("left", margins.left_hwpunit),
+        ("right", margins.right_hwpunit),
+        ("top", margins.top_hwpunit),
+        ("bottom", margins.bottom_hwpunit),
+    ] {
+        ensure_hwpunit_fits_docx_unsigned(value, max_emu, &format!("{label} {name}"), docx_domain)?;
+    }
+    Ok(margins)
+}
+
+fn ensure_hwpunit_fits_docx_unsigned(
+    value: u32,
+    max_emu: u64,
+    label: &str,
+    docx_domain: &str,
+) -> Result<()> {
+    let emu = u64::from(value) * EMU_PER_HWPUNIT;
+    if emu > max_emu {
+        return Err(PluginError::unsupported_feature(format!(
+            "{label}={value} HWPUNIT exceeds the DOCX {docx_domain} range"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_hwpunit_fits_docx_position(value: i64, shape_name: &str) -> Result<()> {
+    let emu = value.checked_mul(EMU_PER_HWPUNIT as i64).ok_or_else(|| {
+        PluginError::unsupported_feature(format!(
+            "floating {shape_name} coordinates exceed the exact DOCX EMU range"
+        ))
+    })?;
+    if emu < i64::from(i32::MIN) || emu > i64::from(i32::MAX) {
+        return Err(PluginError::unsupported_feature(format!(
+            "floating {shape_name} coordinates exceed the DOCX wp:posOffset range"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_rectangle_text(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'_>,
+    styles: &SectionStyles<'_>,
+    depth: usize,
+) -> Result<RectangleText> {
+    validate_shape_attributes(start, "rect/drawText", &["lastWidth", "name", "editable"])?;
+    if parse_optional_shape_bool(start, "rect/drawText", "editable", false)? {
+        return Err(PluginError::unsupported_feature(
+            "editable HWPX drawText metadata has no verified DOCX equivalent",
+        ));
+    }
+    if let Some(last_width) = attr(start, "lastWidth") {
+        let parsed = last_width.parse::<i64>().map_err(|_| {
+            PluginError::corrupt(format!(
+                "rect/drawText has invalid lastWidth {last_width:?}"
+            ))
+        })?;
+        if parsed < 0 {
+            return Err(PluginError::corrupt(
+                "rect/drawText lastWidth cannot be negative",
+            ));
+        }
+    }
+
+    let name = attr(start, "name").filter(|value| !value.trim().is_empty());
+    let mut sub_list = None;
+    let mut margins = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(
+                    "unexpected end of XML inside rect/drawText",
+                ));
+            }
+            Event::Start(event) => {
+                let child = local_name(event.name().as_ref());
+                let owned = event.into_owned();
+                match child.as_str() {
+                    "subList" => {
+                        if sub_list.is_some() {
+                            return Err(PluginError::corrupt(
+                                "rect/drawText contains more than one subList",
+                            ));
+                        }
+                        sub_list =
+                            Some(parse_rectangle_text_sublist(reader, &owned, styles, depth)?);
+                    }
+                    "textMargin" => {
+                        if margins.is_some() {
+                            return Err(PluginError::corrupt(
+                                "rect/drawText contains more than one textMargin",
+                            ));
+                        }
+                        margins = Some(parse_rectangle_margins(
+                            &owned,
+                            "rect/drawText/textMargin",
+                            DOCX_MAX_COORDINATE_EMU,
+                            "a:bodyPr text inset",
+                        )?);
+                        skip_element(reader, "textMargin")?;
+                    }
+                    other => {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "rect/drawText contains unsupported child {other}"
+                        )));
+                    }
+                }
+            }
+            Event::Text(value) if !value.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt("rect/drawText contains direct text"));
+            }
+            Event::CData(value) if !String::from_utf8_lossy(value.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt("rect/drawText contains direct CDATA"));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "drawText" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let (direction, anchor, blocks) = sub_list
+        .ok_or_else(|| PluginError::corrupt("rect/drawText is missing required subList"))?;
+    if blocks_contain_rectangle(&blocks) {
+        return Err(PluginError::unsupported_feature(
+            "nested rect inside drawText would create an invalid nested DOCX textbox",
+        ));
+    }
+    Ok(RectangleText {
+        name,
+        direction,
+        anchor,
+        margins: margins
+            .ok_or_else(|| PluginError::corrupt("rect/drawText is missing textMargin"))?,
+        blocks,
+    })
+}
+
+fn parse_rectangle_text_sublist(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'_>,
+    styles: &SectionStyles<'_>,
+    depth: usize,
+) -> Result<(TextBoxDirection, TextBoxAnchor, Vec<Block>)> {
+    validate_shape_attributes(
+        start,
+        "rect/drawText/subList",
+        &[
+            "id",
+            "textDirection",
+            "lineWrap",
+            "vertAlign",
+            "linkListIDRef",
+            "linkListNextIDRef",
+            "textWidth",
+            "textHeight",
+            "hasTextRef",
+            "hasNumRef",
+        ],
+    )?;
+    let direction = match required_shape_attr(start, "rect/drawText/subList", "textDirection")?
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "HORIZONTAL" => TextBoxDirection::Horizontal,
+        "VERTICALALL" => TextBoxDirection::VerticalAll,
+        "VERTICAL" => {
+            return Err(PluginError::unsupported_feature(
+                "drawText textDirection=VERTICAL has no native-oracle mapping yet",
+            ));
+        }
+        other => {
+            return Err(PluginError::corrupt(format!(
+                "rect/drawText/subList has invalid textDirection {other}"
+            )));
+        }
+    };
+    let line_wrap = required_shape_attr(start, "rect/drawText/subList", "lineWrap")?;
+    if !line_wrap.eq_ignore_ascii_case("break") {
+        return Err(PluginError::unsupported_feature(format!(
+            "drawText lineWrap={line_wrap} is outside the verified BREAK profile"
+        )));
+    }
+    let anchor = match required_shape_attr(start, "rect/drawText/subList", "vertAlign")?
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "TOP" => TextBoxAnchor::Top,
+        "CENTER" => TextBoxAnchor::Center,
+        "BOTTOM" => TextBoxAnchor::Bottom,
+        other => {
+            return Err(PluginError::corrupt(format!(
+                "rect/drawText/subList has invalid vertAlign {other}"
+            )));
+        }
+    };
+    for name in [
+        "linkListIDRef",
+        "linkListNextIDRef",
+        "hasTextRef",
+        "hasNumRef",
+    ] {
+        if parse_optional_u32(start, "rect/drawText/subList", name, 0)? != 0 {
+            return Err(PluginError::unsupported_feature(format!(
+                "rect/drawText/subList {name} is active and has no verified DOCX mapping"
+            )));
+        }
+    }
+    for name in ["textWidth", "textHeight"] {
+        let _ = parse_optional_u32(start, "rect/drawText/subList", name, 0)?;
+    }
+
+    let mut blocks = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(
+                    "unexpected end of XML inside rect/drawText/subList",
+                ));
+            }
+            Event::Start(event) => {
+                let child = local_name(event.name().as_ref());
+                if child != "p" {
+                    return Err(PluginError::corrupt(format!(
+                        "rect/drawText/subList contains unexpected direct child {child}"
+                    )));
+                }
+                let owned = event.into_owned();
+                blocks.extend(parse_paragraph(reader, &owned, styles, depth, None)?);
+            }
+            Event::Text(value) if !value.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(
+                    "rect/drawText/subList contains direct text",
+                ));
+            }
+            Event::CData(value) if !String::from_utf8_lossy(value.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt(
+                    "rect/drawText/subList contains direct CDATA",
+                ));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "subList" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok((direction, anchor, blocks))
+}
+
+fn blocks_contain_rectangle(blocks: &[Block]) -> bool {
+    blocks.iter().any(|block| match block {
+        Block::Paragraph(paragraph) => paragraph.inlines.iter().any(|inline| match inline {
+            Inline::Rectangle(_) => true,
+            Inline::Note(note) => blocks_contain_rectangle(&note.blocks),
+            _ => false,
+        }),
+        Block::Table(table) => table
+            .cells
+            .iter()
+            .any(|cell| blocks_contain_rectangle(&cell.blocks)),
+    })
+}
+
+fn validate_shape_attributes(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    allowed: &[&str],
+) -> Result<()> {
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| {
+            PluginError::corrupt(format!("{label} has an invalid attribute: {error}"))
+        })?;
+        let raw_name = String::from_utf8_lossy(attribute.key.as_ref());
+        if raw_name == "xmlns" || raw_name.starts_with("xmlns:") {
+            continue;
+        }
+        let name = local_name(attribute.key.as_ref());
+        if !allowed.iter().any(|candidate| *candidate == name) {
+            return Err(PluginError::unsupported_feature(format!(
+                "{label} contains unsupported active attribute {name}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn required_shape_attr(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+) -> Result<String> {
+    attr(event, name)
+        .ok_or_else(|| PluginError::corrupt(format!("{label} is missing required {name}")))
+}
+
+fn parse_required_u32(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+) -> Result<u32> {
+    let raw = required_shape_attr(event, label, name)?;
+    raw.trim().parse::<u32>().map_err(|_| {
+        PluginError::corrupt(format!("{label} has invalid unsigned {name} value {raw:?}"))
+    })
+}
+
+fn parse_optional_u32(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+    default: u32,
+) -> Result<u32> {
+    let Some(raw) = attr(event, name) else {
+        return Ok(default);
+    };
+    raw.trim().parse::<u32>().map_err(|_| {
+        PluginError::corrupt(format!("{label} has invalid unsigned {name} value {raw:?}"))
+    })
+}
+
+fn parse_required_i64(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+) -> Result<i64> {
+    let raw = required_shape_attr(event, label, name)?;
+    raw.trim().parse::<i64>().map_err(|_| {
+        PluginError::corrupt(format!("{label} has invalid integer {name} value {raw:?}"))
+    })
+}
+
+fn parse_optional_i64(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+    default: i64,
+) -> Result<i64> {
+    let Some(raw) = attr(event, name) else {
+        return Ok(default);
+    };
+    raw.trim().parse::<i64>().map_err(|_| {
+        PluginError::corrupt(format!("{label} has invalid integer {name} value {raw:?}"))
+    })
+}
+
+fn parse_required_shape_bool(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+) -> Result<bool> {
+    let raw = required_shape_attr(event, label, name)?;
+    parse_shape_bool_value(&raw, label, name)
+}
+
+fn parse_optional_shape_bool(
+    event: &quick_xml::events::BytesStart<'_>,
+    label: &str,
+    name: &str,
+    default: bool,
+) -> Result<bool> {
+    let Some(raw) = attr(event, name) else {
+        return Ok(default);
+    };
+    parse_shape_bool_value(&raw, label, name)
+}
+
+fn parse_shape_bool_value(raw: &str, label: &str, name: &str) -> Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => Err(PluginError::corrupt(format!(
+            "{label} has invalid boolean {name} value {raw:?}"
+        ))),
+    }
 }
 
 /// `hp:autoNum` 가운데 동적 페이지 계수기만 모델로 올린다.
@@ -1495,10 +2622,14 @@ fn parse_note_wchar_attr(
 
 fn blocks_contain_note(blocks: &[Block]) -> bool {
     blocks.iter().any(|block| match block {
-        Block::Paragraph(paragraph) => paragraph
-            .inlines
-            .iter()
-            .any(|inline| matches!(inline, Inline::Note(_))),
+        Block::Paragraph(paragraph) => paragraph.inlines.iter().any(|inline| match inline {
+            Inline::Note(_) => true,
+            Inline::Rectangle(rectangle) => rectangle
+                .text
+                .as_ref()
+                .is_some_and(|text| blocks_contain_note(&text.blocks)),
+            _ => false,
+        }),
         Block::Table(table) => table
             .cells
             .iter()
@@ -1510,6 +2641,10 @@ fn blocks_contain_note_kind(blocks: &[Block], kind: NoteKind) -> bool {
     blocks.iter().any(|block| match block {
         Block::Paragraph(paragraph) => paragraph.inlines.iter().any(|inline| match inline {
             Inline::Note(note) => note.kind == kind,
+            Inline::Rectangle(rectangle) => rectangle
+                .text
+                .as_ref()
+                .is_some_and(|text| blocks_contain_note_kind(&text.blocks, kind)),
             _ => false,
         }),
         Block::Table(table) => table

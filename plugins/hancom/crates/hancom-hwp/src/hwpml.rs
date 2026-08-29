@@ -1451,7 +1451,8 @@ fn paragraph_has_content(paragraph: &Paragraph) -> bool {
         | Inline::TextField(_)
         | Inline::PageNumber(_)
         | Inline::Note(_)
-        | Inline::Equation(_) => true,
+        | Inline::Equation(_)
+        | Inline::Rectangle(_) => true,
     })
 }
 

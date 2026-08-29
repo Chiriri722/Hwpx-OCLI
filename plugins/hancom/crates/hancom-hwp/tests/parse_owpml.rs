@@ -16,6 +16,47 @@ fn parse(b: &HwpxBuilder) -> officecli_hwpx::owpml::model::Document {
     read_document_from(Cursor::new(b.build())).expect("document parses")
 }
 
+fn supported_rectangle_xml(
+    treat_as_char: bool,
+    text_wrap: &str,
+    text_flow: &str,
+    draw_text: &str,
+) -> String {
+    format!(
+        r##"<hp:rect id="1" zOrder="5" numberingType="PICTURE" textWrap="{text_wrap}" textFlow="{text_flow}" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="2" ratio="0">
+          <hp:lineShape color="#000000" width="33" style="SOLID" endCap="FLAT" headStyle="NORMAL" tailStyle="NORMAL" headfill="1" tailfill="1" headSz="MEDIUM_MEDIUM" tailSz="MEDIUM_MEDIUM" outlineStyle="NORMAL" alpha="0"/>
+          <hc:fillBrush><hc:winBrush faceColor="#FFFFFF" hatchColor="#000000" alpha="0"/></hc:fillBrush>
+          <hp:shadow type="NONE" color="#B2B2B2" offsetX="0" offsetY="0" alpha="0"/>
+          {draw_text}
+          <hp:sz width="1000" widthRelTo="ABSOLUTE" height="2000" heightRelTo="ABSOLUTE" protect="0"/>
+          <hp:pos treatAsChar="{}" affectLSpacing="0" flowWithText="0" allowOverlap="1" holdAnchorAndSO="0" vertRelTo="{}" horzRelTo="{}" vertAlign="TOP" horzAlign="LEFT" vertOffset="10" horzOffset="20"/>
+          <hp:outMargin left="1" right="2" top="3" bottom="4"/>
+          <hp:shapeComment>사각형입니다.</hp:shapeComment>
+        </hp:rect>"##,
+        if treat_as_char { "1" } else { "0" },
+        if treat_as_char { "PARA" } else { "PAPER" },
+        if treat_as_char { "PARA" } else { "PAPER" },
+    )
+}
+
+fn supported_ellipse_xml() -> &'static str {
+    r##"<hp:ellipse id="1458356073" zOrder="9" numberingType="PICTURE" textWrap="IN_FRONT_OF_TEXT" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="651082045" intervalDirty="0" hasArcPr="0" arcType="NORMAL">
+      <hp:offset x="4294964282" y="0"/>
+      <hp:orgSz width="9720" height="8700"/>
+      <hp:curSz width="6710" height="6333"/>
+      <hp:flip horizontal="0" vertical="0"/>
+      <hp:rotationInfo angle="0" centerX="3355" centerY="3166" rotateimage="0"/>
+      <hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="-3014" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="0.690329" e2="0" e3="3014" e4="0" e5="0.727931" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>
+      <hp:lineShape color="#FF0000" width="0" style="SOLID" endCap="FLAT" headStyle="NORMAL" tailStyle="NORMAL" headfill="1" tailfill="1" headSz="SMALL_SMALL" tailSz="SMALL_SMALL" outlineStyle="NORMAL" alpha="0"/>
+      <hp:shadow type="NONE" color="#000000" offsetX="0" offsetY="0" alpha="0"/>
+      <hc:center x="4860" y="4350"/><hc:ax1 x="4860" y="0"/><hc:ax2 x="9720" y="4350"/>
+      <hc:start1 x="0" y="0"/><hc:end1 x="0" y="0"/><hc:start2 x="0" y="0"/><hc:end2 x="0" y="0"/>
+      <hp:sz width="6710" widthRelTo="ABSOLUTE" height="6333" heightRelTo="ABSOLUTE" protect="0"/>
+      <hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER" horzRelTo="PAPER" vertAlign="TOP" horzAlign="LEFT" vertOffset="71319" horzOffset="45854"/>
+      <hp:outMargin left="0" right="0" top="0" bottom="0"/>
+    </hp:ellipse>"##
+}
+
 fn document_with_named_styles(styles: &str, active_style: &str) -> HwpxBuilder {
     let mut builder = HwpxBuilder::new();
     let char_pr = builder.char_pr(CharPr::plain());
@@ -35,6 +76,454 @@ fn reads_paragraph_text_in_order() {
     let doc = parse(&simple_doc(&["첫 번째 문단", "두 번째 문단", "세 번째"]));
     let texts: Vec<String> = doc.paragraphs().map(|p| p.plain_text()).collect();
     assert_eq!(texts, vec!["첫 번째 문단", "두 번째 문단", "세 번째"]);
+}
+
+#[test]
+fn emits_supported_inline_rectangle_without_leaking_or_reordering_text() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let rectangle = supported_rectangle_xml(true, "SQUARE", "LEFT_ONLY", "");
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>앞</hp:t>{rectangle}<hp:t>뒤</hp:t></hp:run></hp:p>"#
+    ));
+
+    let document = parse(&builder);
+    assert_eq!(
+        document
+            .paragraphs()
+            .next()
+            .expect("paragraph")
+            .plain_text(),
+        "앞뒤",
+        "shape internals must not leak into paragraph text"
+    );
+    let items = emit_document(&document);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.r#type.unwrap_or(item.command))
+            .collect::<Vec<_>>(),
+        vec!["paragraph", "run", "shape", "run"]
+    );
+    let shape = &items[2];
+    assert_eq!(shape.parent.as_deref(), Some("/body/p[last()]"));
+    assert_eq!(shape.props["anchor"], "false");
+    assert_eq!(shape.props["width"], "127000");
+    assert_eq!(shape.props["height"], "254000");
+    assert_eq!(shape.props["wrapDist"], "381,508,127,254");
+    assert_eq!(shape.props["fill"], "FFFFFF");
+    assert_eq!(shape.props["line.color"], "000000");
+    assert_eq!(shape.props["line.width"], "4191");
+    assert_eq!(shape.props["description"], "사각형입니다.");
+}
+
+#[test]
+fn emits_supported_floating_vertical_textbox_with_structural_inner_paragraphs() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let draw_text = format!(
+        r#"<hp:drawText lastWidth="1000" name="세로 상자" editable="0"><hp:subList id="" textDirection="VERTICALALL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0"><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>안쪽 첫 문단</hp:t></hp:run></hp:p><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>안쪽 둘째 문단</hp:t></hp:run></hp:p></hp:subList><hp:textMargin left="5" right="6" top="7" bottom="8"/></hp:drawText>"#
+    );
+    let rectangle = supported_rectangle_xml(false, "TOP_AND_BOTTOM", "BOTH_SIDES", &draw_text);
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>바깥 앞</hp:t>{rectangle}<hp:t>바깥 뒤</hp:t></hp:run></hp:p>"#
+    ));
+
+    let document = parse(&builder);
+    assert_eq!(
+        document
+            .paragraphs()
+            .next()
+            .expect("paragraph")
+            .plain_text(),
+        "바깥 앞바깥 뒤",
+        "textbox body must not leak into its anchor paragraph"
+    );
+    let items = emit_document(&document);
+    let textbox_index = items
+        .iter()
+        .position(|item| item.r#type == Some("textbox"))
+        .expect("typed textbox item");
+    let textbox = &items[textbox_index];
+    assert_eq!(textbox.parent.as_deref(), Some("/body/p[last()]"));
+    assert_eq!(textbox.props["anchor"], "true");
+    assert_eq!(textbox.props["anchor.x"], "2540");
+    assert_eq!(textbox.props["anchor.y"], "1270");
+    assert_eq!(textbox.props["hRelative"], "page");
+    assert_eq!(textbox.props["vRelative"], "page");
+    assert_eq!(textbox.props["wrap"], "topAndBottom");
+    assert_eq!(textbox.props["wrapDist"], "381,508,127,254");
+    assert_eq!(textbox.props["relativeHeight"], "5");
+    assert_eq!(textbox.props["textDirection"], "eaVert");
+    assert_eq!(textbox.props["textAnchor"], "ctr");
+    assert_eq!(textbox.props["inset.left"], "635");
+    assert_eq!(textbox.props["inset.right"], "762");
+    assert_eq!(textbox.props["inset.top"], "889");
+    assert_eq!(textbox.props["inset.bottom"], "1016");
+
+    assert!(items.iter().any(|item| {
+        item.command == "set"
+            && item.path.as_deref() == Some("/body/textbox[1]/p[1]")
+            && item.props["text"] == "안쪽 첫 문단"
+    }));
+    assert!(items.iter().any(|item| {
+        item.r#type == Some("paragraph")
+            && item.parent.as_deref() == Some("/body/textbox[1]")
+            && item.props["text"] == "안쪽 둘째 문단"
+    }));
+    let outer_runs = items
+        .iter()
+        .filter(|item| {
+            item.r#type == Some("run") && item.parent.as_deref() == Some("/body/p[last()]")
+        })
+        .map(|item| item.props["text"].as_str().expect("run text"))
+        .collect::<Vec<_>>();
+    assert_eq!(outer_runs, vec!["바깥 앞", "바깥 뒤"]);
+}
+
+#[test]
+fn rejects_floating_rectangle_coordinates_that_overflow_docx_emu() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let rectangle = supported_rectangle_xml(false, "SQUARE", "BOTH_SIDES", "")
+        .replace("horzOffset=\"20\"", &format!("horzOffset=\"{}\"", i64::MAX));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{rectangle}</hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("coordinates outside the exact EMU range must fail closed");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("EMU range"), "{error:?}");
+}
+
+#[test]
+fn rejects_shape_values_outside_their_docx_numeric_domains() {
+    let draw_text = r#"<hp:drawText lastWidth="1000" name="범위" editable="0"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0"></hp:subList><hp:textMargin left="16909321" right="0" top="0" bottom="0"/></hp:drawText>"#;
+    let cases = [
+        (
+            "extent",
+            supported_rectangle_xml(true, "SQUARE", "BOTH_SIDES", "")
+                .replace("width=\"1000\"", "width=\"16909321\""),
+        ),
+        (
+            "position",
+            supported_rectangle_xml(false, "SQUARE", "BOTH_SIDES", "")
+                .replace("horzOffset=\"20\"", "horzOffset=\"16909321\""),
+        ),
+        (
+            "wrap distance",
+            supported_rectangle_xml(true, "SQUARE", "BOTH_SIDES", "")
+                .replace("left=\"1\"", "left=\"33818641\""),
+        ),
+        (
+            "line width",
+            supported_rectangle_xml(true, "SQUARE", "BOTH_SIDES", "").replace(
+                "width=\"33\" style=\"SOLID\"",
+                "width=\"158401\" style=\"SOLID\"",
+            ),
+        ),
+        (
+            "text inset",
+            supported_rectangle_xml(true, "SQUARE", "BOTH_SIDES", draw_text),
+        ),
+    ];
+
+    for (label, rectangle) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{rectangle}</hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("out-of-domain geometry must fail before JSONL emission");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "{label}: {error:?}"
+        );
+        assert!(error.message.contains("DOCX"), "{label}: {error:?}");
+    }
+}
+
+#[test]
+fn emits_rounded_inline_rectangle_and_ignores_inactive_anchor_flags() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let draw_text = format!(
+        r#"<hp:drawText lastWidth="1000" name="둥근 상자" editable="0"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0"><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>내용</hp:t></hp:run></hp:p></hp:subList><hp:textMargin left="5" right="6" top="7" bottom="8"/></hp:drawText>"#
+    );
+    let rectangle = supported_rectangle_xml(true, "TOP_AND_BOTTOM", "BOTH_SIDES", &draw_text)
+        .replace("ratio=\"0\"", "ratio=\"20\"")
+        .replace("flowWithText=\"0\"", "flowWithText=\"1\"")
+        .replace("allowOverlap=\"1\"", "allowOverlap=\"0\"")
+        .replace(
+            "color=\"#000000\" width=\"33\" style=\"SOLID\"",
+            "color=\"none\" width=\"0\" style=\"NONE\"",
+        );
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{rectangle}</hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let textbox = items
+        .iter()
+        .find(|item| item.r#type == Some("textbox"))
+        .expect("rounded textbox");
+    assert_eq!(textbox.props["anchor"], "false");
+    assert_eq!(textbox.props["geometry"], "roundRect");
+    assert_eq!(textbox.props["cornerRadius"], "20");
+    assert_eq!(textbox.props["line.style"], "none");
+}
+
+#[test]
+fn emits_verified_page_relative_ellipse_without_fill() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{}<hp:t>뒤</hp:t></hp:run></hp:p>"#,
+        supported_ellipse_xml()
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let shape = items
+        .iter()
+        .find(|item| item.r#type == Some("shape"))
+        .expect("typed ellipse shape");
+    assert_eq!(shape.props["geometry"], "ellipse");
+    assert_eq!(shape.props["fill"], "none");
+    assert_eq!(shape.props["width"], "852170");
+    assert_eq!(shape.props["height"], "804291");
+    assert_eq!(shape.props["anchor.x"], "5823458");
+    assert_eq!(shape.props["anchor.y"], "9057513");
+    assert_eq!(shape.props["allowOverlap"], "false");
+    assert_eq!(shape.props["line.color"], "FF0000");
+}
+
+#[test]
+fn rejects_unverified_ellipse_geometry_profiles() {
+    let variants = [
+        (
+            "dirty geometry cache",
+            supported_ellipse_xml().replace("intervalDirty=\"0\"", "intervalDirty=\"1\""),
+        ),
+        (
+            "elliptic arc",
+            supported_ellipse_xml().replace("hasArcPr=\"0\"", "hasArcPr=\"1\""),
+        ),
+        (
+            "protected size",
+            supported_ellipse_xml().replace("protect=\"0\"", "protect=\"1\""),
+        ),
+        (
+            "dashed outline",
+            supported_ellipse_xml().replace("style=\"SOLID\"", "style=\"DASH\""),
+        ),
+        (
+            "rotation",
+            supported_ellipse_xml().replace("angle=\"0\"", "angle=\"1\""),
+        ),
+    ];
+
+    for (label, ellipse) in variants {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{ellipse}</hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build())).expect_err(label);
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "{label}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn emits_page_center_alignment_without_consuming_inactive_horizontal_offset() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let rectangle = supported_rectangle_xml(false, "IN_FRONT_OF_TEXT", "BOTH_SIDES", "")
+        .replace("horzAlign=\"LEFT\"", "horzAlign=\"CENTER\"")
+        .replace("horzOffset=\"20\"", "horzOffset=\"4294967276\"");
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{rectangle}</hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let shape = items
+        .iter()
+        .find(|item| item.r#type == Some("shape"))
+        .expect("centered shape");
+    assert_eq!(shape.props["hAlign"], "center");
+    assert!(!shape.props.contains_key("anchor.x"));
+    assert_eq!(shape.props["anchor.y"], "1270");
+}
+
+#[test]
+fn textbox_content_keeps_named_style_numbering_image_and_footnote() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let direct_para = builder.para_pr(ParaPr::default());
+    let style_para = builder.para_pr_with_heading(ParaPr::default(), "NUMBER", "5", 1);
+    builder.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="5" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="0">^1.^2.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    builder.ref_list_xml(format!(
+        concat!(
+            r#"<hh:styles itemCnt="2">"#,
+            r#"<hh:style id="0" type="PARA" name="바탕글" paraPrIDRef="{direct_para}" charPrIDRef="{char_pr}" nextStyleIDRef="0" lockForm="0"/>"#,
+            r#"<hh:style id="7" type="PARA" name="상자 번호" paraPrIDRef="{style_para}" charPrIDRef="{char_pr}" nextStyleIDRef="7" lockForm="0"/>"#,
+            r#"</hh:styles>"#,
+        ),
+        direct_para = direct_para,
+        style_para = style_para,
+        char_pr = char_pr,
+    ));
+    let draw_text = format!(
+        concat!(
+            r#"<hp:drawText lastWidth="1000" name="복합 상자" editable="0"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">"#,
+            r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="7"><hp:run charPrIDRef="{char_pr}"><hp:t>스타일 번호</hp:t>"#,
+            r#"<hp:pic reverse="0" id="2" zOrder="1" textWrap="SQUARE"><hp:sz width="7200" height="3600"/><hp:img binaryItemIDRef="image1" bright="0" contrast="0" effect="REAL_PIC" alt="상자 그림"/><hp:imgRect><hc:pt0 x="0" y="0"/></hp:imgRect></hp:pic>"#,
+            r#"</hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:t>각주 앞</hp:t><hp:ctrl><hp:footNote number="1" instId="41"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:autoNum num="1" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>상자 각주</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:footNote></hp:ctrl><hp:t>각주 뒤</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList><hp:textMargin left="5" right="6" top="7" bottom="8"/></hp:drawText>"#,
+        ),
+        direct_para = direct_para,
+        char_pr = char_pr,
+    );
+    let rectangle = supported_rectangle_xml(false, "SQUARE", "BOTH_SIDES", &draw_text);
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}">{rectangle}</hp:run></hp:p>"#
+    ));
+    builder.bindata("image1", "image1.png", tiny_png(), "image/png");
+
+    let items = emit_document(&parse(&builder));
+    let style_index = items
+        .iter()
+        .position(|item| {
+            item.r#type == Some("style")
+                && item.props.get("id").and_then(|value| value.as_str()) == Some("7")
+        })
+        .expect("style used only inside a textbox must be materialized");
+    let textbox_index = items
+        .iter()
+        .position(|item| item.r#type == Some("textbox"))
+        .expect("textbox command");
+    assert!(
+        items[..style_index]
+            .iter()
+            .any(|item| item.r#type == Some("num")),
+        "style-owned numbering must precede the textbox style"
+    );
+    assert!(style_index < textbox_index);
+    assert_eq!(items[style_index].props["id"], "7");
+    assert_eq!(items[style_index].props["numId"], "1");
+    assert_eq!(items[style_index].props["ilvl"], "1");
+
+    let textbox_path = "/body/textbox[1]";
+    let first_paragraph = items
+        .iter()
+        .find(|item| item.path.as_deref() == Some("/body/textbox[1]/p[1]"))
+        .expect("textbox seed paragraph");
+    assert_eq!(first_paragraph.props["style"], "7");
+    let first_run = items
+        .iter()
+        .find(|item| {
+            item.r#type == Some("run")
+                && item.props.get("text").and_then(|value| value.as_str()) == Some("스타일 번호")
+        })
+        .expect("styled textbox run");
+    assert_eq!(first_run.parent.as_deref(), Some("/body/textbox[1]/p[1]"));
+    let picture = items
+        .iter()
+        .find(|item| item.r#type == Some("picture"))
+        .expect("textbox picture");
+    assert_eq!(picture.parent, first_run.parent);
+    assert!(
+        picture.props["src"]
+            .as_str()
+            .is_some_and(|src| src.starts_with("data:image/png;base64,")),
+        "textbox image must resolve BinData before emission"
+    );
+    let second_paragraph = items
+        .iter()
+        .find(|item| {
+            item.r#type == Some("paragraph") && item.parent.as_deref() == Some(textbox_path)
+        })
+        .expect("second textbox paragraph");
+    let footnote = items
+        .iter()
+        .find(|item| item.r#type == Some("footnote"))
+        .expect("footnote anchored inside the textbox");
+    assert_eq!(
+        footnote.parent.as_deref(),
+        Some("/body/textbox[1]/p[last()]")
+    );
+    assert_eq!(footnote.props["text"], "상자 각주");
+    assert_eq!(second_paragraph.parent.as_deref(), Some(textbox_path));
+}
+
+#[test]
+fn rejects_remaining_unimplemented_shape_families_instead_of_dropping_them() {
+    for tag in [
+        "line",
+        "arc",
+        "polygon",
+        "curve",
+        "connectLine",
+        "container",
+        "textart",
+        "ole",
+        "video",
+    ] {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>앞</hp:t><hp:{tag}><hp:t>유출 금지</hp:t></hp:{tag}><hp:t>뒤</hp:t></hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("active unimplemented shapes must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "tag={tag}, error={error:?}"
+        );
+        assert!(error.message.contains(tag), "tag={tag}, error={error:?}");
+    }
+}
+
+#[test]
+fn rejects_structurally_incomplete_rectangle_as_corrupt_input() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r##"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:rect zOrder="0" numberingType="PICTURE" textWrap="SQUARE" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" ratio="0"><hp:lineShape color="#000000" width="33" style="SOLID" headStyle="NORMAL" tailStyle="NORMAL" outlineStyle="NORMAL" alpha="0"/><hc:fillBrush><hc:winBrush faceColor="#FFFFFF" alpha="0"/></hc:fillBrush><hp:shadow type="NONE"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="0" allowOverlap="1" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:rect></hp:run></hp:p>"##
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("a rectangle without final size is corrupt");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("sz"), "{error:?}");
 }
 
 #[test]

@@ -2998,6 +2998,34 @@ public partial class WordHandler
         return long.TryParse(value.Trim(), out var emu) ? Math.Max(0, emu) : fallback;
     }
 
+    /// <summary>
+    /// Parse the four drawing-to-text distances encoded as T,B,L,R raw EMU.
+    /// Floating drawings retain the historical 0/0/114300/114300 defaults;
+    /// newly supported inline shapes default to zero on every side.
+    /// </summary>
+    private static (uint T, uint B, uint L, uint R) ParseDrawingWrapDistances(
+        Dictionary<string, string> properties, bool floating)
+    {
+        var fallback = floating
+            ? (T: 0U, B: 0U, L: 114300U, R: 114300U)
+            : (T: 0U, B: 0U, L: 0U, R: 0U);
+        if (!properties.TryGetValue("wrapDist", out var raw)
+            || string.IsNullOrWhiteSpace(raw))
+            return fallback;
+
+        var parts = raw.Split(',');
+        return parts.Length == 4
+            && uint.TryParse(parts[0].Trim(), out var top)
+            && uint.TryParse(parts[1].Trim(), out var bottom)
+            && uint.TryParse(parts[2].Trim(), out var left)
+            && uint.TryParse(parts[3].Trim(), out var right)
+            ? (top, bottom, left, right)
+            : fallback;
+    }
+
+    private static string DrawingDistanceAttributes((uint T, uint B, uint L, uint R) distances) =>
+        $"distT=\"{distances.T}\" distB=\"{distances.B}\" distL=\"{distances.L}\" distR=\"{distances.R}\"";
+
     private string AddTextbox(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
         // R47: `/chart[N]` resolves to the paragraph that hosts the chart,
@@ -3023,6 +3051,11 @@ public partial class WordHandler
             : ResolveDrawingHost(parent, parentPath);
         long cxEmu = ParseDrawingSize(properties.GetValueOrDefault("width"), defaultEmu: 2_286_000);  // ~6cm
         long cyEmu = ParseDrawingSize(properties.GetValueOrDefault("height"), defaultEmu: 914_400);   // ~2.4cm
+        // Textboxes have historically been floating. Only an explicit false
+        // opts into the inline form so existing scripts remain byte-compatible.
+        bool floating = !properties.TryGetValue("anchor", out var anchorRaw) || IsTruthy(anchorRaw);
+        var wrapDistances = ParseDrawingWrapDistances(properties, floating);
+        string distanceAttrs = DrawingDistanceAttributes(wrapDistances);
         string wrap = properties.GetValueOrDefault("wrap", "square").ToLowerInvariant();
         long hPos = ParseDrawingPos(properties, "anchor.x", "hposition", defaultEmu: 0);
         long vPos = ParseDrawingPos(properties, "anchor.y", "vposition", defaultEmu: 0);
@@ -3057,6 +3090,8 @@ public partial class WordHandler
         string? lineStyle = properties.GetValueOrDefault("line.style") ?? properties.GetValueOrDefault("linestyle");
         string? lineWidth = properties.GetValueOrDefault("line.width") ?? properties.GetValueOrDefault("linewidth");
         string? altText   = properties.GetValueOrDefault("alt") ?? properties.GetValueOrDefault("name") ?? "Text Box";
+        string descriptionAttr = BuildOptionalXmlAttribute(
+            "descr", properties.GetValueOrDefault("description") ?? properties.GetValueOrDefault("descr"));
         string? initialText = properties.GetValueOrDefault("text");
 
         var siblingShapes = host.Elements<Paragraph>()
@@ -3121,42 +3156,50 @@ public partial class WordHandler
             ? $"<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:r><w:t xml:space=\"preserve\">{System.Security.SecurityElement.Escape(initialText)}</w:t></w:r></w:p>"
             : "<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"/>";
 
-        string wrapInnerXml = WrapXmlFragment(wrap);
+        string? wrapSide = properties.GetValueOrDefault("wrap.side")
+            ?? properties.GetValueOrDefault("wrapSide");
+        string wrapInnerXml = WrapXmlFragment(wrap, wrapSide);
 
         // Z-order: behindDoc pushes the box behind body text; relativeHeight
         // (alias zorder) is the stacking order (higher = front). Defaults keep the
         // legacy in-front, auto-incrementing behaviour.
-        string behindDocVal = IsTruthy(properties.GetValueOrDefault("behindDoc", "")) ? "1" : "0";
+        bool behindDoc = properties.TryGetValue("behindDoc", out var behindDocRaw)
+            ? IsTruthy(behindDocRaw)
+            : wrap == "behind";
+        string behindDocVal = behindDoc ? "1" : "0";
+        string allowOverlapVal = !properties.TryGetValue("allowOverlap", out var allowOverlapRaw)
+            || IsTruthy(allowOverlapRaw) ? "1" : "0";
         string? relHeightRaw = properties.GetValueOrDefault("relativeHeight") ?? properties.GetValueOrDefault("zorder");
         string relHeightVal = !string.IsNullOrWhiteSpace(relHeightRaw)
-            && long.TryParse(relHeightRaw.Trim(), out var rh) && rh >= 0
+            && uint.TryParse(relHeightRaw.Trim(), out var rh)
             ? rh.ToString()
             : $"251{siblingShapes:D3}";
 
         // Drawing scaffolding. EffectExtent + DocProperties + a:graphic with
         // a:graphicData uri = wordprocessingShape; inner wps:wsp carries
         // spPr (preset rect geometry + fill + line) + txbx (body paragraphs) + bodyPr.
-        string drawingXml = $@"<w:drawing xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"" xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"" xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main"" xmlns:wps=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wp:anchor distT=""0"" distB=""0"" distL=""114300"" distR=""114300"" simplePos=""0"" relativeHeight=""{relHeightVal}"" behindDoc=""{behindDocVal}"" locked=""0"" layoutInCell=""1"" allowOverlap=""1""><wp:simplePos x=""0"" y=""0""/><wp:positionH relativeFrom=""{hRel}"">{posHInner}</wp:positionH><wp:positionV relativeFrom=""{vRel}"">{posVInner}</wp:positionV><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{wrapInnerXml}<wp:docPr id=""{docPropId}"" name=""{System.Security.SecurityElement.Escape(altText)}""/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wps:wsp><wps:cNvSpPr txBox=""1""/><wps:spPr><a:xfrm{rotAttr}><a:off x=""0"" y=""0""/><a:ext cx=""{cxEmu}"" cy=""{cyEmu}""/></a:xfrm><a:prstGeom prst=""{geom}""><a:avLst>{avLstXml}</a:avLst></a:prstGeom>{fillXml}{lnXml}{effectXml}</wps:spPr><wps:txbx><w:txbxContent>{txbxBodyXml}</w:txbxContent></wps:txbx><wps:bodyPr rot=""0""{vertAttr}{bodyWrapAttr} lIns=""{lIns}"" tIns=""{tIns}"" rIns=""{rIns}"" bIns=""{bIns}"" anchor=""{anchorVal}"" anchorCtr=""0"">{spAutoFitXml}</wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+        string graphicFrameXml = $@"<wp:docPr id=""{docPropId}"" name=""{System.Security.SecurityElement.Escape(altText)}""{descriptionAttr}/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wps:wsp><wps:cNvSpPr txBox=""1""/><wps:spPr><a:xfrm{rotAttr}><a:off x=""0"" y=""0""/><a:ext cx=""{cxEmu}"" cy=""{cyEmu}""/></a:xfrm><a:prstGeom prst=""{geom}""><a:avLst>{avLstXml}</a:avLst></a:prstGeom>{fillXml}{lnXml}{effectXml}</wps:spPr><wps:txbx><w:txbxContent>{txbxBodyXml}</w:txbxContent></wps:txbx><wps:bodyPr rot=""0""{vertAttr}{bodyWrapAttr} lIns=""{lIns}"" tIns=""{tIns}"" rIns=""{rIns}"" bIns=""{bIns}"" anchor=""{anchorVal}"" anchorCtr=""0"">{spAutoFitXml}</wps:bodyPr></wps:wsp></a:graphicData></a:graphic>";
+        string placementXml = floating
+            ? $@"<wp:anchor {distanceAttrs} simplePos=""0"" relativeHeight=""{relHeightVal}"" behindDoc=""{behindDocVal}"" locked=""0"" layoutInCell=""1"" allowOverlap=""{allowOverlapVal}""><wp:simplePos x=""0"" y=""0""/><wp:positionH relativeFrom=""{hRel}"">{posHInner}</wp:positionH><wp:positionV relativeFrom=""{vRel}"">{posVInner}</wp:positionV><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{wrapInnerXml}{graphicFrameXml}</wp:anchor>"
+            : $@"<wp:inline {distanceAttrs}><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{graphicFrameXml}</wp:inline>";
+        string drawingXml = $@"<w:drawing xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"" xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"" xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main"" xmlns:wps=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape"">{placementXml}</w:drawing>";
 
         var drawing = ParseDrawingFromXml(drawingXml);
         var run = new Run(drawing);
-        Paragraph anchorPara;
         if (attachToPara != null)
         {
             attachToPara.AppendChild(run);
-            anchorPara = attachToPara;
         }
         else
         {
-            anchorPara = new Paragraph(run);
+            var anchorPara = new Paragraph(run);
             AssignParaId(anchorPara);
             InsertAtIndexOrAppend(host, anchorPara, index);
         }
 
-        // Compute the 1-based textbox index across the host. Walk all
-        // paragraphs in the host and count those that carry at least one
-        // wp:anchor with wsp content — same selector as Get.
-        int txbxIdx = CountTextboxesInHost(host, anchorPara);
+        // Compute the 1-based textbox index across individual drawings. A
+        // paragraph can carry several inline/floating boxes in source order.
+        int txbxIdx = CountTextboxesInHost(host, drawing);
         return $"{hostRoot}/textbox[{txbxIdx}]";
     }
 
@@ -3192,12 +3235,20 @@ public partial class WordHandler
 
     private string AddShape(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
-        var (host, hostRoot) = ResolveDrawingHost(parent, parentPath);
+        // Match textbox semantics: a paragraph parent attaches the shape to
+        // that exact paragraph, preserving mixed text/object inline order.
+        Paragraph? attachToPara = parent as Paragraph;
+        var (host, hostRoot) = attachToPara != null
+            ? ResolveDrawingHostFromParagraph(attachToPara, parentPath)
+            : ResolveDrawingHost(parent, parentPath);
         string preset = properties.GetValueOrDefault("geometry")
                      ?? properties.GetValueOrDefault("preset")
                      ?? "rect";
         long cxEmu = ParseDrawingSize(properties.GetValueOrDefault("width"), defaultEmu: 914_400);
         long cyEmu = ParseDrawingSize(properties.GetValueOrDefault("height"), defaultEmu: 914_400);
+        bool floating = !properties.TryGetValue("anchor", out var anchorRaw) || IsTruthy(anchorRaw);
+        var wrapDistances = ParseDrawingWrapDistances(properties, floating);
+        string distanceAttrs = DrawingDistanceAttributes(wrapDistances);
         string wrap = properties.GetValueOrDefault("wrap", "none").ToLowerInvariant();
         long hPos = ParseDrawingPos(properties, "anchor.x", "hposition", defaultEmu: 0);
         long vPos = ParseDrawingPos(properties, "anchor.y", "vposition", defaultEmu: 0);
@@ -3238,22 +3289,51 @@ public partial class WordHandler
         lineColor ??= properties.GetValueOrDefault("line.color") ?? properties.GetValueOrDefault("linecolor");
         string lnXml = BuildLineXml(lineStyle, lineWidth, lineColor);
         string altText = properties.GetValueOrDefault("alt") ?? properties.GetValueOrDefault("name") ?? "Shape";
+        string descriptionAttr = BuildOptionalXmlAttribute(
+            "descr", properties.GetValueOrDefault("description") ?? properties.GetValueOrDefault("descr"));
 
         var siblingShapes = host.Elements<Paragraph>()
             .SelectMany(p => p.Descendants<Drawing>())
             .Count();
         uint docPropId = NextDocPropId();
-        string wrapInnerXml = WrapXmlFragment(wrap);
+        string? wrapSide = properties.GetValueOrDefault("wrap.side")
+            ?? properties.GetValueOrDefault("wrapSide");
+        string wrapInnerXml = WrapXmlFragment(wrap, wrapSide);
+        bool behindDoc = properties.TryGetValue("behindDoc", out var behindDocRaw)
+            ? IsTruthy(behindDocRaw)
+            : wrap == "behind";
+        string behindDocVal = behindDoc ? "1" : "0";
+        string allowOverlapVal = !properties.TryGetValue("allowOverlap", out var allowOverlapRaw)
+            || IsTruthy(allowOverlapRaw) ? "1" : "0";
+        string? relHeightRaw = properties.GetValueOrDefault("relativeHeight")
+            ?? properties.GetValueOrDefault("zorder");
+        string relHeightVal = !string.IsNullOrWhiteSpace(relHeightRaw)
+            && uint.TryParse(relHeightRaw.Trim(), out var rh)
+            ? rh.ToString()
+            : $"251{siblingShapes:D3}";
 
-        string drawingXml = $@"<w:drawing xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"" xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"" xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main"" xmlns:wps=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wp:anchor distT=""0"" distB=""0"" distL=""114300"" distR=""114300"" simplePos=""0"" relativeHeight=""251{siblingShapes:D3}"" behindDoc=""0"" locked=""0"" layoutInCell=""1"" allowOverlap=""1""><wp:simplePos x=""0"" y=""0""/><wp:positionH relativeFrom=""{hRel}"">{posHInner}</wp:positionH><wp:positionV relativeFrom=""{vRel}"">{posVInner}</wp:positionV><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{wrapInnerXml}<wp:docPr id=""{docPropId}"" name=""{System.Security.SecurityElement.Escape(altText)}""/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=""0"" y=""0""/><a:ext cx=""{cxEmu}"" cy=""{cyEmu}""/></a:xfrm><a:prstGeom prst=""{SanitizeGeometry(preset)}""><a:avLst/></a:prstGeom>{fillXml}{lnXml}</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+        string avLstXml = BuildAdjXml(
+            properties.GetValueOrDefault("cornerRadius") ?? properties.GetValueOrDefault("adj"));
+        string graphicFrameXml = $@"<wp:docPr id=""{docPropId}"" name=""{System.Security.SecurityElement.Escape(altText)}""{descriptionAttr}/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=""0"" y=""0""/><a:ext cx=""{cxEmu}"" cy=""{cyEmu}""/></a:xfrm><a:prstGeom prst=""{SanitizeGeometry(preset)}""><a:avLst>{avLstXml}</a:avLst></a:prstGeom>{fillXml}{lnXml}</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>";
+        string placementXml = floating
+            ? $@"<wp:anchor {distanceAttrs} simplePos=""0"" relativeHeight=""{relHeightVal}"" behindDoc=""{behindDocVal}"" locked=""0"" layoutInCell=""1"" allowOverlap=""{allowOverlapVal}""><wp:simplePos x=""0"" y=""0""/><wp:positionH relativeFrom=""{hRel}"">{posHInner}</wp:positionH><wp:positionV relativeFrom=""{vRel}"">{posVInner}</wp:positionV><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{wrapInnerXml}{graphicFrameXml}</wp:anchor>"
+            : $@"<wp:inline {distanceAttrs}><wp:extent cx=""{cxEmu}"" cy=""{cyEmu}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/>{graphicFrameXml}</wp:inline>";
+        string drawingXml = $@"<w:drawing xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"" xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"" xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main"" xmlns:wps=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape"">{placementXml}</w:drawing>";
 
         var drawing = ParseDrawingFromXml(drawingXml);
         var run = new Run(drawing);
-        var newPara = new Paragraph(run);
-        AssignParaId(newPara);
-        InsertAtIndexOrAppend(host, newPara, index);
+        if (attachToPara != null)
+        {
+            attachToPara.AppendChild(run);
+        }
+        else
+        {
+            var newPara = new Paragraph(run);
+            AssignParaId(newPara);
+            InsertAtIndexOrAppend(host, newPara, index);
+        }
 
-        int shapeIdx = CountShapesInHost(host, newPara);
+        int shapeIdx = CountShapesInHost(host, drawing);
         return $"{hostRoot}/shape[{shapeIdx}]";
     }
 
@@ -3297,16 +3377,26 @@ public partial class WordHandler
     }
 
     /// <summary>v5.7-cont: convert wrap token to its wp:wrap* fragment.</summary>
-    private static string WrapXmlFragment(string wrap) => wrap.ToLowerInvariant() switch
+    private static string WrapXmlFragment(string wrap, string? wrapSide = null)
     {
-        "square"      => "<wp:wrapSquare wrapText=\"bothSides\"/>",
-        "tight"       => "<wp:wrapTight wrapText=\"bothSides\"><wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"21600\" y=\"0\"/><wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon></wp:wrapTight>",
-        "topbottom" or "topandbottom" => "<wp:wrapTopAndBottom/>",
-        "behind"      => "<wp:wrapNone/>",
-        "infront"     => "<wp:wrapNone/>",
-        "none" or ""  => "<wp:wrapNone/>",
-        _             => "<wp:wrapSquare wrapText=\"bothSides\"/>",
-    };
+        string side = wrapSide?.Trim().ToLowerInvariant() switch
+        {
+            "left" => "left",
+            "right" => "right",
+            "largest" => "largest",
+            _ => "bothSides",
+        };
+        string polygon = "<wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"21600\" y=\"0\"/><wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon>";
+        return wrap.ToLowerInvariant() switch
+        {
+            "square" => $"<wp:wrapSquare wrapText=\"{side}\"/>",
+            "tight" => $"<wp:wrapTight wrapText=\"{side}\">{polygon}</wp:wrapTight>",
+            "through" => $"<wp:wrapThrough wrapText=\"{side}\">{polygon}</wp:wrapThrough>",
+            "topbottom" or "topandbottom" => "<wp:wrapTopAndBottom/>",
+            "behind" or "infront" or "front" or "none" or "" => "<wp:wrapNone/>",
+            _ => $"<wp:wrapSquare wrapText=\"{side}\"/>",
+        };
+    }
 
     /// <summary>Build the <c>a:ln</c> child for spPr. Returns the empty
     /// string when none of style/width/color was specified — Word then
@@ -3364,9 +3454,10 @@ public partial class WordHandler
         if (string.IsNullOrWhiteSpace(adj)) return "";
         var v = adj.Trim().TrimEnd('%');
         if (!double.TryParse(v, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var n)) return "";
-        long val = n <= 100 ? (long)Math.Round(n * 1000) : (long)Math.Round(n);
-        val = Math.Clamp(val, 0, 100000);
+                System.Globalization.CultureInfo.InvariantCulture, out var n)
+            || !double.IsFinite(n)) return "";
+        double scaled = n <= 100 ? n * 1000 : n;
+        long val = (long)Math.Round(Math.Clamp(scaled, 0d, 100000d));
         return $"<a:gd name=\"adj\" fmla=\"val {val}\"/>";
     }
 
@@ -3600,23 +3691,29 @@ public partial class WordHandler
         return d;
     }
 
-    private static int CountTextboxesInHost(OpenXmlElement host, Paragraph anchor)
+    private static int CountTextboxesInHost(OpenXmlElement host, Drawing target)
     {
         int count = 0;
-        foreach (var p in host.Elements<Paragraph>())
+        foreach (var drawing in host.Descendants<Drawing>())
         {
-            // A textbox is recognized by a wp:anchor containing a wps:wsp
-            // that has a txBox=1 cNvSpPr OR a wps:txbx child.
-            bool isTextbox = p.Descendants<Drawing>().Any(d =>
-                d.InnerXml.Contains("txBox=\"1\"")
-                || d.InnerXml.Contains("<wps:txbx"));
-            if (isTextbox) count++;
-            if (ReferenceEquals(p, anchor)) return count;
+            // Stay in lockstep with Navigation: each matching drawing gets an
+            // ordinal, even when several drawings share one paragraph.
+            var xml = drawing.InnerXml;
+            if (xml.Contains("txBox=\"1\"") || xml.Contains("<wps:txbx"))
+                count++;
+            if (ReferenceEquals(drawing, target)) return count;
         }
         return count;
     }
 
-    private static int CountShapesInHost(OpenXmlElement host, Paragraph anchor)
+    private static string BuildOptionalXmlAttribute(string name, string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var attribute = new System.Xml.Linq.XAttribute(name, value);
+        return " " + attribute;
+    }
+
+    private static int CountShapesInHost(OpenXmlElement host, Drawing target)
     {
         // Stay in lockstep with the Navigation "shape" resolver, which
         // excludes textbox-bearing Drawings (a textbox is a <wps:wsp>
@@ -3624,17 +3721,14 @@ public partial class WordHandler
         // textboxes as shapes and the Add-side index drifts ahead of the
         // Get-side index by one per textbox.
         int count = 0;
-        foreach (var p in host.Elements<Paragraph>())
+        foreach (var drawing in host.Descendants<Drawing>())
         {
-            bool isShape = p.Descendants<Drawing>().Any(d =>
-            {
-                var xml = d.InnerXml;
-                if (!xml.Contains("<wps:wsp")) return false;
-                if (xml.Contains("<wps:txbx") || xml.Contains("txBox=\"1\"")) return false;
-                return true;
-            });
+            var xml = drawing.InnerXml;
+            bool isShape = xml.Contains("<wps:wsp")
+                && !xml.Contains("<wps:txbx")
+                && !xml.Contains("txBox=\"1\"");
             if (isShape) count++;
-            if (ReferenceEquals(p, anchor)) return count;
+            if (ReferenceEquals(drawing, target)) return count;
         }
         return count;
     }

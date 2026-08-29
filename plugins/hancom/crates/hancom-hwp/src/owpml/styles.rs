@@ -640,8 +640,14 @@ fn collect_active_named_style_ids(section: &Section) -> HashSet<String> {
                         active.insert(id.clone());
                     }
                     for inline in &paragraph.inlines {
-                        if let Inline::Note(note) = inline {
-                            walk(&note.blocks, active);
+                        match inline {
+                            Inline::Note(note) => walk(&note.blocks, active),
+                            Inline::Rectangle(rectangle) => {
+                                if let Some(text) = &rectangle.text {
+                                    walk(&text.blocks, active);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }

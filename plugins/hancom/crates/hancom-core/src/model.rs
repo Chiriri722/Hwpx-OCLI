@@ -25,6 +25,13 @@ pub fn hwpunit_to_point(v: i64) -> f64 {
     v as f64 / HWPUNIT_PER_POINT
 }
 
+/// HWPUNIT → EMU. OOXML은 1 inch = 914400 EMU이고 HWPUNIT은
+/// 1 inch = 7200이므로 정확히 127배다.
+pub fn hwpunit_to_emu(v: i64) -> i64 {
+    v.checked_mul(127)
+        .expect("validated HWPUNIT value exceeds the DOCX EMU range")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Align {
     Left,
@@ -343,6 +350,150 @@ pub struct Equation {
     pub mode: EquationMode,
 }
 
+/// HWPX 도형의 본문 주위 감싸기 방식 가운데 DOCX가 동적으로 보존하는 교집합.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectangleWrap {
+    Square,
+    TopAndBottom,
+    BehindText,
+    InFrontOfText,
+}
+
+impl RectangleWrap {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::TopAndBottom => "topAndBottom",
+            Self::BehindText | Self::InFrontOfText => "none",
+        }
+    }
+
+    pub fn behind_doc(self) -> bool {
+        matches!(self, Self::BehindText)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectangleWrapSide {
+    BothSides,
+    Left,
+    Right,
+    Largest,
+}
+
+impl RectangleWrapSide {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::BothSides => "bothSides",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Largest => "largest",
+        }
+    }
+}
+
+/// `treatAsChar=1`은 문단 런 안의 wp:inline, 검증된 PAPER/PAPER 배치는
+/// page-relative wp:anchor로 내린다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectangleHorizontalPosition {
+    Offset(i64),
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectanglePlacement {
+    Inline,
+    Page {
+        horizontal: RectangleHorizontalPosition,
+        y_hwpunit: i64,
+        allow_overlap: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeGeometry {
+    Rectangle { corner_radius_percent: u32 },
+    Ellipse,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RectangleMargins {
+    pub left_hwpunit: u32,
+    pub right_hwpunit: u32,
+    pub top_hwpunit: u32,
+    pub bottom_hwpunit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RectangleLine {
+    pub visible: bool,
+    pub color: String,
+    pub width_hwpunit: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextBoxDirection {
+    Horizontal,
+    VerticalAll,
+}
+
+impl TextBoxDirection {
+    pub fn as_docx(self) -> Option<&'static str> {
+        match self {
+            Self::Horizontal => None,
+            Self::VerticalAll => Some("eaVert"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextBoxAnchor {
+    Top,
+    Center,
+    Bottom,
+}
+
+impl TextBoxAnchor {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Top => "t",
+            Self::Center => "ctr",
+            Self::Bottom => "b",
+        }
+    }
+}
+
+/// `hp:drawText` 본문. Vec<Block>이 재귀 모델의 크기를 끊으므로 표·각주·그림을
+/// 포함한 내부 문단을 평탄화하지 않고 그대로 보존할 수 있다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RectangleText {
+    pub name: Option<String>,
+    pub direction: TextBoxDirection,
+    pub anchor: TextBoxAnchor,
+    pub margins: RectangleMargins,
+    pub blocks: Vec<Block>,
+}
+
+/// 검증된 HWPX `hp:rect`/`hp:ellipse` 부분집합. drawText가 있으면
+/// OfficeCLI textbox, 없으면 shape로 방출한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rectangle {
+    pub width_hwpunit: u32,
+    pub height_hwpunit: u32,
+    pub geometry: ShapeGeometry,
+    pub placement: RectanglePlacement,
+    pub wrap: RectangleWrap,
+    pub wrap_side: RectangleWrapSide,
+    pub outer_margins: RectangleMargins,
+    pub z_order: u32,
+    /// `None` is an authored no-fill shape, not an unknown producer default.
+    pub fill: Option<String>,
+    pub line: RectangleLine,
+    /// HWPX `shapeComment`, preserved as the OOXML drawing description.
+    pub description: Option<String>,
+    pub text: Option<RectangleText>,
+}
+
 /// 문단 안의 각주/미주 참조가 가리키는 주석 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKind {
@@ -392,6 +543,7 @@ pub enum Inline {
     PageNumber(PageNumberField),
     Note(Note),
     Equation(Equation),
+    Rectangle(Rectangle),
     /// `hp:lineBreak` — 문단 내 줄바꿈.
     LineBreak,
     /// `hp:tab`.
@@ -418,7 +570,8 @@ impl Paragraph {
                 | Inline::TextField(_)
                 | Inline::PageNumber(_)
                 | Inline::Note(_)
-                | Inline::Equation(_) => {}
+                | Inline::Equation(_)
+                | Inline::Rectangle(_) => {}
             }
         }
         out
@@ -445,7 +598,8 @@ impl Paragraph {
                 | Inline::TextField(_)
                 | Inline::PageNumber(_)
                 | Inline::Note(_)
-                | Inline::Equation(_) => return None,
+                | Inline::Equation(_)
+                | Inline::Rectangle(_) => return None,
             }
         }
         found
@@ -468,6 +622,7 @@ impl Paragraph {
                     | Inline::PageNumber(_)
                     | Inline::Note(_)
                     | Inline::Equation(_)
+                    | Inline::Rectangle(_)
             )
         })
     }
@@ -929,6 +1084,11 @@ impl Document {
                                     n += r.text.chars().filter(|c| is_private_use(*c)).count();
                                 }
                                 Inline::Note(note) => n += walk(&note.blocks),
+                                Inline::Rectangle(rectangle) => {
+                                    if let Some(text) = &rectangle.text {
+                                        n += walk(&text.blocks);
+                                    }
+                                }
                                 _ => {}
                             }
                         }

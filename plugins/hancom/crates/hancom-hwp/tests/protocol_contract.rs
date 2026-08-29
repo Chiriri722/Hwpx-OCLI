@@ -672,6 +672,32 @@ fn unsupported_late_equation_exits_three_without_partial_stdout() {
 }
 
 #[test]
+fn unsupported_late_shape_exits_three_without_partial_stdout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("unsupported-shape.hwpx");
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>먼저 성공할 본문</hp:t></hp:run></hp:p>
+        <hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:line><hp:t>부분 출력 금지</hp:t></hp:line></hp:run></hp:p>"#
+    ));
+    std::fs::write(&path, builder.build()).expect("write HWPX");
+
+    let output = canonical_plugin()
+        .arg("dump")
+        .arg(path)
+        .output()
+        .expect("run canonical plugin");
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        output.stdout.is_empty(),
+        "a later unsupported shape must not leak earlier BatchItems"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("line"));
+}
+
+#[test]
 fn missing_active_named_style_exits_two_without_partial_stdout() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("missing-active-style.hwpx");

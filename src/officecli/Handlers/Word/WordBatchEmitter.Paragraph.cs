@@ -3698,8 +3698,9 @@ public static partial class WordBatchEmitter
             System.Xml.Linq.XNamespace wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
             System.Xml.Linq.XNamespace a = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
-            var anchor = doc.Descendants(wp + "anchor").FirstOrDefault()
-                      ?? (System.Xml.Linq.XElement?)doc.Descendants(wp + "inline").FirstOrDefault();
+            var anchor = doc.Descendants(wp + "anchor").FirstOrDefault();
+            var inline = doc.Descendants(wp + "inline").FirstOrDefault();
+            var placement = anchor ?? inline;
             var extent = doc.Descendants(wp + "extent").FirstOrDefault();
             if (extent != null)
             {
@@ -3707,6 +3708,17 @@ public static partial class WordBatchEmitter
                 var cy = extent.Attribute("cy")?.Value;
                 if (!string.IsNullOrEmpty(cx)) props["width"] = cx + "emu";
                 if (!string.IsNullOrEmpty(cy)) props["height"] = cy + "emu";
+            }
+            if (placement != null)
+            {
+                // Textbox add historically defaults to a floating anchor, so
+                // both forms need an explicit flag for a lossless replay.
+                props["anchor"] = anchor != null ? "true" : "false";
+                var distT = placement.Attribute("distT")?.Value ?? "0";
+                var distB = placement.Attribute("distB")?.Value ?? "0";
+                var distL = placement.Attribute("distL")?.Value ?? "0";
+                var distR = placement.Attribute("distR")?.Value ?? "0";
+                props["wrapDist"] = $"{distT},{distB},{distL},{distR}";
             }
             if (anchor != null)
             {
@@ -3734,16 +3746,48 @@ public static partial class WordBatchEmitter
                 if (!string.IsNullOrEmpty(hRel)) props["hRelative"] = hRel;
                 if (!string.IsNullOrEmpty(vRel)) props["vRelative"] = vRel;
                 // wrap token
-                if (anchor.Element(wp + "wrapSquare") != null) props["wrap"] = "square";
-                else if (anchor.Element(wp + "wrapTight") != null) props["wrap"] = "tight";
+                var wrapWithSide = anchor.Element(wp + "wrapSquare")
+                    ?? anchor.Element(wp + "wrapTight")
+                    ?? anchor.Element(wp + "wrapThrough");
+                if (wrapWithSide != null)
+                {
+                    props["wrap"] = wrapWithSide.Name.LocalName switch
+                    {
+                        "wrapTight" => "tight",
+                        "wrapThrough" => "through",
+                        _ => "square",
+                    };
+                    var side = wrapWithSide.Attribute("wrapText")?.Value;
+                    if (!string.IsNullOrEmpty(side) && side != "bothSides")
+                        props["wrap.side"] = side;
+                }
                 else if (anchor.Element(wp + "wrapTopAndBottom") != null) props["wrap"] = "topAndBottom";
                 else if (anchor.Element(wp + "wrapNone") != null) props["wrap"] = "none";
+                if (anchor.Attribute("behindDoc")?.Value is "1" or "true")
+                    props["behindDoc"] = "true";
+                if (anchor.Attribute("allowOverlap")?.Value is string allowOverlap)
+                    props["allowOverlap"] = allowOverlap is "0" or "false" ? "false" : "true";
+                var relativeHeight = anchor.Attribute("relativeHeight")?.Value;
+                if (!string.IsNullOrEmpty(relativeHeight))
+                    props["relativeHeight"] = relativeHeight;
             }
             var spPr = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "spPr");
             // Geometry preset (rect default). roundRect etc. otherwise reverted
             // to a sharp rectangle on rebuild.
             var prst = spPr?.Element(a + "prstGeom")?.Attribute("prst")?.Value;
             if (!string.IsNullOrEmpty(prst) && prst != "rect") props["geometry"] = prst;
+            var adjFormula = spPr?.Element(a + "prstGeom")?
+                .Element(a + "avLst")?
+                .Elements(a + "gd")
+                .FirstOrDefault(guide => guide.Attribute("name")?.Value == "adj")?
+                .Attribute("fmla")?.Value;
+            if (!string.IsNullOrWhiteSpace(adjFormula)
+                && adjFormula.StartsWith("val ", StringComparison.Ordinal)
+                && long.TryParse(adjFormula.AsSpan(4), out var adjValue))
+            {
+                props["cornerRadius"] = (adjValue / 1000m)
+                    .ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            }
             // Rotation (<a:xfrm rot>, 60000ths of a degree). Round-trips raw.
             var rot = spPr?.Element(a + "xfrm")?.Attribute("rot")?.Value;
             if (!string.IsNullOrEmpty(rot) && rot != "0") props["rotation"] = rot;
@@ -3850,6 +3894,8 @@ public static partial class WordBatchEmitter
             var docPr = doc.Descendants(wp + "docPr").FirstOrDefault();
             var altName = docPr?.Attribute("name")?.Value;
             if (!string.IsNullOrEmpty(altName) && altName != "Text Box") props["alt"] = altName;
+            var description = docPr?.Attribute("descr")?.Value;
+            if (!string.IsNullOrEmpty(description)) props["description"] = description;
         }
         catch
         {

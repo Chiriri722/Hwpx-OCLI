@@ -18,13 +18,17 @@
 //! - 다중 런 문단은 `text` prop 없이 추가하고 런을 자식으로 붙인다. 둘을 같이
 //!   쓰면 내용이 중복된다.
 
+use std::collections::HashMap;
+
 use base64::Engine;
 
 use super::batch::BatchItem;
 use crate::model::{
-    Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter, HeaderFooterPage, Image,
-    Inline, NamedStyle, Note, NoteKind, NoteProperties, NumberingDefinition, PageNumberField,
-    ParaStyle, Paragraph, Section, Table, TextField, VertAlign,
+    hwpunit_to_emu, Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter,
+    HeaderFooterPage, Image, Inline, NamedStyle, Note, NoteKind, NoteProperties,
+    NumberingDefinition, PageNumberField, ParaStyle, Paragraph, Rectangle,
+    RectangleHorizontalPosition, RectangleMargins, RectanglePlacement, Section, ShapeGeometry,
+    Table, TextField, VertAlign,
 };
 
 /// 문단·런 `text` prop의 줄바꿈 문자 (Shift+Enter). `\n`과 혼동하면 안 된다.
@@ -70,6 +74,8 @@ const TYPE_ABSTRACT_NUM: &str = "abstractNum";
 const TYPE_NUM: &str = "num";
 const TYPE_NUMBERING_LEVEL: &str = "level";
 const TYPE_STYLE: &str = "style";
+const TYPE_TEXTBOX: &str = "textbox";
+const TYPE_SHAPE: &str = "shape";
 
 /// `add` 직후 그 요소를 가리키는 경로.
 ///
@@ -91,6 +97,7 @@ struct EmitState {
     endnotes: usize,
     headers: usize,
     footers: usize,
+    textboxes: HashMap<String, usize>,
     active_footnote_properties: Option<NoteProperties>,
     active_endnote_properties: Option<NoteProperties>,
 }
@@ -124,6 +131,33 @@ impl EmitState {
         }
     }
 
+    /// Textbox addressing is scoped to its body/cell/header/footer host. The
+    /// add command targets a paragraph, so strip only the final p[...] segment.
+    fn next_textbox(&mut self, paragraph_path: &str) -> String {
+        let host = paragraph_path
+            .rfind("/p[")
+            .map(|index| &paragraph_path[..index])
+            .filter(|value| !value.is_empty())
+            .unwrap_or("/");
+        let next = self.textboxes.entry(host.to_owned()).or_default();
+        *next += 1;
+        let ordinal = *next;
+
+        // Word's /body/textbox[N] (and header/footer equivalents) selector
+        // walks all descendant drawings, including boxes hosted by table
+        // cells. A cell keeps its own local ordinal for its returned path, but
+        // it must also advance the enclosing story ordinal so a later body
+        // textbox's follow-up content does not target the earlier cell box.
+        if let Some(story) = textbox_story_root(host).filter(|story| *story != host) {
+            *self.textboxes.entry(story.to_owned()).or_default() += 1;
+        }
+        if host == "/" {
+            format!("/textbox[{ordinal}]")
+        } else {
+            format!("{host}/textbox[{ordinal}]")
+        }
+    }
+
     fn begin_section(&mut self, section: &Section) {
         self.active_footnote_properties = section.footnote_properties.clone();
         self.active_endnote_properties = section.endnote_properties.clone();
@@ -135,6 +169,18 @@ impl EmitState {
             NoteKind::Endnote => self.active_endnote_properties.as_ref(),
         }
     }
+}
+
+fn textbox_story_root(host: &str) -> Option<&str> {
+    if host == "/body" || host.starts_with("/body/") {
+        return Some("/body");
+    }
+    for prefix in ["/header[", "/footer[", "/footnote[", "/endnote["] {
+        if host.starts_with(prefix) {
+            return host.find(']').map(|end| &host[..=end]);
+        }
+    }
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -644,6 +690,10 @@ fn emit_inline_children(
                 flush_pending(&mut pending, parent, out);
                 out.push(equation_item(parent, equation));
             }
+            Inline::Rectangle(rectangle) => {
+                flush_pending(&mut pending, parent, out);
+                emit_rectangle(rectangle, parent, state, out);
+            }
         }
     }
 
@@ -654,6 +704,197 @@ fn equation_item(parent: &str, equation: &Equation) -> BatchItem {
     BatchItem::add(parent, TYPE_EQUATION)
         .prop("formula", equation.formula.clone())
         .prop("mode", equation.mode.as_docx())
+}
+
+fn emit_rectangle(
+    rectangle: &Rectangle,
+    paragraph_path: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    let textbox_path = rectangle
+        .text
+        .as_ref()
+        .map(|_| state.next_textbox(paragraph_path));
+    let element_type = if rectangle.text.is_some() {
+        TYPE_TEXTBOX
+    } else {
+        TYPE_SHAPE
+    };
+    let mut item = BatchItem::add(paragraph_path, element_type)
+        .prop(
+            "width",
+            hwpunit_to_emu(i64::from(rectangle.width_hwpunit)).to_string(),
+        )
+        .prop(
+            "height",
+            hwpunit_to_emu(i64::from(rectangle.height_hwpunit)).to_string(),
+        )
+        .prop(
+            "fill",
+            rectangle
+                .fill
+                .as_deref()
+                .map(docx_color)
+                .unwrap_or_else(|| "none".to_string()),
+        )
+        .prop(
+            "wrapDist",
+            rectangle_wrap_distances(rectangle.outer_margins),
+        )
+        .prop_opt("description", rectangle.description.clone());
+
+    match rectangle.geometry {
+        ShapeGeometry::Rectangle {
+            corner_radius_percent: 0,
+        } => {}
+        ShapeGeometry::Rectangle {
+            corner_radius_percent,
+        } => {
+            item = item
+                .prop("geometry", "roundRect")
+                .prop("cornerRadius", corner_radius_percent.to_string());
+        }
+        ShapeGeometry::Ellipse => {
+            item = item.prop("geometry", "ellipse");
+        }
+    }
+
+    if rectangle.line.visible {
+        item = item
+            .prop("line.color", docx_color(&rectangle.line.color))
+            .prop(
+                "line.width",
+                hwpunit_to_emu(i64::from(rectangle.line.width_hwpunit)).to_string(),
+            );
+    } else {
+        item = item.prop("line.style", "none");
+    }
+
+    match rectangle.placement {
+        RectanglePlacement::Inline => {
+            item = item.prop("anchor", "false");
+        }
+        RectanglePlacement::Page {
+            horizontal,
+            y_hwpunit,
+            allow_overlap,
+        } => {
+            item = item
+                .prop("anchor", "true")
+                .prop("anchor.y", hwpunit_to_emu(y_hwpunit).to_string())
+                .prop("hRelative", "page")
+                .prop("vRelative", "page")
+                .prop("wrap", rectangle.wrap.as_docx())
+                .prop("wrap.side", rectangle.wrap_side.as_docx())
+                .prop("allowOverlap", allow_overlap.to_string())
+                .prop("relativeHeight", rectangle.z_order.to_string());
+            if rectangle.wrap.behind_doc() {
+                item = item.prop("behindDoc", "true");
+            }
+            item = match horizontal {
+                RectangleHorizontalPosition::Offset(x_hwpunit) => {
+                    item.prop("anchor.x", hwpunit_to_emu(x_hwpunit).to_string())
+                }
+                RectangleHorizontalPosition::Center => item.prop("hAlign", "center"),
+            };
+        }
+    }
+
+    if let Some(text) = &rectangle.text {
+        item = item
+            .prop_opt("alt", text.name.clone())
+            .prop("textAnchor", text.anchor.as_docx())
+            .prop(
+                "inset.left",
+                hwpunit_to_emu(i64::from(text.margins.left_hwpunit)).to_string(),
+            )
+            .prop(
+                "inset.right",
+                hwpunit_to_emu(i64::from(text.margins.right_hwpunit)).to_string(),
+            )
+            .prop(
+                "inset.top",
+                hwpunit_to_emu(i64::from(text.margins.top_hwpunit)).to_string(),
+            )
+            .prop(
+                "inset.bottom",
+                hwpunit_to_emu(i64::from(text.margins.bottom_hwpunit)).to_string(),
+            );
+        if let Some(direction) = text.direction.as_docx() {
+            item = item.prop("textDirection", direction);
+        }
+    }
+    out.push(item);
+
+    if let (Some(text), Some(path)) = (&rectangle.text, textbox_path.as_deref()) {
+        emit_textbox_content(path, &text.blocks, state, out);
+    }
+}
+
+fn docx_color(color: &str) -> String {
+    color.trim().trim_start_matches('#').to_ascii_uppercase()
+}
+
+fn rectangle_wrap_distances(margins: RectangleMargins) -> String {
+    format!(
+        "{},{},{},{}",
+        hwpunit_to_emu(i64::from(margins.top_hwpunit)),
+        hwpunit_to_emu(i64::from(margins.bottom_hwpunit)),
+        hwpunit_to_emu(i64::from(margins.left_hwpunit)),
+        hwpunit_to_emu(i64::from(margins.right_hwpunit)),
+    )
+}
+
+/// AddTextbox seeds p[1]. Reuse that paragraph only when it is the source's
+/// first block; a table-first body removes the seed after adding the table so
+/// later paragraphs stay after it rather than jumping ahead.
+fn emit_textbox_content(
+    textbox_path: &str,
+    blocks: &[Block],
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    let first_para = format!("{textbox_path}/p[1]");
+    let last_para = format!("{textbox_path}/p[last()]");
+    let mut seed_available = true;
+
+    for block in blocks {
+        match block {
+            Block::Table(table) => {
+                emit_table(table, textbox_path, state, out);
+                if seed_available {
+                    out.push(BatchItem::remove(&first_para));
+                    seed_available = false;
+                }
+            }
+            Block::Paragraph(paragraph) => {
+                let uniform = paragraph.uniform_style();
+                let collapsible = uniform.is_some() && !paragraph.needs_child_commands();
+                let first = seed_available;
+                let mut seed = if first {
+                    seed_available = false;
+                    BatchItem::set(&first_para)
+                } else {
+                    BatchItem::add(textbox_path, TYPE_PARAGRAPH)
+                };
+                seed = apply_para_props(seed, &paragraph.style);
+                if collapsible {
+                    seed = seed.prop("text", flatten_inlines(paragraph, SOFT_BREAK));
+                    if let Some(style) = uniform {
+                        seed = apply_char_props(seed, style);
+                    }
+                }
+                if !first || seed.has_props() {
+                    out.push(seed);
+                }
+                if !collapsible {
+                    let target = if first { &first_para } else { &last_para };
+                    emit_paragraph_children(paragraph, target, state, out);
+                }
+            }
+        }
+    }
 }
 
 /// 각주/미주 참조와 본문을 구조적으로 내보낸다.
@@ -872,7 +1113,8 @@ fn flatten_inlines(p: &Paragraph, brk: char) -> String {
             | Inline::TextField(_)
             | Inline::PageNumber(_)
             | Inline::Note(_)
-            | Inline::Equation(_) => {}
+            | Inline::Equation(_)
+            | Inline::Rectangle(_) => {}
         }
     }
     normalize_breaks(&out, brk)
@@ -2942,5 +3184,88 @@ mod tests {
             })
             .expect("second cell paragraph");
         assert_eq!(second.props["text"], "둘");
+    }
+
+    #[test]
+    fn textbox_followup_paths_include_nested_cell_boxes_in_story_ordinals() {
+        use crate::model::{
+            RectangleLine, RectangleText, RectangleWrap, RectangleWrapSide, TextBoxAnchor,
+            TextBoxDirection,
+        };
+
+        fn textbox(text: &str) -> Inline {
+            Inline::Rectangle(Rectangle {
+                width_hwpunit: 100,
+                height_hwpunit: 100,
+                geometry: ShapeGeometry::Rectangle {
+                    corner_radius_percent: 0,
+                },
+                placement: RectanglePlacement::Inline,
+                wrap: RectangleWrap::Square,
+                wrap_side: RectangleWrapSide::BothSides,
+                outer_margins: RectangleMargins::default(),
+                z_order: 0,
+                fill: Some("#FFFFFF".into()),
+                line: RectangleLine {
+                    visible: false,
+                    color: "#000000".into(),
+                    width_hwpunit: 0,
+                },
+                description: None,
+                text: Some(RectangleText {
+                    name: None,
+                    direction: TextBoxDirection::Horizontal,
+                    anchor: TextBoxAnchor::Top,
+                    margins: RectangleMargins::default(),
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        style: ParaStyle::default(),
+                        inlines: vec![text_run(text, CharStyle::default())],
+                    })],
+                }),
+            })
+        }
+
+        let doc = document! {
+            blocks: vec![
+                Block::Table(Table {
+                    rows: 1,
+                    cols: 1,
+                    col_widths_twip: vec![],
+                    cells: vec![Cell {
+                        row: 0,
+                        col: 0,
+                        row_span: 1,
+                        col_span: 1,
+                        width_twip: None,
+                        fill: None,
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![textbox("셀 상자")],
+                        })],
+                    }],
+                }),
+                Block::Paragraph(Paragraph {
+                    style: ParaStyle::default(),
+                    inlines: vec![textbox("본문 상자")],
+                }),
+            ],
+        };
+
+        let items = emit_document(&doc);
+        let cell_text = items
+            .iter()
+            .find(|item| item.props.get("text").and_then(|value| value.as_str()) == Some("셀 상자"))
+            .expect("cell textbox body");
+        assert_eq!(
+            cell_text.path.as_deref(),
+            Some("/body/tbl[last()]/tr[1]/tc[1]/textbox[1]/p[1]")
+        );
+        let body_text = items
+            .iter()
+            .find(|item| {
+                item.props.get("text").and_then(|value| value.as_str()) == Some("본문 상자")
+            })
+            .expect("body textbox body");
+        assert_eq!(body_text.path.as_deref(), Some("/body/textbox[2]/p[1]"));
     }
 }

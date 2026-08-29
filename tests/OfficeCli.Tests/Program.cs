@@ -152,6 +152,8 @@ var tests = new (string Name, Action Run)[]
     ("style schema accepts emitted paragraph indents", StyleSchemaAcceptsEmittedParagraphIndents),
     ("style add preserves numeric ids and forward next references", StyleAddPreservesNumericIdsAndForwardNextReferences),
     ("note reference decorations preserve prefix suffix and baseline", NoteReferenceDecorationsArePreserved),
+    ("textbox and shape preserve inline anchor layout contracts", TextboxAndShapePreserveInlineAnchorLayoutContracts),
+    ("textbox ordinals include nested cell drawings", TextboxOrdinalsIncludeNestedCellDrawings),
 };
 
 var failures = 0;
@@ -293,6 +295,281 @@ static void NoteReferenceDecorationsArePreserved()
             .Single(run => run.GetFirstChild<EndnoteReferenceMark>() != null);
         AssertDecoratedReferenceRun(
             endnoteMarkRun, "t,endnoteRef,t", "<", ">", VerticalPositionValues.Superscript);
+    }
+    finally
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+}
+
+static void TextboxAndShapePreserveInlineAnchorLayoutContracts()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-drawing-layout-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(path);
+        using (var handler = new OfficeCli.Handlers.WordHandler(path, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "before",
+            });
+
+            var inlineTextbox = handler.Add("/body/p[1]", "textbox", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "false",
+                ["width"] = "1270000emu",
+                ["height"] = "635000emu",
+                ["wrapDist"] = "11,22,33,44",
+                ["geometry"] = "roundRect",
+                ["cornerRadius"] = "20",
+                ["text"] = "inline textbox",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"inline textbox props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(inlineTextbox == "/body/textbox[1]", $"unexpected inline textbox path: {inlineTextbox}");
+
+            var inlineShape = handler.Add("/body/p[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "false",
+                ["width"] = "254000emu",
+                ["height"] = "381000emu",
+                ["wrapDist"] = "55,66,77,88",
+                ["fill"] = "FFFFFF",
+                ["line.style"] = "none",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"inline shape props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(inlineShape == "/body/shape[1]", $"unexpected inline shape path: {inlineShape}");
+
+            var floatingTextbox = handler.Add("/body/p[1]", "textbox", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "true",
+                ["width"] = "1524000emu",
+                ["height"] = "762000emu",
+                ["anchor.x"] = "101emu",
+                ["anchor.y"] = "202emu",
+                ["hRelative"] = "page",
+                ["vRelative"] = "page",
+                ["wrap"] = "through",
+                ["wrap.side"] = "right",
+                ["wrapDist"] = "111,222,333,444",
+                ["behindDoc"] = "true",
+                ["allowOverlap"] = "false",
+                ["relativeHeight"] = "77",
+                ["description"] = "도형 설명 & 접근성\n둘째 줄",
+                ["text"] = "floating textbox",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"floating textbox props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(floatingTextbox == "/body/textbox[2]", $"unexpected floating textbox path: {floatingTextbox}");
+
+            var floatingShape = handler.Add("/body/p[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "true",
+                ["width"] = "508000emu",
+                ["height"] = "508000emu",
+                ["anchor.x"] = "303emu",
+                ["anchor.y"] = "404emu",
+                ["hRelative"] = "page",
+                ["vRelative"] = "page",
+                ["wrap"] = "topAndBottom",
+                ["wrapDist"] = "555,666,777,888",
+                ["behindDoc"] = "false",
+                ["relativeHeight"] = "88",
+                ["allowOverlap"] = "false",
+                ["geometry"] = "roundRect",
+                ["cornerRadius"] = "35",
+                ["fill"] = "102030",
+                ["line.color"] = "405060",
+                ["line.width"] = "12700emu",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"floating shape props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(floatingShape == "/body/shape[2]", $"unexpected floating shape path: {floatingShape}");
+
+            var centeredEllipse = handler.Add("/body/p[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "true",
+                ["width"] = "852170emu",
+                ["height"] = "804291emu",
+                ["hAlign"] = "center",
+                ["anchor.y"] = "9057513emu",
+                ["hRelative"] = "page",
+                ["vRelative"] = "page",
+                ["wrap"] = "none",
+                ["allowOverlap"] = "false",
+                ["relativeHeight"] = "9",
+                ["description"] = "타원입니다.",
+                ["geometry"] = "ellipse",
+                ["fill"] = "none",
+                ["line.color"] = "FF0000",
+                ["line.width"] = "0emu",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"centered ellipse props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(centeredEllipse == "/body/shape[3]", $"unexpected centered ellipse path: {centeredEllipse}");
+
+            var legacyBehindShape = handler.Add("/body/p[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["anchor"] = "true",
+                ["width"] = "127000emu",
+                ["height"] = "127000emu",
+                ["wrap"] = "behind",
+                ["geometry"] = "rect",
+                ["fill"] = "AABBCC",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"legacy behind shape props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            Assert(legacyBehindShape == "/body/shape[4]", $"unexpected legacy behind shape path: {legacyBehindShape}");
+            handler.Save();
+        }
+
+        using (var source = new OfficeCli.Handlers.WordHandler(path, editable: false))
+        {
+            var items = OfficeCli.Handlers.WordBatchEmitter.EmitWord(source);
+            var textboxes = items
+                .Where(item => item.Command == "add" && item.Type == "textbox")
+                .ToList();
+            Assert(textboxes.Count == 2, $"expected two typed textbox rows, got {textboxes.Count}");
+            Assert(textboxes[0].Props?.GetValueOrDefault("anchor") == "false",
+                "inline textbox dump did not preserve anchor=false");
+            Assert(textboxes[0].Props?.GetValueOrDefault("wrapDist") == "11,22,33,44",
+                "inline textbox dump did not preserve wrap distances");
+            Assert(textboxes[0].Props?.GetValueOrDefault("geometry") == "roundRect"
+                && textboxes[0].Props?.GetValueOrDefault("cornerRadius") == "20",
+                "inline textbox dump did not preserve the rounded-rectangle adjustment");
+            Assert(textboxes[1].Props?.GetValueOrDefault("anchor") == "true",
+                "floating textbox dump did not preserve anchor=true");
+            Assert(textboxes[1].Props?.GetValueOrDefault("wrap") == "through"
+                && textboxes[1].Props?.GetValueOrDefault("wrap.side") == "right",
+                "floating textbox dump did not preserve through/right wrapping");
+            Assert(textboxes[1].Props?.GetValueOrDefault("wrapDist") == "111,222,333,444",
+                "floating textbox dump did not preserve wrap distances");
+            Assert(textboxes[1].Props?.GetValueOrDefault("behindDoc") == "true",
+                "floating textbox dump did not preserve behindDoc");
+            Assert(textboxes[1].Props?.GetValueOrDefault("allowOverlap") == "false",
+                "floating textbox dump did not preserve allowOverlap=false");
+            Assert(textboxes[1].Props?.GetValueOrDefault("relativeHeight") == "77",
+                "floating textbox dump did not preserve z-order");
+            Assert(textboxes[1].Props?.GetValueOrDefault("description") == "도형 설명 & 접근성\n둘째 줄",
+                "floating textbox dump did not preserve its object description");
+
+            var shapes = items
+                .Where(item => item.Command == "raw-set"
+                    && item.Xml?.Contains("<wps:wsp", StringComparison.Ordinal) == true
+                    && item.Xml.Contains("<wps:txbx", StringComparison.Ordinal) == false)
+                .ToList();
+            Assert(shapes.Count == 4, $"expected four lossless shape carriers, got {shapes.Count}");
+            var centeredEllipseCarrier = shapes.Single(item =>
+                item.Xml!.Contains("prst=\"ellipse\"", StringComparison.Ordinal));
+            Assert(centeredEllipseCarrier.Xml!.Contains(
+                    "<wp:positionH relativeFrom=\"page\"><wp:align>center</wp:align>",
+                    StringComparison.Ordinal),
+                "centered ellipse carrier did not preserve alignment in place of an X offset");
+            Assert(centeredEllipseCarrier.Xml.Contains("allowOverlap=\"0\"", StringComparison.Ordinal)
+                && centeredEllipseCarrier.Xml.Contains("<a:noFill", StringComparison.Ordinal),
+                "centered ellipse carrier did not preserve no-fill/overlap metadata");
+        }
+
+        using var document = WordprocessingDocument.Open(path, false);
+        var paragraphs = document.MainDocumentPart!.Document!.Body!.Elements<Paragraph>().ToList();
+        Assert(paragraphs.Count == 1, $"drawings created extra host paragraphs: {paragraphs.Count}");
+        var drawings = paragraphs[0].Descendants<Drawing>().ToList();
+        Assert(drawings.Count == 6, $"expected six drawings in one paragraph, got {drawings.Count}");
+
+        var inlineXml = drawings[0].OuterXml;
+        Assert(inlineXml.Contains("<wp:inline", StringComparison.Ordinal)
+            && inlineXml.Contains("distT=\"11\"", StringComparison.Ordinal)
+            && inlineXml.Contains("distB=\"22\"", StringComparison.Ordinal)
+            && inlineXml.Contains("distL=\"33\"", StringComparison.Ordinal)
+            && inlineXml.Contains("distR=\"44\"", StringComparison.Ordinal)
+            && inlineXml.Contains("prst=\"roundRect\"", StringComparison.Ordinal)
+            && inlineXml.Contains("name=\"adj\" fmla=\"val 20000\"", StringComparison.Ordinal),
+            "inline textbox did not preserve inline placement or distances");
+
+        var inlineShapeXml = drawings[1].OuterXml;
+        Assert(inlineShapeXml.Contains("<wp:inline", StringComparison.Ordinal)
+            && !inlineShapeXml.Contains("<wps:txbx", StringComparison.Ordinal)
+            && inlineShapeXml.Contains("distT=\"55\"", StringComparison.Ordinal)
+            && inlineShapeXml.Contains("distR=\"88\"", StringComparison.Ordinal),
+            "inline shape did not preserve inline placement or distances");
+
+        var floatingTextboxXml = drawings[2].OuterXml;
+        Assert(floatingTextboxXml.Contains("<wp:anchor", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("relativeHeight=\"77\"", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("behindDoc=\"1\"", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("allowOverlap=\"0\"", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("distT=\"111\"", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("distR=\"444\"", StringComparison.Ordinal)
+            && floatingTextboxXml.Contains("<wp:wrapThrough wrapText=\"right\"", StringComparison.Ordinal),
+            "floating textbox did not preserve anchor layout metadata");
+
+        var floatingShapeXml = drawings[3].OuterXml;
+        Assert(floatingShapeXml.Contains("<wp:anchor", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("relativeHeight=\"88\"", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("allowOverlap=\"0\"", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("distT=\"555\"", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("distR=\"888\"", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("<wp:wrapTopAndBottom", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("prst=\"roundRect\"", StringComparison.Ordinal)
+            && floatingShapeXml.Contains("name=\"adj\" fmla=\"val 35000\"", StringComparison.Ordinal),
+            "floating shape did not preserve anchor layout metadata");
+
+        var centeredEllipseXml = drawings[4].OuterXml;
+        Assert(centeredEllipseXml.Contains("<wp:positionH relativeFrom=\"page\"><wp:align>center</wp:align>", StringComparison.Ordinal)
+            && centeredEllipseXml.Contains("<wp:positionV relativeFrom=\"page\"><wp:posOffset>9057513</wp:posOffset>", StringComparison.Ordinal)
+            && centeredEllipseXml.Contains("allowOverlap=\"0\"", StringComparison.Ordinal)
+            && centeredEllipseXml.Contains("prst=\"ellipse\"", StringComparison.Ordinal)
+            && centeredEllipseXml.Contains("descr=\"타원입니다.\"", StringComparison.Ordinal)
+            && centeredEllipseXml.Contains("<a:noFill", StringComparison.Ordinal),
+            "centered ellipse did not preserve semantic page alignment or no-fill geometry");
+
+        var legacyBehindShapeXml = drawings[5].OuterXml;
+        Assert(legacyBehindShapeXml.Contains("<wp:wrapNone", StringComparison.Ordinal)
+            && legacyBehindShapeXml.Contains("behindDoc=\"1\"", StringComparison.Ordinal),
+            "legacy wrap=behind did not place the shape behind document text");
+    }
+    finally
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+}
+
+static void TextboxOrdinalsIncludeNestedCellDrawings()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-drawing-ordinals-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(path);
+        using (var document = WordprocessingDocument.Open(path, true))
+        {
+            var body = document.MainDocumentPart!.Document!.Body!;
+            body.RemoveAllChildren<Paragraph>();
+            body.PrependChild(new Table(new TableRow(new TableCell(new Paragraph()))));
+            body.AppendChild(new Paragraph());
+            document.MainDocumentPart.Document.Save();
+        }
+
+        using (var handler = new OfficeCli.Handlers.WordHandler(path, editable: true))
+        {
+            var cellTextbox = handler.Add(
+                "/body/tbl[1]/tr[1]/tc[1]/p[1]",
+                "textbox",
+                null,
+                new Dictionary<string, string> { ["anchor"] = "false", ["text"] = "cell" });
+            Assert(cellTextbox == "/body/tbl[1]/tr[1]/tc[1]/textbox[1]",
+                $"unexpected cell textbox path: {cellTextbox}");
+
+            var bodyTextbox = handler.Add(
+                "/body/p[1]",
+                "textbox",
+                null,
+                new Dictionary<string, string> { ["anchor"] = "false", ["text"] = "body" });
+            Assert(bodyTextbox == "/body/textbox[2]",
+                $"body textbox ordinal did not include the nested cell drawing: {bodyTextbox}");
+            handler.Save();
+        }
     }
     finally
     {

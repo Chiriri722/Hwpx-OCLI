@@ -18,7 +18,7 @@
       "/body/textbox[N]"
     ]
   },
-  "note": "Floating text box — a DrawingML anchored shape (wps:wsp) that carries a text body, added inside a run+paragraph. Created via `add --type textbox`; Get returns the raw drawing tree and Remove deletes the host paragraph. Set supports the spPr surface (fill / line.* / width / height / geometry) in place; position/anchor/wrap/inset/text/rotation/shadow props are add-only (use Remove + re-Add, or the raw-set path, to change those). For an empty graphic shape with no text body use `shape`; for inline pictures use `picture`.",
+  "note": "Floating or inline text box — a DrawingML shape (wps:wsp) that carries a text body inside a run+paragraph. Created via `add --type textbox`; Get returns the raw drawing tree and Remove deletes that drawing, pruning its carrier paragraph only when the paragraph becomes empty. Set supports the spPr surface (fill / line.* / width / height / geometry) in place; position/anchor/wrap/inset/text/rotation/shadow props are add-only (use Remove + re-Add, or the raw-set path, to change those). For an empty graphic shape with no text body use `shape`; for inline pictures use `picture`.",
   "properties": {
     "text": {
       "type": "string",
@@ -40,6 +40,13 @@
       "set": true,
       "examples": ["--prop height=3cm"]
     },
+    "anchor": {
+      "type": "bool",
+      "description": "true for the historical floating textbox form; false emits wp:inline and attaches to the selected paragraph. Defaults to true for backward compatibility.",
+      "default": true,
+      "add": true,
+      "examples": ["--prop anchor=false"]
+    },
     "geometry": {
       "type": "string",
       "description": "preset shape outline of the box (rect, roundRect, ellipse, ...). Aliases: shape.",
@@ -48,6 +55,13 @@
       "set": true,
       "examples": ["--prop geometry=roundRect"]
     },
+    "cornerRadius": {
+      "type": "string",
+      "description": "single preset adjustment, normally roundRect corner curvature as 0-100 percent. Alias: adj; raw guide values above 100 are also accepted.",
+      "aliases": ["adj"],
+      "add": true,
+      "examples": ["--prop geometry=roundRect --prop cornerRadius=20"]
+    },
     "wrap": {
       "type": "enum",
       "description": "text-wrap mode of surrounding body text around the box.",
@@ -55,6 +69,37 @@
       "default": "square",
       "add": true,
       "examples": ["--prop wrap=square"]
+    },
+    "wrap.side": {
+      "type": "enum",
+      "description": "side on which surrounding text may flow for square/tight/through wrapping. Alias: wrapSide.",
+      "values": ["bothSides", "left", "right", "largest"],
+      "aliases": ["wrapSide"],
+      "add": true,
+      "examples": ["--prop wrap.side=left"]
+    },
+    "wrapDist": {
+      "type": "string",
+      "description": "drawing-to-text distances as four comma-separated raw EMU integers: top,bottom,left,right.",
+      "add": true,
+      "examples": ["--prop wrapDist=0,0,114300,114300"]
+    },
+    "behindDoc": {
+      "type": "bool",
+      "description": "place a floating textbox behind document text (wp:anchor @behindDoc). When omitted, wrap=behind implies true for backward compatibility. Ignored for inline textboxes.",
+      "add": true
+    },
+    "allowOverlap": {
+      "type": "bool",
+      "description": "whether a floating textbox may overlap other drawings (wp:anchor @allowOverlap). Ignored for inline textboxes; defaults to true.",
+      "default": true,
+      "add": true
+    },
+    "relativeHeight": {
+      "type": "integer",
+      "description": "raw unsigned wp:anchor z-order value for a floating textbox. Alias: zorder.",
+      "aliases": ["zorder"],
+      "add": true
     },
     "hAlign": {
       "type": "enum",
@@ -201,6 +246,13 @@
       "aliases": ["name"],
       "add": true,
       "examples": ["--prop alt=\"Callout\""]
+    },
+    "description": {
+      "type": "string",
+      "description": "object description / accessibility text (docPr descr). Alias: descr.",
+      "aliases": ["descr"],
+      "add": true,
+      "examples": ["--prop description=\"Callout annotation\""]
     }
   }
 }

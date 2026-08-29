@@ -142,6 +142,11 @@ fn resolve_in_inlines<R: Read + Seek>(
                 }
             }
             Inline::Note(note) => resolve_in_blocks(pkg, &mut note.blocks, budget)?,
+            Inline::Rectangle(rectangle) => {
+                if let Some(text) = &mut rectangle.text {
+                    resolve_in_blocks(pkg, &mut text.blocks, budget)?;
+                }
+            }
             _ => {}
         }
     }

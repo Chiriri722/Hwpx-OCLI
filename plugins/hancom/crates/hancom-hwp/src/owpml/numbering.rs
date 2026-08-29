@@ -384,8 +384,14 @@ fn collect_active_numberings(sections: &[Section], styles: &[NamedStyle]) -> BTr
                             .or_insert(numbering.level);
                     }
                     for inline in &paragraph.inlines {
-                        if let Inline::Note(note) = inline {
-                            walk(&note.blocks, active);
+                        match inline {
+                            Inline::Note(note) => walk(&note.blocks, active),
+                            Inline::Rectangle(rectangle) => {
+                                if let Some(text) = &rectangle.text {
+                                    walk(&text.blocks, active);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
