@@ -51,6 +51,9 @@
 - P0/P1과 P-1은 완료로 확인했다. G5 스타일 매핑은 확장 코퍼스와 한컴 네이티브
   DOCX 오라클을 확보해 T2-5에서 완료했다. G6 PUA 치환은 신뢰할 대응표가 없어
   보존·진단 경계를 유지한다.
+- T2-6은 공식 r1.2·한컴 네이티브·281개 공개 코퍼스가 함께 증명하는 축 정렬
+  rect/rounded rect, 구조적 textbox, whole ellipse만 지원한다. line/custom path/
+  container/OLE 등은 조용히 버리지 않고 fail-closed하며 결정은 ADR-0010을 따른다.
 - 정식 보안 스캔에서 7건(높음 2, 중간 3, 낮음 2)을 확인했다. 우선 압축 자원 예산, 표 크기·산술 검증, 중복 섹션 제거를 같은 입력 검증 경계에서 수정한다.
 - 반복 이미지 증폭은 고유 BinData 캐시와 참조·출력 예산을 함께 적용해야 완결된다. 진단 경로 이슈와 Windows 설치 경로는 그 다음 호환성 묶음으로 처리한다.
 - 정식 스캔 7건은 먼저 macOS/Unix 실행 경로의 입력 경계·이미지 캐시·진단 경계에서 닫았다. Phase 5에서 Windows 하드 링크 식별 구현도 추가했고 네이티브 Windows runner에서 확인했다.
@@ -122,9 +125,9 @@
 - Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
-**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 P0·P1과 T2-1~T2-5도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T2-5 구현 커밋 `50adcc31`은 활성 이름 스타일·직접 서식·목록/개요를 함께 보존하고 공개 281개 코퍼스 기준선을 유지했다.
+**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 P0·P1과 T2-1~T2-6도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T2-6 구현 커밋 `b379b4d3`은 검증된 rect/textbox/ellipse만 보존하고 active 미지원 도형은 명시적으로 거부한다.
 
 ## Next Action Plan
-1. `specs/001-hancom-unified/task-plan.md`의 T2-6 도형·글상자 실측과 폐쇄 부분집합 매핑을 진행한다.
+1. `specs/001-hancom-unified/task-plan.md`의 T2-7 차트를 공식 차트 형식 r1.2와 한컴 네이티브 DOCX 오라클로 실측한다.
 2. 각 P2 변경에 기존 Rust·host·installer·실제 HWP/HWPX 회귀와 `plugins lint`를 같은 기준으로 적용한다.
 3. upstream 동기화는 기능 변경과 섞지 않고 별도 통합 변경으로 진행한다.

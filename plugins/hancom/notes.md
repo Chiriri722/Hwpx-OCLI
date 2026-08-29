@@ -232,3 +232,12 @@
 - 한 이름 스타일이 여러 구역의 다른 outline 정의를 요구하면 단일 DOCX 스타일로 근사하지 않고 exit 3, 활성 정의/의존성이 손상되면 exit 2로 stdout 전에 실패한다. 일반 NUMBER/BULLET의 missing ID는 암묵 outline 0 규칙으로 숨기지 않는다.
 - 공개 281개 HWPX 전수 회귀는 226 성공/23 corrupt/32 unsupported로 기존 기준선을 유지했다. 대표 fixture의 224개 BatchItem은 `plugins lint` unknown prop 0, 실제 OfficeCLI batch 224/224, DOCX validate 오류 0이며 `/styles/18`의 ID·이름·개요·번호가 읽혀 나왔다.
 - 로컬 게이트는 Rust 513개, 40개 .NET host 계약, Clippy `-D warnings`, release, 정확한 SDK 10.0.302 build, 포맷/diff 검사다. 구현 커밋은 `50adcc31`, 결정은 ADR-0009다.
+
+### 2026-08-29 T2-6 도형·글상자
+- 공식 HWPML r1.2의 POSITION/RECTANGLE 정의, 한컴 2020의 rect/ellipse/center/line DOCX 오라클, 281개 공개 HWPX를 교차검증했다. 275개 유효 ZIP에는 rect 1,665개, ellipse 94개, line 227개, polygon 205개, curve 337개, connectLine 20개, container 909개, OLE 35개, chart 30개가 있었고 arc/textart/video는 없었다.
+- 축 정렬 rect/rounded rect와 전체 ellipse만 공용 typed model로 올린다. treatAsChar inline과 PAPER/PAPER TOP floating의 LEFT offset/CENTER, wrap·flow side/거리, z-order·allowOverlap, 불투명 단색/무채움, SOLID/NONE 선을 정확히 내린다. HWPUNIT×127이 DOCX 속성별 수치 범위를 벗어나면 JSONL 전에 exit 3이다.
+- rect `drawText`는 문단·런·표·이미지·각주·번호·이름 스타일을 구조적으로 보존하고 HORIZONTAL/네이티브 검증 VERTICALALL, BREAK, 세로 정렬, inset을 유지한다. nested drawing, ellipse drawText, 회전·flip·group·protect·href·caption과 미검증 도형군은 근사하지 않는다.
+- 88개 파일의 1,350개 비어 있지 않은 `shapeComment`를 재조사해 렌더 캐시가 아니라 도형 설명임을 확인했다. `wp:docPr/@descr`로 보존하며 이름 `@name`과 분리한다.
+- 호스트는 inline/floating shape/textbox, semantic page alignment, wrap side/distance, behindDoc/overlap/z-order, roundRect adjustment, noFill, description을 add/dump한다. `wrap=behind` fallback과 표 셀 상자가 앞선 body 전역 textbox ordinal 누락을 RED→GREEN으로 추가 보강했다. 일반 shape dump는 임의 DrawingML을 재해석하지 않고 raw carrier를 유지한다.
+- 실제 center 문서 370개 명령은 전체 replay와 OpenXML validate를 통과했다. ellipse 원문은 별도 WMF MIME 때문에 전체 replay가 막혔지만 실제 플러그인 shape 명령을 격리 재생해 preset·페이지 좌표·noFill·allowOverlap을 검증했다. 두 대표 dump의 `plugins lint` unknown prop은 0이다.
+- 최종 공개 코퍼스는 173 success/22 corrupt/86 unsupported/0 other다. 이전 226 success가 줄어든 것은 active 미지원 도형을 더 이상 조용히 누락하지 않기 때문이다. 로컬 게이트는 Rust 526개, host 42개, locked Clippy/release, 정확한 SDK 10.0.302 solution build 오류 0, schema/help·포맷·diff 검사다. 구현 커밋은 `b379b4d3`, 결정은 ADR-0010이다.

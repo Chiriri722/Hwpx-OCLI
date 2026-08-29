@@ -263,7 +263,18 @@ R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
       공개 281개 코퍼스 기준선(226 성공/23 corrupt/32 unsupported), 실제 224항목
       replay·DOCX validate 오류 0과 `plugins lint` unknown prop 0을 통과했다.
       결정 경계는 ADR-0009에 고정했다.
-- [ ] T2-6 · 도형·글상자 (`hp:rect`, `hp:textart` 등) → docx shape/textbox
+- [x] T2-6 · 도형·글상자 (`hp:rect`, `hp:textart` 등) → docx shape/textbox.
+      커밋 `b379b4d3`에서 공식 HWPML r1.2, 한컴 2020 네이티브 DOCX, 공개
+      281개 코퍼스를 교차검증해 축 정렬 `hp:rect`와 전체 `hp:ellipse`의 폐쇄
+      부분집합을 구현했다. inline/페이지 floating, LEFT/CENTER, wrap/flow side와
+      거리, z-order·겹침, 무채움/불투명 단색, SOLID/NONE 선, 0~50 둥근 모서리,
+      `drawText`의 구조적 문단·표·이미지·주석·번호·스타일, `shapeComment` 설명을
+      보존한다. 회전·뒤집기·그룹·보호·하이퍼링크·caption과 line/polygon/curve/
+      connector/container/OLE/textart/arc/video는 근사하지 않고 stdout 전에
+      실패한다. 로컬 526개 Rust 테스트·42개 host 계약·locked Clippy/release·
+      정확한 SDK build, `plugins lint` unknown prop 0, 실제 replay/OpenXML validate,
+      공개 코퍼스 173 success/22 corrupt/86 unsupported/0 other를 통과했다.
+      결정 경계는 ADR-0010에 고정했다.
 - [ ] T2-7 · 차트 → docx chart. **R1의 "차트 형식 r1.2" 스펙이 필수**
 - [ ] T2-8 · 보류 항목 재평가: G5 스타일 매핑은 T2-5에서 완료. G6 PUA 치환은
       신뢰할 대응표·글꼴별 오라클 확보 시 재평가
@@ -390,7 +401,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0·P1 완료 · P2 진행 중(T2-6 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1 완료 · P2 진행 중(T2-7 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -414,16 +425,18 @@ T2-5는 활성 이름 스타일과 직접 서식을 분리해 보존하고, 이�
 실제 OfficeCLI 224항목 replay·lint·validate를 통과했다. 숫자 ID, 선행 `next` 참조,
 `lockForm`, 직접 NONE과 스타일 OUTLINE, 암묵 outline 0의 경계는 한컴 2020 네이티브
 DOCX 오라클과 ADR-0009에 고정했다.
+T2-6은 축 정렬 rectangle/rounded rectangle, 구조적 textbox, whole ellipse의 검증된
+부분집합만 typed OfficeCLI drawing으로 내리고 나머지 활성 도형을 명시적으로 거부한다.
+구현 커밋 `b379b4d3`은 실제 한컴 rect/ellipse/center/line 오라클, 두 실제 OfficeCLI
+replay, 281개 공개 코퍼스와 ADR-0010으로 지원/실패 경계를 고정했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T2-6에서 공개/한컴 생성 표본의 도형·글상자 구조와 실제 OfficeCLI shape/textbox
-   투영 경계를 먼저 실측하고, 무손실 폐쇄 부분집합만 구현한다.
-2. T2-7은 고정한 공식 차트 형식 r1.2와 네이티브 DOCX 오라클을 함께 사용해 차트
+1. T2-7은 고정한 공식 차트 형식 r1.2와 네이티브 DOCX 오라클을 함께 사용해 차트
    데이터·계열·축·레이아웃의 보존 가능 범위를 확정한다.
-3. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
-4. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-5. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
-6. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
+2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
+3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
+4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
+5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.
