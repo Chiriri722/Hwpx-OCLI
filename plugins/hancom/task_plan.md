@@ -120,9 +120,9 @@
 - Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
-**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. H1c/H1d와 Phase 6을 완료 처리하며, 후속 확장은 `specs/001-hancom-unified/task-plan.md`의 P1부터 진행한다.
+**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 P0·P1과 T2-1~T2-4도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다.
 
 ## Next Action Plan
-1. `specs/001-hancom-unified/task-plan.md`의 P1 workspace 재편을 동작 변화 0의 원자 변경으로 진행한다.
-2. P1 전후에 기존 Rust·host·installer·실제 HWP/HWPX 회귀를 같은 기준으로 비교한다.
-3. 현재 브랜치는 `upstream/main`보다 22커밋 뒤이므로, workspace 이동과 섞지 않고 별도 통합 변경으로 최신 upstream을 반영한다.
+1. `specs/001-hancom-unified/task-plan.md`의 T2-5 스타일 정의·참조 매핑을 진행한다.
+2. 각 P2 변경에 기존 Rust·host·installer·실제 HWP/HWPX 회귀와 `plugins lint`를 같은 기준으로 적용한다.
+3. upstream 동기화는 기능 변경과 섞지 않고 별도 통합 변경으로 진행한다.

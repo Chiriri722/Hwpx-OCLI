@@ -54,7 +54,7 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 호스트 예약 코드 6을 절대 내지 않음 | `never_exits_with_host_reserved_code_six` |
 | stdout 오염 없음 (도움말·진단·에러) | `help_does_not_pollute_stdout`, `dump_keeps_diagnostics_off_stdout` |
 | `--quiet` / `--log-file` / `--media-dir` | 각 동명 테스트 |
-| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·구역 story·자원 경계) | `parse_owpml.rs` 64개 |
+| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·구역 story·목록 번호·자원 경계) | `parse_owpml.rs` 79개 |
 | 병합 격자 인덱싱 (가로/세로/복합/빈칸) | `word.rs::horizontal_merge_mid_row_*` 외 4개 |
 | 단위 변환 (HWPUNIT→twip/pt, twip→pt) | `model.rs`, `word.rs::twip_to_pt_divides_by_twenty` |
 | 엔티티 해제 (텍스트·속성 양쪽) | `preserves_korean_and_special_characters`, `unescapes_entities_in_attribute_values` |
@@ -72,14 +72,16 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-T2-3은 커밋 `393785ab`에서
-`docs/adr/0007-hancom-section-stories-and-note-policy.md`의 경계로 구현했고 HWPX plugin
-run `33241159576`과 action pin run `33241159629`가 성공했다.
-구역 spine, 머리말/꼬리말 `BOTH`/`ODD`/`EVEN`/first, 동적 PAGE/NUMPAGES, 주석 번호·
-표식 정책을 보존한다. `noteLine`/`noteSpacing`은 active note면 stdout 전에 exit 3,
-dormant면 정확한 값을 담은 필수 구조화 경고를 낸다. 다음 작업은 T2-4 목록 번호 구조다.
-문단의 `paraPrIDRef`와 header.xml의 numbering/bullet 정의를 먼저 연결하고, 표시 문자열을
-고정 텍스트로 복사하지 말고 OfficeCLI numbering 어휘로 동적 구조를 만든다.
+T2-4는 커밋 `025418bc`와 RHWP 호환성 수정 `2289ca60`에서
+`docs/adr/0008-hancom-paragraph-numbering-policy.md`의 경계로 구현했다. 문단의
+`paraPrIDRef`와 header.xml의 NUMBER/BULLET 정의, 구역별 `outlineShapeIDRef`를 연결해
+표시 문자열이 아닌 OfficeCLI `abstractNum`/`num` 구조로 동적 목록을 보존한다. 공식
+토큰·형식과 한컴 네이티브로 확인한 배치 프로필만 허용하며, 활성 손실 경로는 stdout 전에
+exit 3이다. 49개 공개 코퍼스는 47개 성공·unknown prop 0이고 남은 2개는 기존 중간
+머리말/꼬리말 활성화 한계다. RHWP가 보존한 dormant HWP level 10도 활성 level 1을
+막지 않도록 실제 `english.hwp`로 검증했고, run `33243420505`/`33243420494`의
+Linux/Windows 원격 게이트도 통과했다. 다음 작업은 T2-5 스타일 정의와 `styleIDRef`
+매핑이다.
 
 Phase 7의 host discovery·installer·공급망 하드닝은 로컬에서 완료했다.
 Host 계약 35개, Windows installer 12개, 비-root Linux installer 21개와
@@ -322,10 +324,9 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 목록 번호 매기기 (`numbering`, T2-4)
-2. 스타일 이름 매핑 (`styleIDRef` → docx `style`, T2-5)
-3. 도형·글상자와 차트 (T2-6/T2-7)
-4. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
+1. 스타일 정의와 이름 매핑 (`styleIDRef` → docx `style`, T2-5)
+2. 도형·글상자와 차트 (T2-6/T2-7)
+3. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
 
 ## 6. 참고 자료 위치
 

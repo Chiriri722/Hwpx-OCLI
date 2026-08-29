@@ -239,7 +239,18 @@ R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
       [HWPX plugin run 33241159576](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33241159576)와
       [action pin run 33241159629](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33241159629)이
       모두 성공했다. 결정 경계는 ADR-0007에 고정했다.
-- [ ] T2-4 · 목록 번호 (`numbering` 구조) — 현재 텍스트만 살아있음
+- [x] T2-4 · 목록 번호 (`numbering` 구조). 커밋 `025418bc`와 RHWP 호환성 수정
+      `2289ca60`에서 `hh:heading`의
+      NUMBER/BULLET과 구역별 OUTLINE을 typed model로 연결하고 OfficeCLI
+      `abstractNum`/`level`/`num` 및 문단 `numId`/`numLevel`로 동적 보존했다.
+      공식 토큰·형식과 한컴 네이티브로 확인한 배치 프로필만 허용하고, 활성 이미지·체크형
+      표식·모호한 ID·손실 형식/배치는 JSONL 전에 fail-closed로 거부한다. dormant HWP
+      level 10은 활성 level 1을 막지 않으며 실제 RHWP `english.hwp`로 검증했다. 로컬 502개 Rust
+      테스트·Clippy·release·호스트 build, 실제 DOCX validate, 49개 공개 코퍼스 47개 성공과
+      `plugins lint` unknown prop 0을 통과했다.
+      [HWPX plugin run 33243420505](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420505)와
+      [action pin run 33243420494](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420494)도
+      양 OS에서 성공했다. 결정 경계는 ADR-0008에 고정했다.
 - [ ] T2-5 · 스타일 이름 (`styleIDRef` → docx `style`)
 - [ ] T2-6 · 도형·글상자 (`hp:rect`, `hp:textart` 등) → docx shape/textbox
 - [ ] T2-7 · 차트 → docx chart. **R1의 "차트 형식 r1.2" 스펙이 필수**
@@ -367,7 +378,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0·P1 완료 · P2 진행 중(T2-4 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1 완료 · P2 진행 중(T2-5 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -383,12 +394,15 @@ T2-2는 공식 r1.3 기반의 엄격 수식→LaTeX 변환과 inline/display 배
 `33236634179`/`33236634150`으로 양 OS 전체 회귀·MSRV·host·실제 설치 검증을 통과했다.
 T2-3은 구역 spine·머리말/꼬리말·페이지 필드와 구역별 주석 정책을 구현했고 run
 `33241159576`/`33241159629`으로 양 OS 전체 회귀·MSRV·host·실제 설치 검증을 통과했다.
+T2-4는 NUMBER/BULLET/OUTLINE을 동적 DOCX 목록으로 보존하고 한컴 네이티브 배치 오라클과
+49개 공개 코퍼스에서 검증했다. 구현 커밋은 `025418bc`, RHWP level 10 호환성 수정은
+`2289ca60`이며 수정 원격 게이트 `33243420505`/`33243420494`가 양 OS에서 성공했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T2-4에서 `paraPrIDRef`의 `hh:heading`과 `hh:numbering`/`hh:bullet`, 구역별
-   `outlineShapeIDRef`를 연결하고 OfficeCLI `abstractNum`/`num` 구조로 동적 목록을 보존한다.
+1. T2-5에서 `hh:styles`의 실제 사용 스타일과 문단 `styleIDRef`를 연결하고, 매달린 참조가
+   생기지 않도록 OfficeCLI `style` 정의 생성과 문단 적용을 같은 변경으로 구현한다.
 2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
 3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).

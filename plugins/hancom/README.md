@@ -197,6 +197,7 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 구역별 각주/미주 정책 | 번호 형식·재시작·시작·배치 + 동적 참조의 접두/접미·위첨자 |
 | 머리말/꼬리말 (`hp:header` / `hp:footer`) | 구역별 `header` / `footer` default·even·first story |
 | 페이지 번호 (`hp:autoNum` PAGE/TOTAL_PAGE) | 동적 `PAGE` / `NUMPAGES` field |
+| 목록 번호 (`hh:numbering` / `hh:bullet` / 구역 개요) | 동적 `abstractNum` + `num` + 문단 `numId`/`numLevel` |
 | 수식 (`hp:equation`) | `equation` (`formula`=LaTeX, `mode`=inline/display) |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
@@ -218,6 +219,11 @@ exit 3으로 거부한다. DOCX에 대응 구역 속성이 없는 `noteLine`/`no
 동적 페이지 필드를 보존한다. 한 구역 안에서 본문 뒤에 활성화되거나 같은 슬롯이 겹치는
 timeline은 DOCX 한 구역으로 넓히지 않고 exit 3으로 거부한다.
 
+번호·글머리표·구역 개요는 표시 문자열로 고정하지 않고 한컴 정의를 동적 DOCX 목록으로
+보존한다. 공식 `^n`/`^N`/`^1`~`^9` 토큰과 검증된 숫자·로마자·라틴·한글 형식만
+허용한다. 활성 이미지/체크형 글머리표, 미지원 형식, 검증되지 않은 배치 값은 stdout 전에
+exit 3으로 거부한다. PUA 표식은 G6 정책대로 치환을 추측하지 않고 그대로 보존·진단한다.
+
 수식은 공식 수식 형식 r1.3을 기준으로 분수·근호·첨자·주요 연산자와 함수·적분·행렬·
 cases/pile/alignment·색상을 OfficeCLI LaTeX로 옮기며, OfficeCLI가 네이티브 OMML로 만든다.
 인라인/표시 배치와 문단·표 셀 안의 형제 순서를 보존한다. 의미를 근사해야 하는
@@ -235,7 +241,6 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 ### 아직 안 되는 것
 
 - 도형·글상자 (`hp:rect`, `hp:textart` 등)
-- 목록 번호 매기기 (텍스트는 살지만 `numbering` 구조는 미매핑)
 - 스타일 이름 (`styleIDRef` → docx `style`)
 - HWPX **쓰기** (그래서 `format-handler`가 아니라 `dump-reader`다 — `docs/01-protocol-contract.md` ADR-1)
 
@@ -243,9 +248,9 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 64개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 79개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
-cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 61개
+cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 62개
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo build --workspace --locked --release
