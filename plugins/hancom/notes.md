@@ -196,3 +196,11 @@
 - 실제 각주가 든 공개 HWPX를 찾지 못했다. 조사한 `python-hwpx` 81개 파일에는 각주/미주가 0건이었고 `note_example.hwpx`도 주석이 아니라 메모 5개였다. 따라서 파서 픽스처는 공식 스키마와 공개된 한컴 구조 재현을 근거로 하며, 실문서 코퍼스 공백을 숨기지 않는다.
 - `userChar`/`prefixChar`/`suffixChar` 사용자 표식과 구역별 `footNotePr`/`endNotePr` 번호 형식·재시작·배치는 아직 보존하지 않는다. DOCX custom mark는 별도 작성 순서가 필요하고 근거 없이 매핑하면 번호가 고정될 수 있어 T2-3 구역 작업으로 넘긴다.
 - 로컬 `cargo test --workspace` 전체 회귀, Clippy `-D warnings`, 실제 노트 HWPX `plugins lint`(BatchItem 6개, unknown prop 0), 실제 OfficeCLI 각주/미주·표 DOCX 검증을 통과했다. 구현 커밋은 `6b78e1f1`이다.
+
+### 2026-08-29 T2-2 수식
+- 공식 수식 형식 r1.3과 공개 `SimpleEquation.hwpx`의 실제 스크립트를 기준으로 `hp:equation`의 필수 단일 `script`/`pos`를 읽는다. `treatAsChar`를 inline/display로 옮기고, 비검정 `textColor`는 LaTeX 색상으로 보존한다. 중복·결손 요소, 중첩 script, 잘못된 배치·색상은 fail-closed다.
+- RHWP의 토크나이저·재귀 하강 파서·AST·기호표를 MIT 고정 커밋 `496333b27d21ddb9114ba9ae340bcb895870c9a7`에서 가져와 출처 헤더와 `NOTICE` 전문을 남겼다. 전체 crate에 의존하지 않고 수식 네 모듈만 고정했으며, OfficeCLI에 손실 없이 투영할 수 없는 명령은 별도 폐쇄 목록으로 거부한다.
+- 공식 r1.3의 분수·근호·첨자, 주요 연산자·기호·함수와 붙여 쓰는 함수 인수, FROM/TO 적분, 왼쪽 첨자, 행렬·cases·pile·eqalign·binom, 장식·색상을 LaTeX로 변환한다. `LONGDIV`/`LADDER`/`SCALE` 계열 및 호스트 미지원 big/small 변형은 근사하지 않고 exit 3으로 중단한다.
+- 64KiB 입력, 8,192 토큰, 그룹/접두사 깊이 64, AST 16,384노드·깊이 128, 행렬 4,096셀, LaTeX 256KiB 한계를 두고 각 N/N+1 경계를 테스트했다. 손상·미지 명령·PUA·RGB·불균등 행렬과 자원 초과는 exit 2이며, 후반 수식 실패 전 성공한 문단도 stdout에 유출하지 않는다.
+- 실제 OfficeCLI에서 공개 SimpleEquation을 플러그인 dump→batch→validate→query로 재생했고, 인라인/표시·색상·행렬/구조·적분 상하한·왼쪽 첨자·장식과 표 셀 `A-수식-B-수식-C` 순서를 네이티브 OMML DOCX에서 확인했다. `plugins lint`는 unknown prop 0이었다. 다만 다양한 실제 한컴 수식 코퍼스는 아직 확보하지 못했다.
+- 로컬 Rust 1.88 전체 457개 테스트, stable Clippy `-D warnings`, release build와 포맷/diff 검사가 통과했다. 구현 커밋 `d62155df`, HWPX plugin run `33236634179`, action pin run `33236634150`이 모두 성공했다.

@@ -194,6 +194,7 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 열 너비 (`hp:cellSz`) | `colWidths` (twip) |
 | 이미지 (`hp:pic` + `BinData`) | `add --type picture --prop src=data:...` |
 | 각주/미주 (`hp:footNote` / `hp:endNote`) | 참조 위치의 실제 `footnote` / `endnote` + 주석 본문 블록 |
+| 수식 (`hp:equation`) | `equation` (`formula`=LaTeX, `mode`=inline/display) |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
 | 내어쓰기 (음수 `hc:intent`) | `hangingIndent` (docx는 음수 `firstLine`을 허용하지 않음) |
@@ -207,6 +208,13 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 거부한다. 다만 `userChar`/`prefixChar`/`suffixChar` 사용자 표식과 구역별
 `footNotePr`/`endNotePr` 번호 형식·재시작·배치는 아직 Word 기본값으로 출력한다.
 
+수식은 공식 수식 형식 r1.3을 기준으로 분수·근호·첨자·주요 연산자와 함수·적분·행렬·
+cases/pile/alignment·색상을 OfficeCLI LaTeX로 옮기며, OfficeCLI가 네이티브 OMML로 만든다.
+인라인/표시 배치와 문단·표 셀 안의 형제 순서를 보존한다. 의미를 근사해야 하는
+`LONGDIV`/`LADDER`/`SCALE` 계열과 호스트가 표현하지 못하는 일부 big/small 변형은 exit 3,
+손상 구문·알 수 없는 명령·자원 한계 초과는 exit 2로 전체 변환을 중단한다. 어느 경우에도
+앞선 문단의 부분 JSONL을 stdout에 남기지 않는다.
+
 HWPML은 공식 2.8 문법의 공통 경로(`HWPML/BODY/SECTION/P/TEXT/CHAR`)와
 2.1/2.8/2.9/2.91 상호운용 허용 목록을 사용한다. 이 목록은 각 버전의 전체 문법
 지원을 뜻하지 않는다. `TAB`, `LINEBREAK`, `NBSPACE`, 기본 글자·문단 모양, 표는
@@ -216,7 +224,6 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ### 아직 안 되는 것
 
-- 수식 (`hp:equation`)
 - 도형·글상자 (`hp:rect`, `hp:textart` 등)
 - 머리말/꼬리말
 - 목록 번호 매기기 (텍스트는 살지만 `numbering` 구조는 미매핑)
@@ -227,7 +234,7 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 38개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 44개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
 cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
@@ -291,6 +298,7 @@ crates/
     src/{format,error,emit}/ 공용 core 임시 호환 re-export
     src/owpml/
       package.rs        ZIP 컨테이너, content.hpf spine, BinData 해석
+      equation/         수식 스크립트의 엄격 파싱·LaTeX 변환
       styles.rs         header.xml 글자/문단 모양 표
       section.rs        본문 파싱, 표/문단 구조 평탄화
       model.rs          공용 model 임시 호환 re-export

@@ -32,6 +32,7 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 | 이미지 data URI 임베드, 대체 텍스트, 크기(2.5cm × 1.3cm) | 통과 |
 | **폼 컨트롤 체크박스** (`type=checkbox`, `checked`, `name`) | 통과 |
 | **중첩표 안 체크박스 보존** | 통과 |
+| **수식** (inline/display, 색상, 구조·적분·행렬·장식, 표 셀 순서) | 통과 — 네이티브 OMML DOCX validate/query |
 | **실제 한컴 문서 왕복** (2026 대구문학관 참가신청서) | 통과 — 체크박스 8/8, 표 5개, 열 너비 복원 |
 
 `plugins lint`는 우리가 추측한 게 아니라 **바이너리에 내장된 스키마**로 검사한다.
@@ -53,7 +54,7 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 호스트 예약 코드 6을 절대 내지 않음 | `never_exits_with_host_reserved_code_six` |
 | stdout 오염 없음 (도움말·진단·에러) | `help_does_not_pollute_stdout`, `dump_keeps_diagnostics_off_stdout` |
 | `--quiet` / `--log-file` / `--media-dir` | 각 동명 테스트 |
-| OWPML 파싱 (문단·런·서식·표·병합·이미지·다중섹션·자원 경계) | `parse_owpml.rs` 34개 |
+| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·다중섹션·자원 경계) | `parse_owpml.rs` 44개 |
 | 병합 격자 인덱싱 (가로/세로/복합/빈칸) | `word.rs::horizontal_merge_mid_row_*` 외 4개 |
 | 단위 변환 (HWPUNIT→twip/pt, twip→pt) | `model.rs`, `word.rs::twip_to_pt_divides_by_twenty` |
 | 엔티티 해제 (텍스트·속성 양쪽) | `preserves_korean_and_special_characters`, `unescapes_entities_in_attribute_values` |
@@ -64,23 +65,17 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 항목 | 위험 | 비고 |
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 실제 문서 **5건**으로 검증(버그 7건 발견). 구청 공고·양식에 치우쳤다. 보고서·논문·통계자료 계열은 미검증 |
-| 이미지·각주/미주·수식·도형·머리말 | 낮음~미상 | 코퍼스 5건에는 **하나도 없었다**. 이미지와 각주/미주는 합성 픽스처로 검증했고 각주/미주는 실제 OfficeCLI DOCX 구조까지 확인했다. 실제 한컴 각주 파일, 수식·도형·머리말은 미검증 |
+| 이미지·각주/미주·수식·도형·머리말 | 낮음~미상 | 기존 코퍼스 5건에는 **하나도 없었다**. 이미지·각주/미주는 합성 픽스처와 실제 OfficeCLI DOCX 구조로 검증했다. 수식은 공개 `SimpleEquation.hwpx`와 합성 r1.3 구문을 네이티브 OMML까지 검증했지만 다양한 실제 한컴 수식, 실제 각주, 도형·머리말은 미검증 |
 | Windows / Linux 동작 | 부분 검증 | run `31700156231`의 양 OS H3 브리지·MSRV 1.88와 기존 HWPX discovery는 성공. H1 run `31890284597`, `32793306250`는 OfficeCLI 1.0.143 오류 처리에 가려 실패했다. 1.0.145 고정 자산은 로컬 양 OS smoke를 통과했으며 workflow 재실행이 필요 |
 | 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. 별도 host 계약에서 1초 idle budget보다 긴 프로세스가 반복 heartbeat로 완료되는 종단간 타이머 reset을 확인. 대형 binary HWP 자체는 미실측 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-H3 변환 경계와 H4/H5, 양 OS H3 네이티브 게이트 및 Windows의 기존
-HWPX discovery는 run `31700156231`에서 끝났다. H1의
-`[".hwpx", ".hwp"]` 매니페스트, 두 환경변수, 두 사용자 설치 경로는
-로컬에 구현했다. 후속 run `31890284597`, `32793306250`는 실패했으며,
-최신 run에서 Linux는 `plugins list` 뒤 HWP `view`, Windows는
-`plugins list`에서 멈췄다. OfficeCLI 1.0.143의 `WriteError`가
-`System.Private.Xml`을 로드하다 원래 예외를 가린 상태다. 체크섬을 고정한
-1.0.145 workflow와 로컬 Windows·비-root Linux smoke는 정상이며, 새 Linux/Windows job의
-실제 RHWP `officecli view <file.hwp> text` 성공 전에는 H1을 크로스 플랫폼
-완료로 표시하지 않는다.
+T2-2 수식은 커밋 `d62155df`에서 끝났고 HWPX plugin run `33236634179`와 action pin
+run `33236634150`이 성공했다. 다음 작업은 T2-3 머리말/꼬리말과 구역별 각주/미주
+번호 정책이다. 공식 OWPML 구역·머리말 참조 구조와 OfficeCLI header/footer 쓰기 순서를
+먼저 실측한 뒤 파서→공용 모델→docx JSONL→`plugins lint`→실제 DOCX 순으로 닫는다.
 
 Phase 7의 host discovery·installer·공급망 하드닝은 로컬에서 완료했다.
 Host 계약 35개, Windows installer 12개, 비-root Linux installer 21개와
@@ -313,17 +308,17 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
   `userChar`/`prefixChar`/`suffixChar`와 구역별 번호 형식·재시작·배치는 안전한
   매핑 근거가 없어 T2-3의 구역 설정과 함께 재검토한다. 실제 각주가 든 공개
   HWPX 코퍼스도 아직 확보하지 못했다.
+- **수식은 손실 없는 폐쇄 부분집합만 지원한다.** 공식 r1.3을 기준으로 하되 OfficeCLI
+  LaTeX가 동등하게 표현하지 못하는 `LONGDIV`/`LADDER`/`SCALE` 및 일부 big/small
+  변형은 exit 3으로 거부한다. 다양한 실제 한컴 수식 코퍼스는 아직 없다.
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 새 Linux/Windows `.hwp` discovery·RHWP `view` CI를 확인한다
-   (`04-hwp-support-plan.md`).
-2. 실제 한글 저장 파일 검증 (위 1번) — 장기 품질 작업의 전제
-3. 스타일 이름 매핑 (`styleIDRef` → docx `style`). 제목 계층이 살아나므로
-   문서 구조 파악에 가장 크게 기여
-4. 목록 번호 매기기 (`numbering`)
-5. 머리말/꼬리말과 각주/미주 표식·번호 정책
-6. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
+1. 머리말/꼬리말과 구역별 각주/미주 표식·번호 정책 (T2-3)
+2. 목록 번호 매기기 (`numbering`, T2-4)
+3. 스타일 이름 매핑 (`styleIDRef` → docx `style`, T2-5)
+4. 도형·글상자와 차트 (T2-6/T2-7)
+5. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
 
 ## 6. 참고 자료 위치
 
