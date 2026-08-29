@@ -188,3 +188,11 @@
 - workflow는 OfficeCLI 1.0.143, RHWP 0.8.4 양 OS 자산과 전체 commit의 `english.hwp`를 하드코딩 SHA-256으로 검증한다. 외부 action의 tag 참조 SHA 고정은 별도 공급망 변경으로 남긴다.
 - 최종 로컬 회귀는 Rust 1.88 기준 227개(lib 135 + binary 1 + golden 3 + installer 9 + parser 34 + protocol 45)가 통과했다. Rust 1.88 host/Windows GNU all-target check, stable host/Windows GNU Clippy `-D warnings`, release build, installer Bash 문법, workflow YAML/Linux block 문법, `git diff --check`도 통과했다.
 - PowerShell 네이티브 실행과 새 Linux/Windows H1 workflow의 실제 다운로드·discovery·view 결과는 로컬에서 증명하지 않았으며 새 원격 run까지 H1c/H1d를 열어 둔다.
+
+### 2026-08-29 T2-1 각주/미주
+- 공식 OWPML `NoteType`의 필수 단일 `subList`와 공개된 한컴 생성 구조를 교차검증해 `footNote`/`endNote`를 본문 인라인 위치에서 파싱한다. 주석 본문은 여러 문단·런 서식·표·이미지의 블록 순서를 보존하며 본문 `plain_text`에는 섞이지 않는다.
+- 필수 `subList` 결손, `subList` 밖 내용, 중첩 각주/미주는 손상 입력으로 거부한다. 외부 내용을 빈 주석으로 성공시키던 경계는 RED 테스트로 재현한 뒤 fail-closed로 보강했다.
+- emitter는 실제 OfficeCLI `footnote`/`endnote` 명령을 쓰고 종류별 ID를 문서 전체에서 추적한다. 다중 문단과 빈 문단을 평탄화하지 않고, 표가 첫 블록인 각주도 실제 OfficeCLI에서 생성·셀 쓰기·DOCX 검증을 통과했다.
+- 실제 각주가 든 공개 HWPX를 찾지 못했다. 조사한 `python-hwpx` 81개 파일에는 각주/미주가 0건이었고 `note_example.hwpx`도 주석이 아니라 메모 5개였다. 따라서 파서 픽스처는 공식 스키마와 공개된 한컴 구조 재현을 근거로 하며, 실문서 코퍼스 공백을 숨기지 않는다.
+- `userChar`/`prefixChar`/`suffixChar` 사용자 표식과 구역별 `footNotePr`/`endNotePr` 번호 형식·재시작·배치는 아직 보존하지 않는다. DOCX custom mark는 별도 작성 순서가 필요하고 근거 없이 매핑하면 번호가 고정될 수 있어 T2-3 구역 작업으로 넘긴다.
+- 로컬 `cargo test --workspace` 전체 회귀, Clippy `-D warnings`, 실제 노트 HWPX `plugins lint`(BatchItem 6개, unknown prop 0), 실제 OfficeCLI 각주/미주·표 DOCX 검증을 통과했다. 구현 커밋은 `6b78e1f1`이다.

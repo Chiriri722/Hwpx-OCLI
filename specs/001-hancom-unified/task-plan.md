@@ -211,7 +211,15 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
 
 R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
 
-- [ ] T2-1 · 각주/미주 (`hp:footNote`/`hp:endNote`) → docx footnote/endnote
+- [x] T2-1 · 각주/미주 (`hp:footNote`/`hp:endNote`) → docx footnote/endnote.
+      커밋 `6b78e1f1`에서 필수 단일 `subList`, 여러 문단·런 서식·표·이미지,
+      본문 내 참조 순서와 종류별 번호를 보존하고 손상·중첩 주석은 fail-closed로 처리했다.
+      로컬 전체 회귀·Clippy·`plugins lint`(unknown prop 0)와 실제 OfficeCLI
+      각주/미주·표 DOCX 검증을 통과했으며,
+      [HWPX plugin run 33234858972](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33234858972)와
+      [action pin run 33234858790](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33234858790)이
+      모두 성공했다. 실제 한컴 각주 코퍼스는 아직 없고 사용자 표식 및 구역별 번호 정책은
+      T2-3 구역 설정과 함께 재검토한다.
 - [ ] T2-2 · 수식 (`hp:equation`) → OMML/LaTeX. **R1의 "수식 형식 r1.3" 스펙이 필수**
 - [ ] T2-3 · 머리말/꼬리말 → docx header/footer
 - [ ] T2-4 · 목록 번호 (`numbering` 구조) — 현재 텍스트만 살아있음
@@ -342,7 +350,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0·P1 완료 · P2 진행 중(T2-1 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1 완료 · P2 진행 중(T2-2 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -352,11 +360,14 @@ T1-3은 `officecli-hancom-hwp`와 `.owpml`/`.hml` 직접 읽기, strict HWPML �
 run `33170785021`/`33170784965`로 같은 게이트를 통과했다.
 T1-4/T1-5는 네 확장자 설치 트랜잭션과 HWPX 단독 설치 마이그레이션을 구현했고 run
 `33172696561`/`33172696668`로 양 OS 전체 회귀와 실제 네 확장자 경로를 통과했다.
+T2-1은 각주/미주 본문 블록과 참조 순서를 구현했고 run `33234858972`/`33234858790`으로
+같은 양 OS 게이트와 실제 설치·조회·제거를 통과했다. 사용자 표식과 구역별 번호 정책은
+T2-3에서 구역 설정과 함께 재검토한다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T2-1부터 공식 스키마와 실제 샘플을 함께 고정하며 각주/미주 구조 보존을 구현한다.
+1. T2-2에서 공식 수식 형식 r1.3과 실제 `SimpleEquation.hwpx`를 기준으로 수식 변환을 구현한다.
 2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
 3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
 4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).

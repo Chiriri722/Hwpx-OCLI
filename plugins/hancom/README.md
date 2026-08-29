@@ -193,6 +193,7 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 셀 배경색 | `fill` |
 | 열 너비 (`hp:cellSz`) | `colWidths` (twip) |
 | 이미지 (`hp:pic` + `BinData`) | `add --type picture --prop src=data:...` |
+| 각주/미주 (`hp:footNote` / `hp:endNote`) | 참조 위치의 실제 `footnote` / `endnote` + 주석 본문 블록 |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
 | 내어쓰기 (음수 `hc:intent`) | `hangingIndent` (docx는 음수 `firstLine`을 허용하지 않음) |
@@ -200,6 +201,11 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 한컴 PUA 문자 | 그대로 보존 + 개수를 진단으로 보고 (매핑 추측 안 함) |
 | 셀 안 여러 문단 | 첫 문단은 `set <cell>/p[1]`, 이후는 `add <cell> --type paragraph` |
 | 다중 섹션 | `content.hpf` spine 순서로 연결 |
+
+각주/미주는 필수 `hp:subList`의 여러 문단·런 서식·표·이미지를 구조적으로
+보존한다. 중첩 주석이나 `subList` 밖의 내용은 조용히 버리지 않고 손상 입력으로
+거부한다. 다만 `userChar`/`prefixChar`/`suffixChar` 사용자 표식과 구역별
+`footNotePr`/`endNotePr` 번호 형식·재시작·배치는 아직 Word 기본값으로 출력한다.
 
 HWPML은 공식 2.8 문법의 공통 경로(`HWPML/BODY/SECTION/P/TEXT/CHAR`)와
 2.1/2.8/2.9/2.91 상호운용 허용 목록을 사용한다. 이 목록은 각 버전의 전체 문법
@@ -210,7 +216,6 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ### 아직 안 되는 것
 
-- 각주/미주 (`hp:footNote` / `hp:endNote`)
 - 수식 (`hp:equation`)
 - 도형·글상자 (`hp:rect`, `hp:textart` 등)
 - 머리말/꼬리말
@@ -222,7 +227,7 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 34개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 38개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
 cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
