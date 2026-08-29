@@ -22,8 +22,8 @@ use base64::Engine;
 
 use super::batch::BatchItem;
 use crate::model::{
-    Block, Cell, CharStyle, CheckBox, Document, Image, Inline, ParaStyle, Paragraph, Table,
-    TextField, VertAlign,
+    Block, Cell, CharStyle, CheckBox, Document, Image, Inline, Note, NoteKind, ParaStyle,
+    Paragraph, Table, TextField, VertAlign,
 };
 
 /// 문단·런 `text` prop의 줄바꿈 문자 (Shift+Enter). `\n`과 혼동하면 안 된다.
@@ -58,6 +58,8 @@ const TYPE_RUN: &str = "run";
 const TYPE_TABLE: &str = "table";
 const TYPE_PICTURE: &str = "picture";
 const TYPE_FORMFIELD: &str = "formfield";
+const TYPE_FOOTNOTE: &str = "footnote";
+const TYPE_ENDNOTE: &str = "endnote";
 
 /// `add` 직후 그 요소를 가리키는 경로.
 ///
@@ -72,6 +74,29 @@ const TYPE_FORMFIELD: &str = "formfield";
 /// "Subtree emit uses `last()` xpath predicates so the script is safe to
 /// replay onto non-blank documents."
 const LAST_PARAGRAPH: &str = "/body/p[last()]";
+
+#[derive(Default)]
+struct EmitState {
+    footnotes: usize,
+    endnotes: usize,
+}
+
+impl EmitState {
+    /// 호스트가 종류별 사용자 주석 ID를 1부터 순서대로 할당하므로, 방금 만든
+    /// 주석의 안정적인 후속 명령 경로를 계산한다.
+    fn next_note(&mut self, kind: NoteKind) -> (&'static str, String) {
+        match kind {
+            NoteKind::Footnote => {
+                self.footnotes += 1;
+                (TYPE_FOOTNOTE, format!("/footnote[{}]", self.footnotes))
+            }
+            NoteKind::Endnote => {
+                self.endnotes += 1;
+                (TYPE_ENDNOTE, format!("/endnote[{}]", self.endnotes))
+            }
+        }
+    }
+}
 
 /// 문서 전체를 BatchItem 목록으로 변환한다.
 pub fn emit_document(doc: &Document) -> Vec<BatchItem> {
@@ -94,11 +119,12 @@ pub fn try_emit_document<E>(
     mut sink: impl FnMut(BatchItem) -> std::result::Result<(), E>,
 ) -> std::result::Result<usize, E> {
     let mut count = 0usize;
+    let mut state = EmitState::default();
     for block in &doc.blocks {
         let mut items = Vec::new();
         match block {
-            Block::Paragraph(p) => emit_paragraph(p, &mut items),
-            Block::Table(t) => emit_table(t, "/body", &mut items),
+            Block::Paragraph(p) => emit_paragraph(p, &mut state, &mut items),
+            Block::Table(t) => emit_table(t, "/body", &mut state, &mut items),
         }
         for item in items {
             sink(item)?;
@@ -108,7 +134,7 @@ pub fn try_emit_document<E>(
     Ok(count)
 }
 
-fn emit_paragraph(p: &Paragraph, out: &mut Vec<BatchItem>) {
+fn emit_paragraph(p: &Paragraph, state: &mut EmitState, out: &mut Vec<BatchItem>) {
     let uniform = p.uniform_style();
 
     // 케이스 1: 서식이 균일하고 별도 자식이 필요 없으면 한 줄로 병합한다.
@@ -127,7 +153,7 @@ fn emit_paragraph(p: &Paragraph, out: &mut Vec<BatchItem>) {
     para = apply_para_props(para, &p.style);
     out.push(para);
 
-    emit_paragraph_children(p, LAST_PARAGRAPH, out);
+    emit_paragraph_children(p, LAST_PARAGRAPH, state, out);
 }
 
 /// 문단 내용을 자식 명령들로 내보낸다.
@@ -135,7 +161,21 @@ fn emit_paragraph(p: &Paragraph, out: &mut Vec<BatchItem>) {
 /// `parent`는 대상 문단의 경로다. 본문 문단이면 `/body/p[last()]`,
 /// 표 셀이면 `.../tc[N]/p[1]`. 두 경우 모두 `add`가 문단 끝에 덧붙으므로
 /// 등장 순서가 그대로 보존된다 (실측 확인).
-fn emit_paragraph_children(p: &Paragraph, parent: &str, out: &mut Vec<BatchItem>) {
+fn emit_paragraph_children(
+    p: &Paragraph,
+    parent: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    emit_inline_children(&p.inlines, parent, state, out);
+}
+
+fn emit_inline_children(
+    inlines: &[Inline],
+    parent: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
     // 탭/줄바꿈은 바로 뒤 텍스트 런 앞에 붙인다. 뒤에 텍스트가 없으면
     // 별도 런으로 흘린다.
     let mut pending = String::new();
@@ -150,7 +190,7 @@ fn emit_paragraph_children(p: &Paragraph, parent: &str, out: &mut Vec<BatchItem>
         }
     }
 
-    for inline in &p.inlines {
+    for inline in inlines {
         match inline {
             Inline::Tab => pending.push('\t'),
             Inline::LineBreak => pending.push(SOFT_BREAK),
@@ -176,10 +216,110 @@ fn emit_paragraph_children(p: &Paragraph, parent: &str, out: &mut Vec<BatchItem>
                 flush_pending(&mut pending, parent, out);
                 out.push(text_field_item(parent, tf));
             }
+            Inline::Note(note) => {
+                flush_pending(&mut pending, parent, out);
+                emit_note(note, parent, state, out);
+            }
         }
     }
 
     flush_pending(&mut pending, parent, out);
+}
+
+/// 각주/미주 참조와 본문을 구조적으로 내보낸다.
+///
+/// `add footnote|endnote`는 참조 위치에 실제 주석 참조 런을 넣는 동시에 주석
+/// 파트의 첫 문단을 만든다. 첫 문단 이후의 문단·표는 방금 생성된 종류별 순번
+/// 경로 아래에 이어 붙인다. 이렇게 해야 다중 문단을 `\v`로 평탄화하지 않고
+/// 문단별 서식과 블록 순서를 보존할 수 있다.
+fn emit_note(note: &Note, anchor: &str, state: &mut EmitState, out: &mut Vec<BatchItem>) {
+    let (note_type, note_path) = state.next_note(note.kind);
+
+    let mut consumed_first_paragraph = false;
+    if let Some(Block::Paragraph(paragraph)) = note.blocks.first() {
+        consumed_first_paragraph = true;
+        emit_note_seed(paragraph, anchor, note_type, &note_path, state, out);
+    } else {
+        // 호스트는 text 속성을 필수로 요구한다. 표가 첫 블록이거나 본문이 비어
+        // 있어도 참조 표식이 들어갈 빈 첫 문단은 필요하다.
+        out.push(BatchItem::add(anchor, note_type).prop("text", ""));
+    }
+
+    for (index, block) in note.blocks.iter().enumerate() {
+        if consumed_first_paragraph && index == 0 {
+            continue;
+        }
+        match block {
+            Block::Paragraph(paragraph) => emit_note_paragraph(paragraph, &note_path, state, out),
+            Block::Table(table) => emit_table(table, &note_path, state, out),
+        }
+    }
+}
+
+/// `add footnote|endnote`가 동시에 만드는 첫 본문 문단을 채운다.
+fn emit_note_seed(
+    paragraph: &Paragraph,
+    anchor: &str,
+    note_type: &'static str,
+    note_path: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    let uniform = paragraph.uniform_style();
+    let collapsible = uniform.is_some() && !paragraph.needs_child_commands();
+    let mut seed = apply_para_props(BatchItem::add(anchor, note_type), &paragraph.style);
+
+    if collapsible {
+        seed = seed.prop("text", flatten_inlines(paragraph, SOFT_BREAK));
+        if let Some(style) = uniform {
+            seed = apply_char_props(seed, style);
+        }
+        out.push(seed);
+        return;
+    }
+
+    // 복합 문단도 빈 seed 런을 남기지 않도록, 첫 인라인이 텍스트면 그 런을
+    // 생성 명령에 싣고 나머지만 구조 명령으로 보낸다.
+    let skip = if let Some(Inline::Text(run)) = paragraph.inlines.first() {
+        seed = seed.prop("text", normalize_breaks(&run.text, SOFT_BREAK));
+        seed = apply_char_props(seed, &run.style);
+        1
+    } else {
+        seed = seed.prop("text", "");
+        0
+    };
+    out.push(seed);
+    emit_inline_children(
+        &paragraph.inlines[skip..],
+        &format!("{note_path}/p[1]"),
+        state,
+        out,
+    );
+}
+
+/// 첫 문단 뒤의 주석 문단을 원래 문단 경계 그대로 추가한다.
+fn emit_note_paragraph(
+    paragraph: &Paragraph,
+    note_path: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    let uniform = paragraph.uniform_style();
+    let collapsible = uniform.is_some() && !paragraph.needs_child_commands();
+    let mut item = apply_para_props(BatchItem::add(note_path, TYPE_PARAGRAPH), &paragraph.style);
+
+    if collapsible {
+        item = item.prop("text", flatten_inlines(paragraph, SOFT_BREAK));
+        if let Some(style) = uniform {
+            item = apply_char_props(item, style);
+        }
+    }
+    // 빈 문단도 실제 줄 하나이므로 속성이 없어도 반드시 추가한다.
+    out.push(item);
+
+    if !collapsible {
+        emit_paragraph_children(paragraph, &format!("{note_path}/p[last()]"), state, out);
+    }
 }
 
 /// `hp:checkBtn` → docx 폼필드 체크박스.
@@ -240,7 +380,7 @@ fn flatten_inlines(p: &Paragraph, brk: char) -> String {
             Inline::Tab => out.push('\t'),
             Inline::LineBreak => out.push(brk),
             // 별도 자식 명령으로 나가므로 텍스트에는 넣지 않는다.
-            Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) => {}
+            Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {}
         }
     }
     normalize_breaks(&out, brk)
@@ -394,7 +534,7 @@ fn twip_to_pt_string(twip: i64) -> String {
 /// 셀 안에 표를 추가해도 바깥 표를 가리키는 경로는 변하지 않는다.
 /// 실측 확인: `add <cell> --type table` → `<cell>/tbl[1]` 로 접근 가능하고
 /// 실제 중첩 `<w:tbl>`이 만들어진다.
-fn emit_table(t: &Table, parent: &str, out: &mut Vec<BatchItem>) {
+fn emit_table(t: &Table, parent: &str, state: &mut EmitState, out: &mut Vec<BatchItem>) {
     if t.rows == 0 || t.cols == 0 {
         return;
     }
@@ -451,7 +591,7 @@ fn emit_table(t: &Table, parent: &str, out: &mut Vec<BatchItem>) {
                 // 셀 내용은 셀 안 첫 문단으로 (CELL_TEXT_PARAGRAPH 주석 참고).
                 // 세로 병합의 이음 칸에는 내용을 넣지 않는다.
                 if is_origin {
-                    emit_cell_content(&path, cell, out);
+                    emit_cell_content(&path, cell, state, out);
                 }
             }
 
@@ -540,7 +680,12 @@ fn cell_props_item(
 ///
 /// 경로 근거(실측): `set <cell>/p[1]`, `add <cell> --type paragraph`,
 /// `add <cell>/p[last()] --type run` 이 모두 동작하고 문단별 `align`이 보존된다.
-fn emit_cell_content(cell_path: &str, cell: &Cell, out: &mut Vec<BatchItem>) {
+fn emit_cell_content(
+    cell_path: &str,
+    cell: &Cell,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
     let first_para = format!("{cell_path}{CELL_TEXT_PARAGRAPH}");
     // docx 문단 경로 세그먼트는 `p` (schemas/help/docx/paragraph.json).
     let last_para = format!("{cell_path}/p[last()]");
@@ -552,7 +697,7 @@ fn emit_cell_content(cell_path: &str, cell: &Cell, out: &mut Vec<BatchItem>) {
         match block {
             Block::Table(nested) => {
                 // 중첩표는 셀 아래에 그대로 만든다. 경로는 `<cell>/tbl[last()]`.
-                emit_table(nested, cell_path, out);
+                emit_table(nested, cell_path, state, out);
             }
             Block::Paragraph(p) => {
                 let uniform = p.uniform_style();
@@ -583,7 +728,7 @@ fn emit_cell_content(cell_path: &str, cell: &Cell, out: &mut Vec<BatchItem>) {
 
                 if !collapsible {
                     let target = if first { &first_para } else { &last_para };
-                    emit_paragraph_children(p, target, out);
+                    emit_paragraph_children(p, target, state, out);
                 }
             }
         }
@@ -603,7 +748,7 @@ fn trim_float(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::TextRun;
+    use crate::model::{Align, Note, NoteKind, TextRun};
 
     fn text_run(t: &str, style: CharStyle) -> Inline {
         Inline::Text(TextRun {
@@ -663,6 +808,154 @@ mod tests {
         assert_eq!(items[1].props["text"], "보통 ");
         assert_eq!(items[2].props["text"], "굵게");
         assert_eq!(items[2].props["bold"], "true");
+    }
+
+    #[test]
+    fn notes_emit_real_docx_note_elements_at_the_inline_position() {
+        let doc = Document {
+            blocks: vec![Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![
+                    text_run("앞", CharStyle::default()),
+                    Inline::Note(Note {
+                        kind: NoteKind::Footnote,
+                        number: Some(3),
+                        instance_id: Some("41".into()),
+                        blocks: vec![
+                            Block::Paragraph(Paragraph {
+                                style: ParaStyle::default(),
+                                inlines: vec![text_run("각주 첫 문단", CharStyle::default())],
+                            }),
+                            Block::Paragraph(Paragraph {
+                                style: ParaStyle::default(),
+                                inlines: vec![
+                                    text_run("각주 둘째", CharStyle::default()),
+                                    Inline::LineBreak,
+                                    text_run("줄", CharStyle::default()),
+                                ],
+                            }),
+                        ],
+                    }),
+                    text_run("중간", CharStyle::default()),
+                    Inline::Note(Note {
+                        kind: NoteKind::Endnote,
+                        number: Some(7),
+                        instance_id: Some("42".into()),
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![text_run("미주 본문", CharStyle::default())],
+                        })],
+                    }),
+                    text_run("뒤", CharStyle::default()),
+                ],
+            })],
+        };
+
+        let items = emit_document(&doc);
+        assert_eq!(
+            items.len(),
+            7,
+            "paragraph + three runs + two notes + second footnote paragraph"
+        );
+        assert_eq!(items[1].props["text"], "앞");
+        assert_eq!(items[2].r#type, Some("footnote"));
+        assert_eq!(items[2].parent.as_deref(), Some("/body/p[last()]"));
+        assert_eq!(items[2].props["text"], "각주 첫 문단");
+        assert_eq!(items[3].r#type, Some("paragraph"));
+        assert_eq!(items[3].parent.as_deref(), Some("/footnote[1]"));
+        assert_eq!(items[3].props["text"], "각주 둘째\u{000B}줄");
+        assert_eq!(items[4].props["text"], "중간");
+        assert_eq!(items[5].r#type, Some("endnote"));
+        assert_eq!(items[5].parent.as_deref(), Some("/body/p[last()]"));
+        assert_eq!(items[5].props["text"], "미주 본문");
+        assert_eq!(items[6].props["text"], "뒤");
+    }
+
+    #[test]
+    fn note_body_keeps_run_formatting_and_empty_paragraphs() {
+        let doc = Document {
+            blocks: vec![Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![Inline::Note(Note {
+                    kind: NoteKind::Footnote,
+                    number: None,
+                    instance_id: None,
+                    blocks: vec![
+                        Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![
+                                text_run("보통", CharStyle::default()),
+                                text_run("굵게", bold()),
+                            ],
+                        }),
+                        Block::Paragraph(Paragraph {
+                            style: ParaStyle {
+                                align: Some(Align::Center),
+                                ..ParaStyle::default()
+                            },
+                            inlines: vec![],
+                        }),
+                    ],
+                })],
+            })],
+        };
+
+        let items = emit_document(&doc);
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[1].r#type, Some(TYPE_FOOTNOTE));
+        assert_eq!(items[1].props["text"], "보통");
+        assert_eq!(items[2].r#type, Some(TYPE_RUN));
+        assert_eq!(items[2].parent.as_deref(), Some("/footnote[1]/p[1]"));
+        assert_eq!(items[2].props["text"], "굵게");
+        assert_eq!(items[2].props["bold"], "true");
+        assert_eq!(items[3].r#type, Some(TYPE_PARAGRAPH));
+        assert_eq!(items[3].parent.as_deref(), Some("/footnote[1]"));
+        assert_eq!(items[3].props["align"], "center");
+        assert!(!items[3].props.contains_key("text"));
+    }
+
+    #[test]
+    fn note_followup_paths_count_each_kind_across_body_blocks() {
+        fn note_block(kind: NoteKind, text: &str) -> Block {
+            Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![Inline::Note(Note {
+                    kind,
+                    number: None,
+                    instance_id: None,
+                    blocks: vec![
+                        Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![text_run(text, CharStyle::default())],
+                        }),
+                        Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![text_run("둘째", CharStyle::default())],
+                        }),
+                    ],
+                })],
+            })
+        }
+
+        let doc = Document {
+            blocks: vec![
+                note_block(NoteKind::Footnote, "각주1"),
+                note_block(NoteKind::Endnote, "미주1"),
+                note_block(NoteKind::Footnote, "각주2"),
+            ],
+        };
+        let items = emit_document(&doc);
+
+        let followup_parents: Vec<_> = items
+            .iter()
+            .filter(|item| item.r#type == Some(TYPE_PARAGRAPH))
+            .filter_map(|item| item.parent.as_deref())
+            .filter(|parent| parent.starts_with("/footnote") || parent.starts_with("/endnote"))
+            .collect();
+        assert_eq!(
+            followup_parents,
+            vec!["/footnote[1]", "/endnote[1]", "/footnote[2]"]
+        );
     }
 
     #[test]

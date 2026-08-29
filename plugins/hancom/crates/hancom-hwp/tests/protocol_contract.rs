@@ -283,6 +283,42 @@ fn dump_emits_one_json_object_per_line() {
 }
 
 #[test]
+fn dump_emits_structural_footnotes_and_endnotes_in_inline_order() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}">
+        <hp:t>앞</hp:t><hp:ctrl><hp:footNote number="3" instId="41"><hp:subList>
+          <hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:autoNum num="3" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>각주 첫 문단</hp:t></hp:run></hp:p>
+          <hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:t>각주 둘째</hp:t><hp:lineBreak/><hp:t>줄</hp:t></hp:run></hp:p>
+        </hp:subList></hp:footNote></hp:ctrl>
+        <hp:t>중간</hp:t><hp:ctrl><hp:endNote number="7" instId="42"><hp:subList>
+          <hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:autoNum num="7" numType="ENDNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>미주 본문</hp:t></hp:run></hp:p>
+        </hp:subList></hp:endNote></hp:ctrl><hp:t>뒤</hp:t>
+        </hp:run></hp:p>"#
+    ));
+
+    let items: Vec<Value> = dump_stdout(&builder)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid batch item"))
+        .collect();
+
+    assert_eq!(items.len(), 7);
+    assert_eq!(items[1]["props"]["text"], "앞");
+    assert_eq!(items[2]["type"], "footnote");
+    assert_eq!(items[2]["parent"], "/body/p[last()]");
+    assert_eq!(items[2]["props"]["text"], "각주 첫 문단");
+    assert_eq!(items[3]["type"], "paragraph");
+    assert_eq!(items[3]["parent"], "/footnote[1]");
+    assert_eq!(items[3]["props"]["text"], "각주 둘째\u{000B}줄");
+    assert_eq!(items[4]["props"]["text"], "중간");
+    assert_eq!(items[5]["type"], "endnote");
+    assert_eq!(items[5]["props"]["text"], "미주 본문");
+    assert_eq!(items[6]["props"]["text"], "뒤");
+}
+
+#[test]
 fn canonical_binary_reads_owpml_and_single_xml_hml() {
     let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"]).write_to_temp("sample.owpml");
     let owpml_out = canonical_plugin()

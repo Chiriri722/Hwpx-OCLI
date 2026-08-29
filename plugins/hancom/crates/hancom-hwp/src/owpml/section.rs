@@ -14,7 +14,9 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use super::model::{Block, Cell, Image, Inline, Paragraph, Table, TextField, TextRun};
+use super::model::{
+    Block, Cell, Image, Inline, Note, NoteKind, Paragraph, Table, TextField, TextRun,
+};
 use super::styles::{normalize_color, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
 use crate::error::{PluginError, Result};
@@ -98,6 +100,20 @@ fn parse_paragraph(
                     }
                     "tab" => current.inlines.push(Inline::Tab),
                     "lineBreak" | "linebreak" => current.inlines.push(Inline::LineBreak),
+                    "footNote" | "endNote" if depth < MAX_DEPTH => {
+                        let owned = e.into_owned();
+                        current.inlines.push(Inline::Note(parse_note(
+                            reader,
+                            &owned,
+                            styles,
+                            depth + 1,
+                        )?));
+                    }
+                    "footNote" | "endNote" => {
+                        return Err(PluginError::corrupt(format!(
+                            "note nesting exceeds the maximum depth of {MAX_DEPTH}"
+                        )));
+                    }
                     "tbl" if depth < MAX_DEPTH => {
                         // 표 앞까지의 문단을 먼저 확정한다.
                         flush_paragraph(&mut out, &mut current, &para_style);
@@ -194,6 +210,116 @@ fn parse_paragraph(
     }
 
     Ok(out)
+}
+
+/// `hp:footNote`/`hp:endNote`와 필수 `hp:subList` 본문을 읽는다.
+///
+/// 주석 요소 전체를 여기서 소비해야 바깥 문단 파서가 주석 본문의 텍스트를 본문
+/// 런으로 오인하지 않는다. `subList` 안의 문단/표 순서는 일반 문단 파서에 맡긴다.
+fn parse_note(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    styles: &StyleTable,
+    depth: usize,
+) -> Result<Note> {
+    let tag = local_name(start.name().as_ref());
+    let kind = match tag.as_str() {
+        "footNote" => NoteKind::Footnote,
+        "endNote" => NoteKind::Endnote,
+        _ => {
+            return Err(PluginError::corrupt(format!(
+                "unexpected note element {tag}"
+            )));
+        }
+    };
+
+    let mut blocks = Vec::new();
+    let mut saw_sub_list = false;
+    let mut sub_list_depth = 0usize;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected end of XML inside {tag}"
+                )));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                match name.as_str() {
+                    "subList" if sub_list_depth == 0 => {
+                        if saw_sub_list {
+                            return Err(PluginError::corrupt(format!(
+                                "{tag} contains more than one subList"
+                            )));
+                        }
+                        saw_sub_list = true;
+                        sub_list_depth = 1;
+                    }
+                    "subList" => sub_list_depth += 1,
+                    "p" if sub_list_depth == 1 => {
+                        let owned = event.into_owned();
+                        blocks.extend(parse_paragraph(reader, &owned, styles, depth)?);
+                    }
+                    _ if sub_list_depth == 0 => {
+                        return Err(PluginError::corrupt(format!(
+                            "{tag} contains {name} outside subList"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(event) => {
+                let name = local_name(event.name().as_ref());
+                if name == "subList" && sub_list_depth > 0 {
+                    sub_list_depth -= 1;
+                } else if name == tag {
+                    if sub_list_depth != 0 {
+                        return Err(PluginError::corrupt(format!(
+                            "{tag} ended before its subList"
+                        )));
+                    }
+                    break;
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if !saw_sub_list {
+        return Err(PluginError::corrupt(format!(
+            "{tag} is missing its required subList"
+        )));
+    }
+    // 한/글은 주석 본문 안의 주석을 표현하지 못하며 그런 파일을 열 때 오류를
+    // 낸다. 하위 표 셀까지 검사해 잘못된 참조 그래프를 DOCX로 재생하지 않는다.
+    if blocks_contain_note(&blocks) {
+        return Err(PluginError::corrupt(format!(
+            "{tag} contains a nested footnote or endnote"
+        )));
+    }
+
+    Ok(Note {
+        kind,
+        number: attr_usize(start, "number"),
+        instance_id: attr(start, "instId"),
+        blocks,
+    })
+}
+
+fn blocks_contain_note(blocks: &[Block]) -> bool {
+    blocks.iter().any(|block| match block {
+        Block::Paragraph(paragraph) => paragraph
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, Inline::Note(_))),
+        Block::Table(table) => table
+            .cells
+            .iter()
+            .any(|cell| blocks_contain_note(&cell.blocks)),
+    })
 }
 
 /// 텍스트가 있을 때만 문단을 확정하고, `current`를 새 문단으로 갈아끼운다.

@@ -5,7 +5,7 @@ mod common;
 use std::io::Cursor;
 
 use common::*;
-use officecli_hwpx::owpml::model::{Align, Block, Inline, VertAlign};
+use officecli_hwpx::owpml::model::{Align, Block, Inline, NoteKind, VertAlign};
 use officecli_hwpx::owpml::read_document_from;
 
 fn parse(b: &HwpxBuilder) -> officecli_hwpx::owpml::model::Document {
@@ -160,6 +160,131 @@ fn reads_line_break_as_inline_not_paragraph_split() {
         p.inlines.iter().any(|i| matches!(i, Inline::LineBreak)),
         "lineBreak inline must be recorded"
     );
+}
+
+#[test]
+fn reads_footnotes_and_endnotes_as_ordered_inline_notes() {
+    // OWPML ParaList schema: hp:ctrl contains hp:footNote/hp:endNote and each
+    // NoteType owns exactly one hp:subList (a ParaListType). The leading
+    // autoNum control mirrors an HWPX created in Hancom and published at
+    // https://github.com/msjang/pypandoc-hwpx/issues/1.
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let pp = b.para_pr(ParaPr::default());
+    b.section(format!(
+        r#"<hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}">
+        <hp:t>앞</hp:t><hp:ctrl><hp:footNote number="3" instId="41"><hp:subList>
+          <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:ctrl><hp:autoNum num="3" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>각주 첫 문단</hp:t></hp:run></hp:p>
+          <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:t>각주 둘째</hp:t><hp:lineBreak/><hp:t>줄</hp:t></hp:run></hp:p>
+        </hp:subList></hp:footNote></hp:ctrl>
+        <hp:t>중간</hp:t><hp:ctrl><hp:endNote number="7" instId="42"><hp:subList>
+          <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:ctrl><hp:autoNum num="7" numType="ENDNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>미주 본문</hp:t></hp:run></hp:p>
+        </hp:subList></hp:endNote></hp:ctrl><hp:t>뒤</hp:t>
+        </hp:run></hp:p>"#
+    ));
+
+    let doc = parse(&b);
+    assert_eq!(
+        doc.paragraphs().count(),
+        1,
+        "note body paragraphs are not body blocks"
+    );
+    let body = doc.paragraphs().next().expect("body paragraph");
+    assert_eq!(
+        body.plain_text(),
+        "앞중간뒤",
+        "note text must not leak into body text"
+    );
+
+    let notes: Vec<_> = body
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Note(note) => Some(note),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[0].kind, NoteKind::Footnote);
+    assert_eq!(notes[0].number, Some(3));
+    assert_eq!(notes[0].instance_id.as_deref(), Some("41"));
+    assert_eq!(
+        notes[0]
+            .paragraphs()
+            .map(|p| p.plain_text())
+            .collect::<Vec<_>>(),
+        vec!["각주 첫 문단", "각주 둘째\n줄",]
+    );
+    assert_eq!(notes[1].kind, NoteKind::Endnote);
+    assert_eq!(notes[1].number, Some(7));
+    assert_eq!(
+        notes[1]
+            .paragraphs()
+            .next()
+            .expect("endnote paragraph")
+            .plain_text(),
+        "미주 본문"
+    );
+}
+
+#[test]
+fn rejects_a_note_without_the_schema_required_sublist() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+        <hp:ctrl><hp:footNote number="1" instId="9"/></hp:ctrl>
+        </hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("a NoteType without subList must be rejected");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("required subList"), "{error:?}");
+}
+
+#[test]
+fn rejects_note_content_outside_the_schema_required_sublist() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+        <hp:ctrl><hp:footNote number="1" instId="9">
+          <hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>유실되면 안 됨</hp:t></hp:run></hp:p>
+          <hp:subList/>
+        </hp:footNote></hp:ctrl>
+        </hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("NoteType children outside subList must not be dropped");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("outside subList"), "{error:?}");
+}
+
+#[test]
+fn rejects_notes_nested_inside_another_note() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+        <hp:ctrl><hp:footNote number="1"><hp:subList>
+          <hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+            <hp:t>바깥</hp:t><hp:ctrl><hp:endNote number="1"><hp:subList>
+              <hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>안쪽</hp:t></hp:run></hp:p>
+            </hp:subList></hp:endNote></hp:ctrl>
+          </hp:run></hp:p>
+        </hp:subList></hp:footNote></hp:ctrl>
+        </hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("nested notes are not a valid Hancom note graph");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("nested footnote or endnote"));
 }
 
 #[test]

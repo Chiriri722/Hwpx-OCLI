@@ -193,12 +193,49 @@ impl TextField {
     }
 }
 
+/// 문단 안의 각주/미주 참조가 가리키는 주석 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteKind {
+    Footnote,
+    Endnote,
+}
+
+/// HWPX `hp:footNote`/`hp:endNote`와 그 `hp:subList` 본문.
+///
+/// 주석 본문도 문단과 표를 가질 수 있으므로 셀과 마찬가지로 블록 순서를 그대로
+/// 보존한다. `number`는 표시 번호가 아니라 원본의 `number` 속성이다. DOCX 쪽
+/// ID는 출력 순서에 맞춰 호스트가 새로 할당한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Note {
+    pub kind: NoteKind,
+    pub number: Option<usize>,
+    pub instance_id: Option<String>,
+    pub blocks: Vec<Block>,
+}
+
+impl Note {
+    pub fn paragraphs(&self) -> impl Iterator<Item = &Paragraph> {
+        self.blocks.iter().filter_map(|block| match block {
+            Block::Paragraph(paragraph) => Some(paragraph),
+            Block::Table(_) => None,
+        })
+    }
+
+    pub fn tables(&self) -> impl Iterator<Item = &Table> {
+        self.blocks.iter().filter_map(|block| match block {
+            Block::Table(table) => Some(table),
+            Block::Paragraph(_) => None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text(TextRun),
     Image(Image),
     CheckBox(CheckBox),
     TextField(TextField),
+    Note(Note),
     /// `hp:lineBreak` — 문단 내 줄바꿈.
     LineBreak,
     /// `hp:tab`.
@@ -220,7 +257,8 @@ impl Paragraph {
                 Inline::Text(r) => out.push_str(&r.text),
                 Inline::Tab => out.push('\t'),
                 Inline::LineBreak => out.push('\n'),
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) => {}
+                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {
+                }
             }
         }
         out
@@ -242,7 +280,9 @@ impl Paragraph {
                 // 탭/줄바꿈은 text prop 안에서 문자로 표현할 수 있으므로 허용한다.
                 Inline::Tab | Inline::LineBreak => {}
                 // 이미지와 체크박스는 별도 자식 명령이 필요하므로 병합 불가.
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) => return None,
+                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {
+                    return None
+                }
             }
         }
         found
@@ -259,7 +299,7 @@ impl Paragraph {
         self.inlines.iter().any(|i| {
             matches!(
                 i,
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_)
+                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_)
             )
         })
     }
@@ -462,8 +502,12 @@ impl Document {
                 match b {
                     Block::Paragraph(p) => {
                         for inline in &p.inlines {
-                            if let Inline::Text(r) = inline {
-                                n += r.text.chars().filter(|c| is_private_use(*c)).count();
+                            match inline {
+                                Inline::Text(r) => {
+                                    n += r.text.chars().filter(|c| is_private_use(*c)).count();
+                                }
+                                Inline::Note(note) => n += walk(&note.blocks),
+                                _ => {}
                             }
                         }
                     }

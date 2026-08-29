@@ -1450,7 +1450,8 @@ fn paragraph_has_content(paragraph: &Paragraph) -> bool {
         | Inline::LineBreak
         | Inline::Image(_)
         | Inline::CheckBox(_)
-        | Inline::TextField(_) => true,
+        | Inline::TextField(_)
+        | Inline::Note(_) => true,
     })
 }
 

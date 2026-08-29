@@ -112,17 +112,21 @@ fn resolve_in_inlines<R: Read + Seek>(
     budget: &mut ImageBudget,
 ) -> Result<()> {
     for inline in inlines {
-        if let Inline::Image(img) = inline {
-            budget.record_reference()?;
-            if let Some(bytes) = img.data.as_ref() {
-                budget.record_output_bytes(bytes.len())?;
-                continue;
+        match inline {
+            Inline::Image(img) => {
+                budget.record_reference()?;
+                if let Some(bytes) = img.data.as_ref() {
+                    budget.record_output_bytes(bytes.len())?;
+                    continue;
+                }
+                if let Some((bytes, ctype)) = pkg.read_bin_item(&img.bin_item_id)? {
+                    budget.record_output_bytes(bytes.len())?;
+                    img.data = Some(bytes);
+                    img.content_type = Some(ctype);
+                }
             }
-            if let Some((bytes, ctype)) = pkg.read_bin_item(&img.bin_item_id)? {
-                budget.record_output_bytes(bytes.len())?;
-                img.data = Some(bytes);
-                img.content_type = Some(ctype);
-            }
+            Inline::Note(note) => resolve_in_blocks(pkg, &mut note.blocks, budget)?,
+            _ => {}
         }
     }
     Ok(())
