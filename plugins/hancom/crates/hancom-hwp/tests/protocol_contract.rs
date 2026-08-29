@@ -211,6 +211,22 @@ fn distributed_docs_include_required_hancom_notice() {
 }
 
 #[test]
+fn distributed_notice_attributes_the_pinned_rhwp_parser_sources() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let notice = std::fs::read_to_string(root.join("NOTICE")).expect("read plugin NOTICE");
+    for required in [
+        "RHWP commit 496333b27d21ddb9114ba9ae340bcb895870c9a7",
+        "Copyright (c) 2025-2026 Edward Kim",
+        "The above copyright notice and this permission notice shall be included",
+    ] {
+        assert!(
+            notice.contains(required),
+            "NOTICE is missing RHWP attribution: {required}"
+        );
+    }
+}
+
+#[test]
 fn info_does_not_declare_reserved_kinds() {
     // §2.4: engine / transformer는 v1에서 선언 금지
     let m = info_manifest();
@@ -465,6 +481,34 @@ fn unsupported_hwpml_control_exits_three_without_partial_stdout() {
     let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
     assert!(out.get_output().stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.get_output().stderr).contains("EQUATION"));
+}
+
+#[test]
+fn unsupported_late_equation_exits_three_without_partial_stdout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("unsupported-equation.hwpx");
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>먼저 성공할 본문</hp:t></hp:run></hp:p>
+        <hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:equation>
+          <hp:pos treatAsChar="1"/><hp:script>LONGDIV {{2}}{{3}}{{6}}</hp:script>
+        </hp:equation></hp:run></hp:p>"#
+    ));
+    std::fs::write(&path, builder.build()).expect("write HWPX");
+
+    let output = canonical_plugin()
+        .arg("dump")
+        .arg(path)
+        .output()
+        .expect("run canonical plugin");
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        output.stdout.is_empty(),
+        "a later equation failure must not leak earlier BatchItems"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("LONGDIV"));
 }
 
 #[test]

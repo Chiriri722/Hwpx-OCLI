@@ -5,6 +5,7 @@ mod common;
 use std::io::Cursor;
 
 use common::*;
+use officecli_hwpx::emit::word::emit_document;
 use officecli_hwpx::owpml::model::{Align, Block, Inline, NoteKind, VertAlign};
 use officecli_hwpx::owpml::read_document_from;
 
@@ -16,10 +17,7 @@ fn parse(b: &HwpxBuilder) -> officecli_hwpx::owpml::model::Document {
 fn reads_paragraph_text_in_order() {
     let doc = parse(&simple_doc(&["첫 번째 문단", "두 번째 문단", "세 번째"]));
     let texts: Vec<String> = doc.paragraphs().map(|p| p.plain_text()).collect();
-    assert_eq!(
-        texts,
-        vec!["첫 번째 문단", "두 번째 문단", "세 번째"]
-    );
+    assert_eq!(texts, vec!["첫 번째 문단", "두 번째 문단", "세 번째"]);
 }
 
 #[test]
@@ -44,10 +42,7 @@ fn applies_char_properties_from_header() {
         ..Default::default()
     });
     let pp = b.para_pr(ParaPr::default());
-    b.section(para_with_runs(
-        &pp,
-        &[(&plain, "보통 "), (&fancy, "강조")],
-    ));
+    b.section(para_with_runs(&pp, &[(&plain, "보통 "), (&fancy, "강조")]));
 
     let doc = parse(&b);
     let p = doc.paragraphs().next().expect("one paragraph");
@@ -80,7 +75,10 @@ fn merges_adjacent_runs_with_identical_style() {
     let cp = b.char_pr(CharPr::plain());
     let pp = b.para_pr(ParaPr::default());
     // 같은 charPr을 쓰는 런 3개 → 하나로 합쳐져야 한다.
-    b.section(para_with_runs(&pp, &[(&cp, "가"), (&cp, "나"), (&cp, "다")]));
+    b.section(para_with_runs(
+        &pp,
+        &[(&cp, "가"), (&cp, "나"), (&cp, "다")],
+    ));
 
     let doc = parse(&b);
     let p = doc.paragraphs().next().expect("paragraph");
@@ -154,11 +152,221 @@ fn reads_line_break_as_inline_not_paragraph_split() {
     b.section(para_with_linebreak(&cp, &pp, "첫줄", "둘째줄"));
 
     let doc = parse(&b);
-    assert_eq!(doc.paragraphs().count(), 1, "lineBreak must stay inside one paragraph");
+    assert_eq!(
+        doc.paragraphs().count(),
+        1,
+        "lineBreak must stay inside one paragraph"
+    );
     let p = doc.paragraphs().next().expect("paragraph");
     assert!(
         p.inlines.iter().any(|i| matches!(i, Inline::LineBreak)),
         "lineBreak inline must be recorded"
+    );
+}
+
+#[test]
+fn converts_a_real_hancom_equation_script_to_inline_latex() {
+    // Structure and script copied from hwpxlib's Apache-2.0 SimpleEquation.hwpx
+    // fixture at pinned commit 96ff157eb5973ba1bcf96c00c1b0993d61a718a0.
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r##"<hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}">
+        <hp:equation id="1137177714" zOrder="0" numberingType="EQUATION"
+          textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0"
+          version="Equation Version 60" baseLine="61" textColor="#000000"
+          baseUnit="1100" lineMode="CHAR" font="HYhwpEQ">
+          <hp:sz width="3825" widthRelTo="ABSOLUTE" height="3311" heightRelTo="ABSOLUTE" protect="0"/>
+          <hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0"
+            holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP"
+            horzAlign="LEFT" vertOffset="0" horzOffset="0"/>
+          <hp:outMargin left="56" right="56" top="0" bottom="0"/>
+          <hp:shapeComment>수식입니다.</hp:shapeComment>
+          <hp:script>{{"123"}} over {{123 sqrt {{3466}}}} sum _{{34}} ^{{12}}</hp:script>
+        </hp:equation><hp:t>뒤</hp:t></hp:run></hp:p>"##
+    ));
+
+    let doc = parse(&builder);
+    let items = emit_document(&doc);
+    let equation = items
+        .iter()
+        .find(|item| item.r#type == Some("equation"))
+        .expect("the equation must not be silently dropped");
+
+    assert_eq!(equation.parent.as_deref(), Some("/body/p[last()]"));
+    assert_eq!(equation.props["mode"], "inline");
+    assert_eq!(
+        equation.props["formula"],
+        r#"\frac{\text{123}}{123\sqrt{3466}}\sum_{34}^{12}"#
+    );
+}
+
+#[test]
+fn preserves_multiple_equations_cdata_color_and_surrounding_text_order() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r##"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+        <hp:t>앞</hp:t><hp:equation textColor="#ff0000">
+          <hp:pos treatAsChar="true"/><hp:script><![CDATA[alpha + beta]]></hp:script>
+        </hp:equation><hp:t>중간</hp:t><hp:equation textColor="#000000">
+          <hp:pos treatAsChar="1"/><hp:script>gamma SUB 1</hp:script>
+        </hp:equation><hp:t>뒤</hp:t></hp:run></hp:p>"##
+    ));
+
+    let doc = parse(&builder);
+    let paragraph = doc.paragraphs().next().expect("body paragraph");
+    assert_eq!(
+        paragraph.plain_text(),
+        "앞중간뒤",
+        "scripts must not leak into text"
+    );
+
+    let items = emit_document(&doc);
+    let equation_indexes: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| (item.r#type == Some("equation")).then_some(index))
+        .collect();
+    assert_eq!(equation_indexes.len(), 2);
+    let first = equation_indexes[0];
+    let second = equation_indexes[1];
+    assert_eq!(items[first].props["mode"], "inline");
+    assert_eq!(items[first].props["formula"], r#"\color{#FF0000}{α+β}"#);
+    assert_eq!(items[second].props["formula"], r#"{γ}_{1}"#);
+    assert_eq!(items[first - 1].props["text"], "앞");
+    assert_eq!(items[first + 1].props["text"], "중간");
+    assert_eq!(items[second - 1].props["text"], "중간");
+    assert_eq!(items[second + 1].props["text"], "뒤");
+}
+
+#[test]
+fn preserves_an_inline_equation_inside_a_table_cell() {
+    let mut builder = HwpxBuilder::new();
+    builder.char_pr(CharPr::plain());
+    builder.para_pr(ParaPr::default());
+    let table_xml = table(1, 1, &[CellSpec::new(0, 0, "__EQUATION_CELL__")]);
+    let equation_paragraph = concat!(
+        r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>앞</hp:t>"#,
+        r#"<hp:equation><hp:pos treatAsChar="1"/><hp:script>x over y</hp:script></hp:equation>"#,
+        r#"<hp:t>뒤</hp:t></hp:run></hp:p>"#,
+    );
+    builder.section(table_xml.replace(&para("0", "0", "__EQUATION_CELL__"), equation_paragraph));
+
+    let items = emit_document(&parse(&builder));
+    let cell_parent = "/body/tbl[last()]/tr[1]/tc[1]/p[1]";
+    let children: Vec<_> = items
+        .iter()
+        .filter(|item| item.parent.as_deref() == Some(cell_parent))
+        .collect();
+    assert_eq!(children.len(), 3);
+    assert_eq!(children[0].props["text"], "앞");
+    assert_eq!(children[1].r#type, Some("equation"));
+    assert_eq!(children[1].props["formula"], r#"\frac{x}{y}"#);
+    assert_eq!(children[1].props["mode"], "inline");
+    assert_eq!(children[2].props["text"], "뒤");
+}
+
+#[test]
+fn emits_a_standalone_non_character_equation_in_display_mode() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">
+        <hp:equation><hp:pos treatAsChar="0"/><hp:script>x over y</hp:script></hp:equation>
+        </hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    assert_eq!(items.len(), 1, "do not leave a synthetic empty paragraph");
+    assert_eq!(items[0].parent.as_deref(), Some("/body"));
+    assert_eq!(items[0].r#type, Some("equation"));
+    assert_eq!(items[0].props["mode"], "display");
+    assert_eq!(items[0].props["formula"], r#"\frac{x}{y}"#);
+}
+
+#[test]
+fn rejects_malformed_or_lossy_equations_instead_of_dropping_them() {
+    let cases = [
+        (
+            r#"<hp:equation><hp:pos treatAsChar="1"/></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "required script",
+        ),
+        (
+            r#"<hp:equation><hp:script>x</hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "required pos",
+        ),
+        (
+            r#"<hp:equation><hp:pos treatAsChar="1"/><hp:script><hp:t>x</hp:t></hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "nested element",
+        ),
+        (
+            r#"<hp:equation><hp:pos treatAsChar="1"/><hp:script>LONGDIV {2}{3}{6}</hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "LONGDIV",
+        ),
+        (
+            r#"<hp:equation><hp:pos treatAsChar="1"/><hp:script>x</hp:script><hp:script>y</hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "more than one script",
+        ),
+        (
+            r#"<hp:equation><hp:pos treatAsChar="1"/><hp:pos treatAsChar="1"/><hp:script>x</hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "more than one pos",
+        ),
+        (
+            r#"<hp:equation><hp:pos treatAsChar="sometimes"/><hp:script>x</hp:script></hp:equation>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "invalid treatAsChar",
+        ),
+        (
+            r##"<hp:equation textColor="#GG0000"><hp:pos treatAsChar="1"/><hp:script>x</hp:script></hp:equation>"##,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "invalid textColor",
+        ),
+    ];
+
+    for (equation, code, message) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{equation}</hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("malformed or lossy equation must fail closed");
+        assert_eq!(error.code, code, "{equation}");
+        assert!(error.message.contains(message), "{error:?}");
+    }
+}
+
+#[test]
+fn rejects_display_equation_mixed_with_paragraph_text() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>앞</hp:t>
+        <hp:equation><hp:pos treatAsChar="0"/><hp:script>x</hp:script></hp:equation>
+        </hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("ambiguous display ordering must not be guessed");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(
+        error.message.contains("display equation mixed"),
+        "{error:?}"
     );
 }
 
@@ -383,11 +591,7 @@ fn preserves_checkboxes_inside_nested_tables() {
     let mut boxes = Vec::new();
     collect_boxes(&doc.blocks, &mut boxes);
 
-    assert_eq!(
-        boxes.len(),
-        2,
-        "checkboxes in a nested table must survive"
-    );
+    assert_eq!(boxes.len(), 2, "checkboxes in a nested table must survive");
     let names: Vec<&str> = boxes.iter().filter_map(|b| b.name.as_deref()).collect();
     assert!(names.contains(&"CheckBox11"), "got {names:?}");
     assert!(names.contains(&"CheckBox12"), "got {names:?}");
@@ -401,7 +605,12 @@ fn empty_click_here_field_becomes_a_text_field() {
     let mut b = HwpxBuilder::new();
     let cp = b.char_pr(CharPr::plain());
     b.para_pr(ParaPr::default());
-    b.section(para_with_click_here(&cp, "1520616239", "기재하지 마세요.", ""));
+    b.section(para_with_click_here(
+        &cp,
+        "1520616239",
+        "기재하지 마세요.",
+        "",
+    ));
 
     let doc = parse(&b);
     let p = doc.paragraphs().next().expect("paragraph");

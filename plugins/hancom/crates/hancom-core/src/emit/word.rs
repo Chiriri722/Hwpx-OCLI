@@ -22,7 +22,7 @@ use base64::Engine;
 
 use super::batch::BatchItem;
 use crate::model::{
-    Block, Cell, CharStyle, CheckBox, Document, Image, Inline, Note, NoteKind, ParaStyle,
+    Block, Cell, CharStyle, CheckBox, Document, Equation, Image, Inline, Note, NoteKind, ParaStyle,
     Paragraph, Table, TextField, VertAlign,
 };
 
@@ -58,6 +58,7 @@ const TYPE_RUN: &str = "run";
 const TYPE_TABLE: &str = "table";
 const TYPE_PICTURE: &str = "picture";
 const TYPE_FORMFIELD: &str = "formfield";
+const TYPE_EQUATION: &str = "equation";
 const TYPE_FOOTNOTE: &str = "footnote";
 const TYPE_ENDNOTE: &str = "endnote";
 
@@ -135,6 +136,11 @@ pub fn try_emit_document<E>(
 }
 
 fn emit_paragraph(p: &Paragraph, state: &mut EmitState, out: &mut Vec<BatchItem>) {
+    if let Some(equation) = p.sole_display_equation() {
+        out.push(equation_item("/body", equation));
+        return;
+    }
+
     let uniform = p.uniform_style();
 
     // 케이스 1: 서식이 균일하고 별도 자식이 필요 없으면 한 줄로 병합한다.
@@ -220,10 +226,20 @@ fn emit_inline_children(
                 flush_pending(&mut pending, parent, out);
                 emit_note(note, parent, state, out);
             }
+            Inline::Equation(equation) => {
+                flush_pending(&mut pending, parent, out);
+                out.push(equation_item(parent, equation));
+            }
         }
     }
 
     flush_pending(&mut pending, parent, out);
+}
+
+fn equation_item(parent: &str, equation: &Equation) -> BatchItem {
+    BatchItem::add(parent, TYPE_EQUATION)
+        .prop("formula", equation.formula.clone())
+        .prop("mode", equation.mode.as_docx())
 }
 
 /// 각주/미주 참조와 본문을 구조적으로 내보낸다.
@@ -380,7 +396,11 @@ fn flatten_inlines(p: &Paragraph, brk: char) -> String {
             Inline::Tab => out.push('\t'),
             Inline::LineBreak => out.push(brk),
             // 별도 자식 명령으로 나가므로 텍스트에는 넣지 않는다.
-            Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {}
+            Inline::Image(_)
+            | Inline::CheckBox(_)
+            | Inline::TextField(_)
+            | Inline::Note(_)
+            | Inline::Equation(_) => {}
         }
     }
     normalize_breaks(&out, brk)
@@ -748,7 +768,7 @@ fn trim_float(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Align, Note, NoteKind, TextRun};
+    use crate::model::{Align, EquationMode, Note, NoteKind, TextRun};
 
     fn text_run(t: &str, style: CharStyle) -> Inline {
         Inline::Text(TextRun {
@@ -808,6 +828,86 @@ mod tests {
         assert_eq!(items[1].props["text"], "보통 ");
         assert_eq!(items[2].props["text"], "굵게");
         assert_eq!(items[2].props["bold"], "true");
+    }
+
+    #[test]
+    fn multiple_inline_equations_preserve_sibling_order() {
+        let equation = |formula: &str| {
+            Inline::Equation(Equation {
+                formula: formula.to_string(),
+                mode: EquationMode::Inline,
+            })
+        };
+        let doc = Document {
+            blocks: vec![Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![
+                    text_run("A", CharStyle::default()),
+                    equation("x_1"),
+                    text_run("B", CharStyle::default()),
+                    equation("y^2"),
+                    text_run("C", CharStyle::default()),
+                ],
+            })],
+        };
+
+        let items = emit_document(&doc);
+        assert_eq!(items.len(), 6);
+        assert_eq!(items[0].r#type, Some(TYPE_PARAGRAPH));
+        assert_eq!(items[1].props["text"], "A");
+        assert_eq!(items[2].r#type, Some(TYPE_EQUATION));
+        assert_eq!(items[2].props["formula"], "x_1");
+        assert_eq!(items[3].props["text"], "B");
+        assert_eq!(items[4].r#type, Some(TYPE_EQUATION));
+        assert_eq!(items[4].props["formula"], "y^2");
+        assert_eq!(items[5].props["text"], "C");
+        assert!(items[1..]
+            .iter()
+            .all(|item| item.parent.as_deref() == Some(LAST_PARAGRAPH)));
+    }
+
+    #[test]
+    fn inline_equation_inside_a_table_cell_keeps_its_cell_parent() {
+        let cell = Cell {
+            row: 0,
+            col: 0,
+            row_span: 1,
+            col_span: 1,
+            width_twip: None,
+            fill: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![
+                    text_run("앞", CharStyle::default()),
+                    Inline::Equation(Equation {
+                        formula: r"\frac{x}{y}".to_string(),
+                        mode: EquationMode::Inline,
+                    }),
+                    text_run("뒤", CharStyle::default()),
+                ],
+            })],
+        };
+        let doc = Document {
+            blocks: vec![Block::Table(Table {
+                rows: 1,
+                cols: 1,
+                col_widths_twip: Vec::new(),
+                cells: vec![cell],
+            })],
+        };
+
+        let items = emit_document(&doc);
+        let cell_parent = "/body/tbl[last()]/tr[1]/tc[1]/p[1]";
+        let children: Vec<_> = items
+            .iter()
+            .filter(|item| item.parent.as_deref() == Some(cell_parent))
+            .collect();
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].props["text"], "앞");
+        assert_eq!(children[1].r#type, Some(TYPE_EQUATION));
+        assert_eq!(children[1].props["formula"], r"\frac{x}{y}");
+        assert_eq!(children[1].props["mode"], "inline");
+        assert_eq!(children[2].props["text"], "뒤");
     }
 
     #[test]

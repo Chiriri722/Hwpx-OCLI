@@ -15,7 +15,8 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use super::model::{
-    Block, Cell, Image, Inline, Note, NoteKind, Paragraph, Table, TextField, TextRun,
+    Block, Cell, Equation, EquationMode, Image, Inline, Note, NoteKind, Paragraph, Table,
+    TextField, TextRun,
 };
 use super::styles::{normalize_color, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
@@ -100,6 +101,12 @@ fn parse_paragraph(
                     }
                     "tab" => current.inlines.push(Inline::Tab),
                     "lineBreak" | "linebreak" => current.inlines.push(Inline::LineBreak),
+                    "equation" => {
+                        let owned = e.into_owned();
+                        current
+                            .inlines
+                            .push(Inline::Equation(parse_equation(reader, &owned)?));
+                    }
                     "footNote" | "endNote" if depth < MAX_DEPTH => {
                         let owned = e.into_owned();
                         current.inlines.push(Inline::Note(parse_note(
@@ -116,6 +123,7 @@ fn parse_paragraph(
                     }
                     "tbl" if depth < MAX_DEPTH => {
                         // 표 앞까지의 문단을 먼저 확정한다.
+                        validate_display_equation_placement(&current)?;
                         flush_paragraph(&mut out, &mut current, &para_style);
                         let owned = e.into_owned();
                         let table = parse_table(reader, &owned, styles, depth + 1)?;
@@ -165,8 +173,8 @@ fn parse_paragraph(
                     // 폼 컨트롤 체크박스. 양식 문서는 체크박스를 문자가 아니라
                     // 이 요소로 넣는다. 무시하면 체크 안 된 상자가 사라진다.
                     "checkBtn" => {
-                        let checked = attr(&e, "value")
-                            .is_some_and(|v| v.eq_ignore_ascii_case("CHECKED"));
+                        let checked =
+                            attr(&e, "value").is_some_and(|v| v.eq_ignore_ascii_case("CHECKED"));
                         let name = attr(&e, "name").filter(|s| !s.trim().is_empty());
                         current
                             .inlines
@@ -202,6 +210,8 @@ fn parse_paragraph(
         buf.clear();
     }
 
+    validate_display_equation_placement(&current)?;
+
     // 마지막 조각. 표가 하나도 없었다면 빈 문단도 살려서 문서의 빈 줄을 보존한다.
     if out.is_empty() {
         out.push(Block::Paragraph(current));
@@ -210,6 +220,144 @@ fn parse_paragraph(
     }
 
     Ok(out)
+}
+
+fn validate_display_equation_placement(paragraph: &Paragraph) -> Result<()> {
+    let display_count = paragraph
+        .inlines
+        .iter()
+        .filter(|inline| {
+            matches!(
+                inline,
+                Inline::Equation(Equation {
+                    mode: EquationMode::Display,
+                    ..
+                })
+            )
+        })
+        .count();
+    if display_count == 0 {
+        return Ok(());
+    }
+    if display_count == 1 && paragraph.inlines.len() == 1 {
+        return Ok(());
+    }
+    Err(PluginError::unsupported_feature(
+        "a display equation mixed with other paragraph content cannot be ordered without loss",
+    ))
+}
+
+/// `hp:equation`의 직접 자식 `hp:script`와 `hp:pos`를 읽고 수식을 변환한다.
+fn parse_equation(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+) -> Result<Equation> {
+    let mut script = None;
+    let mut mode = None;
+    let mut depth = 0usize;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(
+                    "unexpected end of XML inside equation",
+                ));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 && name == "script" {
+                    if script.is_some() {
+                        return Err(PluginError::corrupt(
+                            "equation contains more than one script element",
+                        ));
+                    }
+                    script = Some(read_equation_script(reader)?);
+                } else {
+                    if depth == 0 && name == "pos" {
+                        if mode.is_some() {
+                            return Err(PluginError::corrupt(
+                                "equation contains more than one pos element",
+                            ));
+                        }
+                        let raw = attr(&event, "treatAsChar").ok_or_else(|| {
+                            PluginError::corrupt("equation pos is missing treatAsChar")
+                        })?;
+                        mode = Some(match raw.trim().to_ascii_lowercase().as_str() {
+                            "1" | "true" => EquationMode::Inline,
+                            "0" | "false" => EquationMode::Display,
+                            _ => {
+                                return Err(PluginError::corrupt(format!(
+                                    "equation pos has invalid treatAsChar value {raw:?}"
+                                )));
+                            }
+                        });
+                    }
+                    depth = depth.saturating_add(1);
+                }
+            }
+            Event::End(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 && name == "equation" {
+                    break;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let source =
+        script.ok_or_else(|| PluginError::corrupt("equation is missing required script"))?;
+    let mode = mode.ok_or_else(|| PluginError::corrupt("equation is missing required pos"))?;
+    let mut formula = super::equation::to_latex(&source).map_err(|error| {
+        if error.is_unsupported() {
+            PluginError::unsupported_feature(error.to_string())
+        } else {
+            PluginError::corrupt(error.to_string())
+        }
+    })?;
+
+    let text_color = attr(start, "textColor")
+        .map(|raw| {
+            normalize_color(raw.clone()).ok_or_else(|| {
+                PluginError::corrupt(format!("equation has invalid textColor {raw:?}"))
+            })
+        })
+        .transpose()?;
+    if let Some(color) = text_color.filter(|color| color != "#000000") {
+        formula = format!(r"\color{{{color}}}{{{formula}}}");
+    }
+
+    Ok(Equation { formula, mode })
+}
+
+fn read_equation_script(reader: &mut Reader<&[u8]>) -> Result<String> {
+    let mut script = String::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(
+                    "unexpected end of XML inside equation script",
+                ));
+            }
+            Event::Text(text) => script.push_str(&text.decode()?),
+            Event::CData(text) => script.push_str(&String::from_utf8_lossy(text.as_ref())),
+            Event::GeneralRef(reference) => script.push_str(&resolve_entity(&reference)?),
+            Event::Start(event) => {
+                return Err(PluginError::corrupt(format!(
+                    "equation script contains nested element {}",
+                    local_name(event.name().as_ref())
+                )));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "script" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(script)
 }
 
 /// `hp:footNote`/`hp:endNote`와 필수 `hp:subList` 본문을 읽는다.
@@ -323,11 +471,7 @@ fn blocks_contain_note(blocks: &[Block]) -> bool {
 }
 
 /// 텍스트가 있을 때만 문단을 확정하고, `current`를 새 문단으로 갈아끼운다.
-fn flush_paragraph(
-    out: &mut Vec<Block>,
-    current: &mut Paragraph,
-    style: &super::model::ParaStyle,
-) {
+fn flush_paragraph(out: &mut Vec<Block>, current: &mut Paragraph, style: &super::model::ParaStyle) {
     let done = std::mem::replace(
         current,
         Paragraph {
@@ -521,8 +665,7 @@ fn parse_cell(
                         cell.col_span = attr_usize(&e, "colSpan").unwrap_or(1).max(1);
                     }
                     "cellSz" => {
-                        cell.width_twip =
-                            attr_i64(&e, "width").map(super::model::hwpunit_to_twip);
+                        cell.width_twip = attr_i64(&e, "width").map(super::model::hwpunit_to_twip);
                     }
                     "fillBrush" | "windowBrush" => {
                         if let Some(c) = attr(&e, "faceColor").and_then(normalize_color) {
@@ -583,12 +726,10 @@ fn parse_picture(
                     // hp:sz 또는 hp:curSz가 표시 크기를 담는다.
                     "sz" | "curSz" | "orgSz" => {
                         if width_twip.is_none() {
-                            width_twip =
-                                attr_i64(&e, "width").map(super::model::hwpunit_to_twip);
+                            width_twip = attr_i64(&e, "width").map(super::model::hwpunit_to_twip);
                         }
                         if height_twip.is_none() {
-                            height_twip =
-                                attr_i64(&e, "height").map(super::model::hwpunit_to_twip);
+                            height_twip = attr_i64(&e, "height").map(super::model::hwpunit_to_twip);
                         }
                     }
                     _ => {}

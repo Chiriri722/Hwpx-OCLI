@@ -1,5 +1,6 @@
 //! HWPX(OWPML) 판독.
 
+mod equation;
 pub mod model;
 pub mod package;
 pub mod section;
@@ -11,8 +12,8 @@ use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 use crate::error::{PluginError, Result};
-use officecli_hancom_core::budget::ResourceBudget;
 use model::{Block, Document, Inline};
+use officecli_hancom_core::budget::ResourceBudget;
 use package::Package;
 use styles::StyleTable;
 
@@ -52,9 +53,8 @@ impl ImageBudget {
 
 /// HWPX 파일을 열어 문서 모델로 만든다.
 pub fn read_document(path: &Path) -> Result<Document> {
-    let file = File::open(path).map_err(|e| {
-        PluginError::corrupt(format!("cannot open {}: {e}", path.display()))
-    })?;
+    let file = File::open(path)
+        .map_err(|e| PluginError::corrupt(format!("cannot open {}: {e}", path.display())))?;
     read_document_from(BufReader::new(file))
 }
 

@@ -1451,7 +1451,8 @@ fn paragraph_has_content(paragraph: &Paragraph) -> bool {
         | Inline::Image(_)
         | Inline::CheckBox(_)
         | Inline::TextField(_)
-        | Inline::Note(_) => true,
+        | Inline::Note(_)
+        | Inline::Equation(_) => true,
     })
 }
 

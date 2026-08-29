@@ -193,6 +193,28 @@ impl TextField {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EquationMode {
+    Inline,
+    Display,
+}
+
+impl EquationMode {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Display => "display",
+        }
+    }
+}
+
+/// HWP 수식 스크립트를 의미 보존 가능한 LaTeX로 변환한 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Equation {
+    pub formula: String,
+    pub mode: EquationMode,
+}
+
 /// 문단 안의 각주/미주 참조가 가리키는 주석 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKind {
@@ -236,6 +258,7 @@ pub enum Inline {
     CheckBox(CheckBox),
     TextField(TextField),
     Note(Note),
+    Equation(Equation),
     /// `hp:lineBreak` — 문단 내 줄바꿈.
     LineBreak,
     /// `hp:tab`.
@@ -257,8 +280,11 @@ impl Paragraph {
                 Inline::Text(r) => out.push_str(&r.text),
                 Inline::Tab => out.push('\t'),
                 Inline::LineBreak => out.push('\n'),
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {
-                }
+                Inline::Image(_)
+                | Inline::CheckBox(_)
+                | Inline::TextField(_)
+                | Inline::Note(_)
+                | Inline::Equation(_) => {}
             }
         }
         out
@@ -280,9 +306,11 @@ impl Paragraph {
                 // 탭/줄바꿈은 text prop 안에서 문자로 표현할 수 있으므로 허용한다.
                 Inline::Tab | Inline::LineBreak => {}
                 // 이미지와 체크박스는 별도 자식 명령이 필요하므로 병합 불가.
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_) => {
-                    return None
-                }
+                Inline::Image(_)
+                | Inline::CheckBox(_)
+                | Inline::TextField(_)
+                | Inline::Note(_)
+                | Inline::Equation(_) => return None,
             }
         }
         found
@@ -299,9 +327,23 @@ impl Paragraph {
         self.inlines.iter().any(|i| {
             matches!(
                 i,
-                Inline::Image(_) | Inline::CheckBox(_) | Inline::TextField(_) | Inline::Note(_)
+                Inline::Image(_)
+                    | Inline::CheckBox(_)
+                    | Inline::TextField(_)
+                    | Inline::Note(_)
+                    | Inline::Equation(_)
             )
         })
+    }
+
+    /// 표시 수식만 든 문단은 빈 문단을 만들지 않고 `/body`에 바로 내보낼 수 있다.
+    pub fn sole_display_equation(&self) -> Option<&Equation> {
+        match self.inlines.as_slice() {
+            [Inline::Equation(equation)] if equation.mode == EquationMode::Display => {
+                Some(equation)
+            }
+            _ => None,
+        }
     }
 }
 
