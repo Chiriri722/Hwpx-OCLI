@@ -6,7 +6,10 @@ use std::io::Cursor;
 
 use common::*;
 use officecli_hwpx::emit::word::emit_document;
-use officecli_hwpx::owpml::model::{Align, Block, Inline, NoteKind, VertAlign};
+use officecli_hwpx::owpml::model::{
+    Align, Block, HeaderFooterPage, Inline, NoteKind, NoteLineType, NoteLineWidth,
+    NoteNumberFormat, NoteNumberRestart, NotePosition, VertAlign,
+};
 use officecli_hwpx::owpml::read_document_from;
 
 fn parse(b: &HwpxBuilder) -> officecli_hwpx::owpml::model::Document {
@@ -18,6 +21,678 @@ fn reads_paragraph_text_in_order() {
     let doc = parse(&simple_doc(&["첫 번째 문단", "두 번째 문단", "세 번째"]));
     let texts: Vec<String> = doc.paragraphs().map(|p| p.plain_text()).collect();
     assert_eq!(texts, vec!["첫 번째 문단", "두 번째 문단", "세 번째"]);
+}
+
+#[test]
+fn preserves_section_boundaries_and_header_footer_stories() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}">"#,
+            r#"<hp:secPr><hp:visibility hideFirstHeader="1" hideFirstFooter="0"/>"#,
+            r#"</hp:secPr>"#,
+            r#"<hp:ctrl><hp:header id="11" applyPageType="BOTH"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>머리말 1</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>머리말 2</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:header></hp:ctrl>"#,
+            r#"<hp:ctrl><hp:footer id="12" applyPageType="BOTH"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>공통 꼬리말</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:footer></hp:ctrl>"#,
+            r#"<hp:t>첫 구역 본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+    builder.section(para(&char_pr, &para_pr, "둘째 구역 본문"));
+
+    let document = parse(&builder);
+    assert_eq!(
+        document.sections.len(),
+        2,
+        "spine sections must remain distinct"
+    );
+
+    let first = &document.sections[0];
+    assert_eq!(first.blocks.len(), 1);
+    let Block::Paragraph(body) = &first.blocks[0] else {
+        panic!("first section body must remain a paragraph");
+    };
+    assert_eq!(body.plain_text(), "첫 구역 본문");
+    assert!(first.hide_first_header);
+    assert!(!first.hide_first_footer);
+
+    assert_eq!(first.headers.len(), 1);
+    assert_eq!(first.headers[0].page, HeaderFooterPage::Both);
+    assert_eq!(
+        first.headers[0]
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(paragraph) => Some(paragraph.plain_text()),
+                Block::Table(_) => None,
+            })
+            .collect::<Vec<_>>(),
+        vec!["머리말 1", "머리말 2"]
+    );
+    assert_eq!(first.footers.len(), 1);
+    assert_eq!(first.footers[0].page, HeaderFooterPage::Both);
+
+    assert_eq!(
+        document.sections[1]
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(paragraph) => Some(paragraph.plain_text()),
+                Block::Table(_) => None,
+            })
+            .collect::<Vec<_>>(),
+        vec!["둘째 구역 본문"]
+    );
+    assert_eq!(
+        document
+            .paragraphs()
+            .map(|p| p.plain_text())
+            .collect::<Vec<_>>(),
+        vec!["첫 구역 본문", "둘째 구역 본문"],
+        "header/footer paragraphs must never leak into body iteration"
+    );
+}
+
+#[test]
+fn converts_header_footer_page_counters_to_dynamic_docx_fields() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr {
+        bold: true,
+        ..CharPr::plain()
+    });
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:footer id="12" applyPageType="BOTH"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}">"#,
+            r#"<hp:ctrl><hp:autoNum num="1" numType="PAGE"><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar="" supscript="0"/></hp:autoNum></hp:ctrl>"#,
+            r#"<hp:t> / </hp:t>"#,
+            r#"<hp:ctrl><hp:autoNum num="3" numType="TOTAL_PAGE"><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar="" supscript="0"/></hp:autoNum></hp:ctrl>"#,
+            r#"</hp:run></hp:p></hp:subList></hp:footer></hp:ctrl>"#,
+            r#"<hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let document = parse(&builder);
+    let fields: Vec<_> = emit_document(&document)
+        .into_iter()
+        .filter(|item| item.r#type == Some("field"))
+        .collect();
+    assert_eq!(fields.len(), 2, "PAGE and TOTAL_PAGE must not disappear");
+    assert_eq!(fields[0].parent.as_deref(), Some("/footer[1]/p[1]"));
+    assert_eq!(fields[0].props["fieldType"], "page");
+    assert_eq!(fields[1].props["fieldType"], "numpages");
+    assert_eq!(fields[0].props["bold"], "true");
+    assert_eq!(fields[1].props["bold"], "true");
+}
+
+#[test]
+fn rejects_unverified_page_counter_kinds_and_number_formats() {
+    let cases = [
+        r#"<hp:autoNum num="1" numType="TABLE"><hp:autoNumFormat type="DIGIT"/></hp:autoNum>"#,
+        r#"<hp:autoNum num="1" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT"/></hp:autoNum>"#,
+        r#"<hp:autoNum num="1" numType="PAGE"><hp:autoNumFormat type="ROMAN_SMALL"/></hp:autoNum>"#,
+        r#"<hp:autoNum num="1" numType="PAGE"><hp:autoNumFormat type="DIGIT" suffixChar=")"/></hp:autoNum>"#,
+        r#"<hp:autoNum num="1" numType="PAGE"><hp:autoNumFormat type="DIGIT" supscript="1"/></hp:autoNum>"#,
+    ];
+
+    for auto_num in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl>{auto_num}</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unsupported automatic numbering must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "case {auto_num}"
+        );
+        assert!(error.message.contains("autoNum"), "got {error:?}");
+    }
+}
+
+#[test]
+fn rejects_malformed_or_duplicate_header_footer_stories() {
+    let cases = [
+        (
+            r#"<hp:header id="1" applyPageType="BOTH"/>"#,
+            "required subList",
+        ),
+        (
+            r#"<hp:header id="1" applyPageType="BOTH"><hp:subList/><hp:subList/></hp:header>"#,
+            "more than one subList",
+        ),
+        (
+            r#"<hp:footer id="1" applyPageType="BOTH"><hp:p/><hp:subList/></hp:footer>"#,
+            "outside subList",
+        ),
+        (
+            r#"<hp:header id="1" applyPageType="LAST"><hp:subList/></hp:header>"#,
+            "invalid applyPageType",
+        ),
+        (
+            r#"<hp:header id="1" applyPageType="BOTH"><hp:subList><hp:unexpected><hp:p/></hp:unexpected></hp:subList></hp:header>"#,
+            "unexpected direct child",
+        ),
+    ];
+
+    for (stories, message) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl>{stories}</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("malformed header/footer input must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "case {stories}"
+        );
+        assert!(error.message.contains(message), "got {error:?}");
+    }
+}
+
+#[test]
+fn accepts_paired_odd_even_header_footer_stories() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:footer id="1" applyPageType="ODD"><hp:subList><hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>홀수</hp:t></hp:run></hp:p></hp:subList></hp:footer>"#,
+            r#"<hp:footer id="2" applyPageType="EVEN"><hp:subList><hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>짝수</hp:t></hp:run></hp:p></hp:subList></hp:footer>"#,
+            r#"</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let document = parse(&builder);
+    assert_eq!(document.sections[0].footers.len(), 2);
+    assert_eq!(document.sections[0].footers[0].page, HeaderFooterPage::Odd);
+    assert_eq!(document.sections[0].footers[1].page, HeaderFooterPage::Even);
+}
+
+#[test]
+fn accepts_single_parity_header_footer_story() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:footer id="1" applyPageType="EVEN"><hp:subList><hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>짝수 전용</hp:t></hp:run></hp:p></hp:subList></hp:footer>"#,
+            r#"</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let document = parse(&builder);
+    assert_eq!(document.sections[0].footers.len(), 1);
+    assert_eq!(document.sections[0].footers[0].page, HeaderFooterPage::Even);
+
+    let items = emit_document(&document);
+    let footer_slots: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("footer"))
+        .map(|item| item.props["type"].as_str().expect("slot type"))
+        .collect();
+    assert_eq!(footer_slots, vec!["default", "even"]);
+    assert!(items.iter().any(|item| {
+        item.path.as_deref() == Some("/footer[2]/p[1]")
+            && item.props.get("text").and_then(|value| value.as_str()) == Some("짝수 전용")
+    }));
+}
+
+#[test]
+fn rejects_unverified_header_footer_timelines_and_overlaps() {
+    let cases = [
+        concat!(
+            r#"<hp:header id="1" applyPageType="ODD"><hp:subList/></hp:header>"#,
+            r#"<hp:header id="2" applyPageType="ODD"><hp:subList/></hp:header>"#,
+        ),
+        concat!(
+            r#"<hp:header id="1" applyPageType="BOTH"><hp:subList/></hp:header>"#,
+            r#"<hp:header id="2" applyPageType="ODD"><hp:subList/></hp:header>"#,
+        ),
+    ];
+
+    for stories in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl>{stories}</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unverified overlap must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "case {stories}"
+        );
+        assert!(error.message.contains("header"), "got {error:?}");
+    }
+
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>앞 본문</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:header id="3" applyPageType="BOTH"><hp:subList/></hp:header>"#,
+            r#"</hp:ctrl><hp:t>뒤 본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("mid-section activation must not be widened to the whole section");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("after body content"));
+
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"/>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:footer id="4" applyPageType="BOTH"><hp:subList/></hp:footer>"#,
+            r#"</hp:ctrl></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("activation after an empty body paragraph is still mid-section");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("after body content"));
+
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:tab/><hp:ctrl>"#,
+            r#"<hp:header id="5" applyPageType="BOTH"><hp:subList/></hp:header>"#,
+            r#"</hp:ctrl></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("activation after visible inline content is still mid-section");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("after body content"));
+}
+
+#[test]
+fn rejects_notes_inside_header_footer_stories() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:header id="1" applyPageType="BOTH"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:ctrl>"#,
+            r#"<hp:footNote number="1"><hp:subList><hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>주석</hp:t></hp:run></hp:p></hp:subList></hp:footNote>"#,
+            r#"</hp:ctrl></hp:run></hp:p></hp:subList></hp:header>"#,
+            r#"</hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("DOCX cannot carry notes from a header/footer story");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("headers and footers cannot contain"));
+}
+
+#[test]
+fn rejects_invalid_first_page_visibility_flags() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:secPr><hp:visibility hideFirstHeader="sometimes"/></hp:secPr><hp:t>본문</hp:t></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("invalid boolean flags must not silently become false");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("hideFirstHeader"));
+}
+
+#[test]
+fn preserves_section_footnote_and_endnote_policies() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr>"#,
+            r#"<hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="ROMAN_SMALL" userChar="" prefixChar="[" suffixChar="]" supscript="1"/>"#,
+            r#"<hp:numbering type="ON_PAGE" newNum="3"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="1"/>"#,
+            r#"</hp:footNotePr>"#,
+            r#"<hp:endNotePr>"#,
+            r#"<hp:autoNumFormat type="LATIN_CAPITAL" userChar="" prefixChar="" suffixChar="." supscript="0"/>"#,
+            r#"<hp:numbering type="ON_SECTION" newNum="5"/>"#,
+            r#"<hp:placement place="END_OF_SECTION" beneathText="0"/>"#,
+            r#"</hp:endNotePr></hp:secPr><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let document = parse(&builder);
+    let section = &document.sections[0];
+    let footnote = section
+        .footnote_properties
+        .as_ref()
+        .expect("footnote policy");
+    assert_eq!(footnote.number_format, NoteNumberFormat::LowerRoman);
+    assert_eq!(footnote.restart, NoteNumberRestart::EachPage);
+    assert_eq!(footnote.start, 3);
+    assert_eq!(footnote.position, NotePosition::BeneathText);
+    assert_eq!(footnote.prefix, "[");
+    assert_eq!(footnote.suffix, "]");
+    assert!(footnote.superscript);
+
+    let endnote = section.endnote_properties.as_ref().expect("endnote policy");
+    assert_eq!(endnote.number_format, NoteNumberFormat::UpperLetter);
+    assert_eq!(endnote.restart, NoteNumberRestart::EachSection);
+    assert_eq!(endnote.start, 5);
+    assert_eq!(endnote.position, NotePosition::SectionEnd);
+    assert_eq!(endnote.suffix, ".");
+    assert!(!endnote.superscript);
+}
+
+#[test]
+fn preserves_exact_section_note_line_and_spacing_profiles() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr>"#,
+            r#"<hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="DIGIT"/><hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>"#,
+            r##"<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#102030"/>"##,
+            r#"<hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>"#,
+            r#"</hp:footNotePr><hp:endNotePr>"#,
+            r#"<hp:autoNumFormat type="ROMAN_CAPITAL"/><hp:numbering type="ON_SECTION" newNum="2"/>"#,
+            r#"<hp:placement place="END_OF_DOCUMENT" beneathText="0"/>"#,
+            r##"<hp:noteLine length="14692344" type="DOUBLEWAVE" width="5.0 mm" color="#A0B0C0"/>"##,
+            r#"<hp:noteSpacing betweenNotes="0" belowLine="1" aboveLine="4294967295"/>"#,
+            r#"</hp:endNotePr></hp:secPr><hp:t>본문만 있음</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let document = parse(&builder);
+    let footnote = document.sections[0]
+        .footnote_properties
+        .as_ref()
+        .expect("footnote policy");
+    let footnote_line = footnote.note_line.as_ref().expect("footnote line");
+    assert_eq!(footnote_line.length, -1);
+    assert_eq!(footnote_line.line_type, NoteLineType::Solid);
+    assert_eq!(footnote_line.width, NoteLineWidth::Mm0_12);
+    assert_eq!(footnote_line.color, "#102030");
+    let footnote_spacing = footnote.note_spacing.as_ref().expect("footnote spacing");
+    assert_eq!(footnote_spacing.between_notes, 283);
+    assert_eq!(footnote_spacing.below_line, 567);
+    assert_eq!(footnote_spacing.above_line, 850);
+
+    let endnote = document.sections[0]
+        .endnote_properties
+        .as_ref()
+        .expect("endnote policy");
+    let endnote_line = endnote.note_line.as_ref().expect("endnote line");
+    assert_eq!(endnote_line.length, 14_692_344);
+    assert_eq!(endnote_line.line_type, NoteLineType::DoubleWave);
+    assert_eq!(endnote_line.width, NoteLineWidth::Mm5_0);
+    assert_eq!(endnote_line.color, "#A0B0C0");
+    let endnote_spacing = endnote.note_spacing.as_ref().expect("endnote spacing");
+    assert_eq!(endnote_spacing.between_notes, 0);
+    assert_eq!(endnote_spacing.below_line, 1);
+    assert_eq!(endnote_spacing.above_line, u32::MAX);
+}
+
+#[test]
+fn rejects_active_notes_when_section_note_layout_cannot_be_materialized() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="DIGIT"/><hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>"#,
+            r##"<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>"##,
+            r#"<hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>"#,
+            r#"</hp:footNotePr></hp:secPr><hp:t>본문</hp:t><hp:ctrl><hp:footNote number="1"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>실제 각주</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("active note layout must fail instead of being approximated");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("footnote"), "{error:?}");
+    assert!(
+        error.message.contains("noteLine") && error.message.contains("noteSpacing"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn rejects_malformed_or_unknown_section_note_layout_profiles() {
+    let cases = [
+        (
+            r##"<hp:noteLine length="many" type="SOLID" width="0.12 mm" color="#000000"/>"##,
+            "length",
+        ),
+        (
+            r##"<hp:noteLine length="0" type="MYSTERY" width="0.12 mm" color="#000000"/>"##,
+            "type",
+        ),
+        (
+            r##"<hp:noteLine length="0" type="SOLID" width="0.11 mm" color="#000000"/>"##,
+            "width",
+        ),
+        (
+            r##"<hp:noteLine length="0" type="SOLID" width="0.12 mm" color="#GG0000"/>"##,
+            "color",
+        ),
+        (
+            r##"<hp:noteLine length="0" type="SOLID" width="0.12 mm" color="#FF112233"/>"##,
+            "color",
+        ),
+        (
+            r#"<hp:noteSpacing betweenNotes="-1" belowLine="567" aboveLine="850"/>"#,
+            "betweenNotes",
+        ),
+        (
+            r#"<hp:noteSpacing betweenNotes="283" belowLine="567"/>"#,
+            "aboveLine",
+        ),
+        (r#"<hp:futureNoteLayout value="1"/>"#, "futureNoteLayout"),
+    ];
+
+    for (layout, message) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            concat!(
+                r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+                r#"<hp:autoNumFormat type="DIGIT"/><hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+                r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>{layout}"#,
+                r#"</hp:footNotePr></hp:secPr><hp:t>본문만 있음</hp:t></hp:run></hp:p>"#,
+            ),
+            pp = para_pr,
+            cp = char_pr,
+            layout = layout,
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("invalid note layout must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "{layout}"
+        );
+        assert!(error.message.contains(message), "{layout}: {error:?}");
+    }
+}
+
+#[test]
+fn rejects_duplicate_section_note_layout_elements() {
+    for duplicated in [
+        concat!(
+            r##"<hp:noteLine length="0" type="SOLID" width="0.12 mm" color="#000000"/>"##,
+            r##"<hp:noteLine length="0" type="DOT" width="0.1 mm" color="#000000"/>"##,
+        ),
+        concat!(
+            r#"<hp:noteSpacing betweenNotes="0" belowLine="0" aboveLine="0"/>"#,
+            r#"<hp:noteSpacing betweenNotes="1" belowLine="1" aboveLine="1"/>"#,
+        ),
+    ] {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            concat!(
+                r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+                r#"<hp:autoNumFormat type="DIGIT"/><hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+                r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>{duplicated}"#,
+                r#"</hp:footNotePr></hp:secPr></hp:run></hp:p>"#,
+            ),
+            pp = para_pr,
+            cp = char_pr,
+            duplicated = duplicated,
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("duplicate note layout elements must fail closed");
+        assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+        assert!(error.message.contains("more than one"), "{error:?}");
+    }
+}
+
+#[test]
+fn rejects_case_confused_note_elements_instead_of_proving_zero_notes() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:footnote><hp:subList><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>유실되면 안 됨</hp:t></hp:run></hp:p></hp:subList></hp:footnote></hp:ctrl></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("case-confused note tags must not be silently ignored");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("footnote"), "{error:?}");
+}
+
+#[test]
+fn rejects_custom_section_note_marks_until_numbering_semantics_are_proven() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="DIGIT" userChar="*" prefixChar="" suffixChar="" supscript="0"/>"#,
+            r#"<hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>"#,
+            r#"</hp:footNotePr></hp:secPr><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("custom note marks must not silently become automatic numbers");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("userChar") || error.message.contains("USER_CHAR"));
+}
+
+#[test]
+fn rejects_unrepresentable_footnote_column_placement() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="DIGIT"/>"#,
+            r#"<hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+            r#"<hp:placement place="RIGHT_MOST_COLUMN" beneathText="0"/>"#,
+            r#"</hp:footNotePr></hp:secPr><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("DOCX cannot preserve right-most-column footnote placement");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("RIGHT_MOST_COLUMN"));
 }
 
 #[test]
@@ -381,11 +1056,11 @@ fn reads_footnotes_and_endnotes_as_ordered_inline_notes() {
     let pp = b.para_pr(ParaPr::default());
     b.section(format!(
         r#"<hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}">
-        <hp:t>앞</hp:t><hp:ctrl><hp:footNote number="3" instId="41"><hp:subList>
+        <hp:t>앞</hp:t><hp:ctrl><hp:footNote number="3" prefixChar="91" suffixChar="93" instId="41"><hp:subList>
           <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:ctrl><hp:autoNum num="3" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>각주 첫 문단</hp:t></hp:run></hp:p>
           <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:t>각주 둘째</hp:t><hp:lineBreak/><hp:t>줄</hp:t></hp:run></hp:p>
         </hp:subList></hp:footNote></hp:ctrl>
-        <hp:t>중간</hp:t><hp:ctrl><hp:endNote number="7" instId="42"><hp:subList>
+        <hp:t>중간</hp:t><hp:ctrl><hp:endNote number="7" suffixChar="46" instId="42"><hp:subList>
           <hp:p paraPrIDRef="{pp}" styleIDRef="0"><hp:run charPrIDRef="{cp}"><hp:ctrl><hp:autoNum num="7" numType="ENDNOTE"><hp:autoNumFormat type="DIGIT" suffixChar="" supscript="1"/></hp:autoNum></hp:ctrl><hp:t>미주 본문</hp:t></hp:run></hp:p>
         </hp:subList></hp:endNote></hp:ctrl><hp:t>뒤</hp:t>
         </hp:run></hp:p>"#
@@ -416,6 +1091,8 @@ fn reads_footnotes_and_endnotes_as_ordered_inline_notes() {
     assert_eq!(notes[0].kind, NoteKind::Footnote);
     assert_eq!(notes[0].number, Some(3));
     assert_eq!(notes[0].instance_id.as_deref(), Some("41"));
+    assert_eq!(notes[0].reference_prefix.as_deref(), Some("["));
+    assert_eq!(notes[0].reference_suffix.as_deref(), Some("]"));
     assert_eq!(
         notes[0]
             .paragraphs()
@@ -425,6 +1102,8 @@ fn reads_footnotes_and_endnotes_as_ordered_inline_notes() {
     );
     assert_eq!(notes[1].kind, NoteKind::Endnote);
     assert_eq!(notes[1].number, Some(7));
+    assert_eq!(notes[1].reference_prefix, None);
+    assert_eq!(notes[1].reference_suffix.as_deref(), Some("."));
     assert_eq!(
         notes[1]
             .paragraphs()
@@ -433,6 +1112,51 @@ fn reads_footnotes_and_endnotes_as_ordered_inline_notes() {
             .plain_text(),
         "미주 본문"
     );
+}
+
+#[test]
+fn rejects_a_note_auto_number_that_does_not_match_its_container() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:footNote number="1"><hp:subList><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:autoNum num="1" numType="ENDNOTE"><hp:autoNumFormat type="DIGIT"/></hp:autoNum></hp:ctrl><hp:t>각주</hp:t></hp:run></hp:p></hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("a mismatched note marker must not disappear");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("ENDNOTE") && error.message.contains("footnote"));
+}
+
+#[test]
+fn rejects_unrepresentable_or_invalid_note_instance_marks() {
+    let cases = [
+        (
+            r#"userChar="42""#,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "userChar",
+        ),
+        (
+            r#"suffixChar="55296""#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "surrogate",
+        ),
+    ];
+
+    for (attributes, code, message) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:footNote {attributes}><hp:subList><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>각주</hp:t></hp:run></hp:p></hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unsupported or malformed marks must fail closed");
+        assert_eq!(error.code, code, "{attributes}");
+        assert!(error.message.contains(message), "{error:?}");
+    }
 }
 
 #[test]
@@ -470,6 +1194,24 @@ fn rejects_note_content_outside_the_schema_required_sublist() {
         .expect_err("NoteType children outside subList must not be dropped");
     assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
     assert!(error.message.contains("outside subList"), "{error:?}");
+}
+
+#[test]
+fn rejects_unknown_direct_children_inside_a_note_sublist() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:ctrl><hp:footNote number="1"><hp:subList><hp:unexpected><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>유실되면 안 됨</hp:t></hp:run></hp:p></hp:unexpected></hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("unknown note subList children must not be flattened or dropped");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(
+        error.message.contains("unexpected direct child"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -589,7 +1331,9 @@ fn preserves_checkboxes_inside_nested_tables() {
         }
     }
     let mut boxes = Vec::new();
-    collect_boxes(&doc.blocks, &mut boxes);
+    for section in &doc.sections {
+        collect_boxes(&section.blocks, &mut boxes);
+    }
 
     assert_eq!(boxes.len(), 2, "checkboxes in a nested table must survive");
     let names: Vec<&str> = boxes.iter().filter_map(|b| b.name.as_deref()).collect();
@@ -727,7 +1471,7 @@ fn table_inside_paragraph_becomes_sibling_block() {
     b.section(body);
 
     let doc = parse(&b);
-    let kinds: Vec<&str> = doc
+    let kinds: Vec<&str> = doc.sections[0]
         .blocks
         .iter()
         .map(|b| match b {

@@ -386,19 +386,20 @@ fn maps_basic_hwpml_table_between_surrounding_text() {
           </TABLE><CHAR>표 뒤</CHAR></TEXT></P>"#,
     );
     let doc = parse(&xml);
-    assert_eq!(doc.blocks.len(), 3, "paragraph/table/paragraph ordering");
-    let Block::Paragraph(before) = &doc.blocks[0] else {
+    let blocks = &doc.sections[0].blocks;
+    assert_eq!(blocks.len(), 3, "paragraph/table/paragraph ordering");
+    let Block::Paragraph(before) = &blocks[0] else {
         panic!("first block must be a paragraph");
     };
     assert_eq!(before.plain_text().trim(), "표 앞");
-    let Block::Table(table) = &doc.blocks[1] else {
+    let Block::Table(table) = &blocks[1] else {
         panic!("second block must be a table");
     };
     assert_eq!((table.rows, table.cols), (1, 2));
     assert_eq!(table.col_widths_twip, vec![600, 1000]);
     assert_eq!(table.cell_at(0, 0).expect("A1").plain_text(), "A1");
     assert_eq!(table.cell_at(0, 1).expect("B1").plain_text(), "B1");
-    let Block::Paragraph(after) = &doc.blocks[2] else {
+    let Block::Paragraph(after) = &blocks[2] else {
         panic!("third block must be a paragraph");
     };
     assert_eq!(after.plain_text().trim(), "표 뒤");
@@ -414,12 +415,13 @@ fn preserves_significant_space_only_runs_around_tables() {
         </TABLE><CHAR> </CHAR></TEXT></P>"#,
     );
     let doc = parse(&xml);
-    assert_eq!(doc.blocks.len(), 3, "space-only runs are document content");
-    let Block::Paragraph(before) = &doc.blocks[0] else {
+    let blocks = &doc.sections[0].blocks;
+    assert_eq!(blocks.len(), 3, "space-only runs are document content");
+    let Block::Paragraph(before) = &blocks[0] else {
         panic!("first block must be a paragraph");
     };
     assert_eq!(before.plain_text(), "\u{00A0}");
-    let Block::Paragraph(after) = &doc.blocks[2] else {
+    let Block::Paragraph(after) = &blocks[2] else {
         panic!("third block must be a paragraph");
     };
     assert_eq!(after.plain_text(), " ");

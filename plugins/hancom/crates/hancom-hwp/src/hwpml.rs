@@ -1208,9 +1208,7 @@ impl HwpmlParser {
                 "malformed xml: HWPML table was not closed",
             ));
         }
-        Ok(Document {
-            blocks: self.blocks,
-        })
+        Ok(Document::from_blocks(self.blocks))
     }
 }
 
@@ -1451,6 +1449,7 @@ fn paragraph_has_content(paragraph: &Paragraph) -> bool {
         | Inline::Image(_)
         | Inline::CheckBox(_)
         | Inline::TextField(_)
+        | Inline::PageNumber(_)
         | Inline::Note(_)
         | Inline::Equation(_) => true,
     })

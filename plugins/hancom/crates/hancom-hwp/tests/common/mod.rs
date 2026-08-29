@@ -81,8 +81,7 @@ impl HwpxBuilder {
 
     /// BinData 항목을 추가한다. `id`는 `binaryItemIDRef`로 참조할 이름.
     pub fn bindata(&mut self, id: &str, filename: &str, bytes: Vec<u8>, media: &str) -> &mut Self {
-        self.bindata
-            .push((format!("BinData/{filename}"), bytes));
+        self.bindata.push((format!("BinData/{filename}"), bytes));
         self.manifest_extra.push((
             id.to_string(),
             format!("BinData/{filename}"),
@@ -129,11 +128,11 @@ impl HwpxBuilder {
         let mut cursor = Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut cursor);
-            let opts = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
             // mimetype은 관례상 무압축 첫 항목이다.
-            let stored = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Stored);
+            let stored =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
             if self.include_mimetype {
                 let v = self
@@ -254,9 +253,7 @@ impl HwpxBuilder {
 }
 
 fn section_xml(body: &str) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><hs:sec{NS_DECL}>{body}</hs:sec>"#
-    )
+    format!(r#"<?xml version="1.0" encoding="UTF-8"?><hs:sec{NS_DECL}>{body}</hs:sec>"#)
 }
 
 /// `hh:charPr` 명세.
@@ -574,16 +571,10 @@ pub fn para_with_checkbox(char_pr: &str, text: &str, name: &str, checked: bool) 
 /// `hp:fieldBegin type="CLICK_HERE"` 누름틀. 실측 구조 그대로.
 ///
 /// `inner`가 비어 있으면 빈 입력 슬롯, 내용이 있으면 이미 작성된 필드다.
-pub fn para_with_click_here(
-    char_pr: &str,
-    field_id: &str,
-    hint: &str,
-    inner_text: &str,
-) -> String {
+pub fn para_with_click_here(char_pr: &str, field_id: &str, hint: &str, inner_text: &str) -> String {
     let hint_len = hint.chars().count();
-    let command = format!(
-        "Clickhere:set:51:Direction:wstring:{hint_len}:{hint} HelpState:wstring:0:  "
-    );
+    let command =
+        format!("Clickhere:set:51:Direction:wstring:{hint_len}:{hint} HelpState:wstring:0:  ");
     let content = if inner_text.is_empty() {
         format!(r#"<hp:run charPrIDRef="{char_pr}"><hp:t></hp:t></hp:run>"#)
     } else {

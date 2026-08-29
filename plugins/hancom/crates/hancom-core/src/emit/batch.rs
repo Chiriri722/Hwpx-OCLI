@@ -1,7 +1,7 @@
 //! `BatchItem` — dump-reader가 stdout에 한 줄씩 쓰는 객체.
 //!
 //! 필드 스키마 근거: OfficeCLI wiki `command-batch.md` "Input Format" 표.
-//! 우리는 `add` / `set`만 쓴다.
+//! 우리는 `add` / `set`과 자동 seed 정리에 필요한 `remove`만 쓴다.
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -38,6 +38,16 @@ impl BatchItem {
     pub fn set(path: impl Into<String>) -> Self {
         Self {
             command: "set",
+            parent: None,
+            r#type: None,
+            path: Some(path.into()),
+            props: Map::new(),
+        }
+    }
+
+    pub fn remove(path: impl Into<String>) -> Self {
+        Self {
+            command: "remove",
             parent: None,
             r#type: None,
             path: Some(path.into()),
@@ -114,6 +124,17 @@ mod tests {
         let item = BatchItem::add("/body", "paragraph");
         let v: Value = serde_json::from_str(&item.to_json_line()).expect("valid json");
         assert!(v.get("props").is_none(), "empty props must be omitted");
+    }
+
+    #[test]
+    fn remove_emits_only_command_and_path() {
+        let item = BatchItem::remove("/header[1]/p[1]");
+        let v: Value = serde_json::from_str(&item.to_json_line()).expect("valid json");
+        assert_eq!(v["command"], "remove");
+        assert_eq!(v["path"], "/header[1]/p[1]");
+        assert!(v.get("parent").is_none());
+        assert!(v.get("type").is_none());
+        assert!(v.get("props").is_none());
     }
 
     #[test]

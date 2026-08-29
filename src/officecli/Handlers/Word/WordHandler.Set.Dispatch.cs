@@ -618,6 +618,11 @@ public partial class WordHandler
             // (AddFootnote/AddEndnote rebuild the reference runs from them).
             if (key.Equals("referenceRPr", StringComparison.OrdinalIgnoreCase)
                 || key.Equals("referenceMarkRPr", StringComparison.OrdinalIgnoreCase)) continue;
+            // Input-only decoration controls are consumed while the reference
+            // runs are created; they are not formatting for the note content.
+            if (key.Equals("referencePrefix", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("referenceSuffix", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("referenceSuperscript", StringComparison.OrdinalIgnoreCase)) continue;
             // referenceCustomMark / referenceCustomMarkFollows are likewise
             // consumed at note-creation time (AddFootnote/AddEndnote stamp the
             // body ref run's w:customMarkFollows + sibling <w:t> glyph). The dump

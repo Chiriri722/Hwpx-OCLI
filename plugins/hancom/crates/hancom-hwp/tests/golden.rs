@@ -147,7 +147,10 @@ fn canonical_document_matches_golden_output() {
             let av = a.get(i).copied().unwrap_or("<missing>");
             let ev = e.get(i).copied().unwrap_or("<missing>");
             if av != ev {
-                report.push_str(&format!("line {}:\n  expected: {ev}\n  actual:   {av}\n", i + 1));
+                report.push_str(&format!(
+                    "line {}:\n  expected: {ev}\n  actual:   {av}\n",
+                    i + 1
+                ));
             }
         }
         panic!(
@@ -164,7 +167,10 @@ fn golden_output_satisfies_protocol_invariants() {
     let actual = actual_jsonl();
     assert!(!actual.is_empty(), "expected output");
     assert!(!actual.contains('\r'), "CR is forbidden (§5.5)");
-    assert!(!actual.trim_start().starts_with('['), "no top-level array (§5.1)");
+    assert!(
+        !actual.trim_start().starts_with('['),
+        "no top-level array (§5.1)"
+    );
     assert_eq!(actual.chars().last(), Some('\n'), "last line terminated");
 
     for (i, line) in actual.lines().enumerate() {
@@ -186,11 +192,7 @@ fn golden_output_satisfies_protocol_invariants() {
                         i + 1
                     );
                 } else {
-                    assert!(
-                        !s.contains('\n'),
-                        "line {} prop {k} has raw newline",
-                        i + 1
-                    );
+                    assert!(!s.contains('\n'), "line {} prop {k} has raw newline", i + 1);
                 }
                 assert!(!s.contains('\r'), "line {} prop {k} has CR", i + 1);
             }
@@ -204,7 +206,10 @@ fn golden_document_covers_intended_features() {
     // 픽스처가 조용히 빈약해지면 회귀 테스트가 의미를 잃는다.
     let actual = actual_jsonl();
 
-    assert!(actual.contains(r#""type":"paragraph""#), "paragraphs missing");
+    assert!(
+        actual.contains(r#""type":"paragraph""#),
+        "paragraphs missing"
+    );
     assert!(actual.contains(r#""type":"run""#), "runs missing");
     assert!(actual.contains(r#""type":"table""#), "table missing");
     assert!(actual.contains(r#""type":"picture""#), "picture missing");
@@ -214,7 +219,10 @@ fn golden_document_covers_intended_features() {
     assert!(actual.contains(r#""align":"center""#), "alignment missing");
     assert!(actual.contains(r#""colspan""#), "cell merge missing");
     assert!(actual.contains(r#""fill""#), "cell fill missing");
-    assert!(actual.contains("data:image/png;base64,"), "data URI missing");
+    assert!(
+        actual.contains("data:image/png;base64,"),
+        "data URI missing"
+    );
     assert!(actual.contains("\\u000b"), "soft line break missing");
     assert!(actual.contains("각주 & 참고"), "entity unescaping missing");
     assert!(actual.contains("함초롬돋움"), "font name missing");

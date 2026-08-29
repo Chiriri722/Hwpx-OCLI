@@ -16,6 +16,11 @@
     ]
   },
   "note": "Endnotes live in EndnotesPart. Semantics mirror footnote.json. Parent must be a paragraph path (/body/p[N]); use --index N to control position within the paragraph. Run-level parent (/body/p[N]/r[M]) is not accepted -- the endnote reference is inserted as a new run.",
+  "extends": [
+    "_shared/paragraph",
+    "_shared/run",
+    "_shared/run.docx-xlsx"
+  ],
   "properties": {
     "text": {
       "type": "string",
@@ -26,6 +31,95 @@
         "--prop text=\"End-of-doc reference\""
       ],
       "readback": "concatenated text",
+      "enforcement": "report"
+    },
+    "referencePrefix": {
+      "type": "string",
+      "description": "Literal inline text placed immediately before the dynamic endnote number in both the body reference and the note body. Add-only; cannot be combined with a custom reference mark.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop referencePrefix=\"[\""
+      ],
+      "enforcement": "report"
+    },
+    "referenceSuffix": {
+      "type": "string",
+      "description": "Literal inline text placed immediately after the dynamic endnote number in both the body reference and the note body. Add-only; cannot be combined with a custom reference mark.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop referenceSuffix=\")\""
+      ],
+      "enforcement": "report"
+    },
+    "referenceSuperscript": {
+      "type": "bool",
+      "description": "Whether both dynamic endnote-number runs are superscript. False writes an explicit baseline override so the EndnoteReference style cannot reintroduce superscript.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop referenceSuperscript=false"
+      ],
+      "enforcement": "report"
+    },
+    "firstLineIndent": {
+      "type": "length",
+      "description": "First-line indentation on the first endnote paragraph.",
+      "add": true,
+      "set": true,
+      "get": false,
+      "enforcement": "report"
+    },
+    "hangingIndent": {
+      "type": "length",
+      "description": "Hanging indentation on the first endnote paragraph.",
+      "add": true,
+      "set": true,
+      "get": false,
+      "enforcement": "report"
+    },
+    "spaceBefore": {
+      "type": "length",
+      "description": "Space before the first endnote paragraph.",
+      "add": true,
+      "set": true,
+      "get": false,
+      "enforcement": "report"
+    },
+    "spaceAfter": {
+      "type": "length",
+      "description": "Space after the first endnote paragraph.",
+      "add": true,
+      "set": true,
+      "get": false,
+      "enforcement": "report"
+    },
+    "underline": {
+      "type": "string",
+      "description": "Underline formatting on the seeded endnote content run.",
+      "add": true,
+      "set": true,
+      "get": true,
+      "enforcement": "report"
+    },
+    "strike": {
+      "type": "bool",
+      "description": "Single strikethrough on the seeded endnote content run.",
+      "add": true,
+      "set": true,
+      "get": true,
+      "enforcement": "strict"
+    },
+    "highlight": {
+      "type": "color",
+      "description": "Word highlight color on the seeded endnote content run.",
+      "add": true,
+      "set": true,
+      "get": true,
       "enforcement": "report"
     },
     "direction": {

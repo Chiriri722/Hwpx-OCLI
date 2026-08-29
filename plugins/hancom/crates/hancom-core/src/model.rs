@@ -193,6 +193,31 @@ impl TextField {
     }
 }
 
+/// HWPX `hp:autoNum` 가운데 DOCX 동적 필드로 정확히 대응되는 페이지 계수기.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageNumberKind {
+    /// 현재 페이지 (`numType="PAGE"` → Word `PAGE`).
+    Page,
+    /// 문서 전체 페이지 수 (`numType="TOTAL_PAGE"` → Word `NUMPAGES`).
+    TotalPages,
+}
+
+impl PageNumberKind {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::TotalPages => "numpages",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageNumberField {
+    pub kind: PageNumberKind,
+    /// `autoNum`을 감싼 HWPX run의 글자 모양.
+    pub style: CharStyle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EquationMode {
     Inline,
@@ -232,6 +257,10 @@ pub struct Note {
     pub kind: NoteKind,
     pub number: Option<usize>,
     pub instance_id: Option<String>,
+    /// 주석 인스턴스가 기록한 UTF-16 접두 문자. 없으면 구역 정책을 따른다.
+    pub reference_prefix: Option<String>,
+    /// 주석 인스턴스가 기록한 UTF-16 접미 문자. 없으면 구역 정책을 따른다.
+    pub reference_suffix: Option<String>,
     pub blocks: Vec<Block>,
 }
 
@@ -257,6 +286,7 @@ pub enum Inline {
     Image(Image),
     CheckBox(CheckBox),
     TextField(TextField),
+    PageNumber(PageNumberField),
     Note(Note),
     Equation(Equation),
     /// `hp:lineBreak` — 문단 내 줄바꿈.
@@ -283,6 +313,7 @@ impl Paragraph {
                 Inline::Image(_)
                 | Inline::CheckBox(_)
                 | Inline::TextField(_)
+                | Inline::PageNumber(_)
                 | Inline::Note(_)
                 | Inline::Equation(_) => {}
             }
@@ -309,6 +340,7 @@ impl Paragraph {
                 Inline::Image(_)
                 | Inline::CheckBox(_)
                 | Inline::TextField(_)
+                | Inline::PageNumber(_)
                 | Inline::Note(_)
                 | Inline::Equation(_) => return None,
             }
@@ -330,6 +362,7 @@ impl Paragraph {
                 Inline::Image(_)
                     | Inline::CheckBox(_)
                     | Inline::TextField(_)
+                    | Inline::PageNumber(_)
                     | Inline::Note(_)
                     | Inline::Equation(_)
             )
@@ -506,24 +539,262 @@ pub enum Block {
     Table(Table),
 }
 
-/// HWPX 문서 하나 전체. 모든 섹션의 블록을 spine 순서로 이어붙인 것.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Document {
+/// HWPX 머리말/꼬리말이 적용되는 쪽 범위.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderFooterPage {
+    Both,
+    Odd,
+    Even,
+}
+
+/// 한 구역의 머리말 또는 꼬리말 story.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeaderFooter {
+    /// 원본 `hp:header`/`hp:footer/@id`. DOCX 관계 ID로 재사용하지 않는다.
+    pub id: Option<String>,
+    pub page: HeaderFooterPage,
     pub blocks: Vec<Block>,
 }
 
+/// 각주/미주 번호 형식 중 DOCX가 동적으로 보존할 수 있는 교집합.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteNumberFormat {
+    Decimal,
+    LowerRoman,
+    UpperRoman,
+    LowerLetter,
+    UpperLetter,
+    Chicago,
+}
+
+impl NoteNumberFormat {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Decimal => "decimal",
+            Self::LowerRoman => "lowerRoman",
+            Self::UpperRoman => "upperRoman",
+            Self::LowerLetter => "lowerLetter",
+            Self::UpperLetter => "upperLetter",
+            Self::Chicago => "chicago",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteNumberRestart {
+    Continuous,
+    EachSection,
+    EachPage,
+}
+
+impl NoteNumberRestart {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Continuous => "continuous",
+            Self::EachSection => "eachSect",
+            Self::EachPage => "eachPage",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotePosition {
+    PageBottom,
+    BeneathText,
+    SectionEnd,
+    DocumentEnd,
+}
+
+impl NotePosition {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::PageBottom => "pageBottom",
+            Self::BeneathText => "beneath",
+            Self::SectionEnd => "sectEnd",
+            Self::DocumentEnd => "docEnd",
+        }
+    }
+}
+
+/// HWPX `noteLine/@type`에서 허용되는 공개 OWPML 선 종류.
+///
+/// DOCX에는 이 구역별 주석 구분선 정책을 같은 범위로 기록할 자리가 없다. 따라서
+/// 값을 잃지 않고 판정·진단하기 위한 원본 어휘로 보존한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteLineType {
+    None,
+    Solid,
+    Dot,
+    Dash,
+    DashDot,
+    DashDotDot,
+    LongDash,
+    Circle,
+    DoubleSlim,
+    SlimThick,
+    ThickSlim,
+    SlimThickSlim,
+    Wave,
+    DoubleWave,
+    Thick3d,
+    ThickRev3d,
+    ThreeD,
+    Rev3d,
+}
+
+impl NoteLineType {
+    pub fn as_owpml(self) -> &'static str {
+        match self {
+            Self::None => "NONE",
+            Self::Solid => "SOLID",
+            Self::Dot => "DOT",
+            Self::Dash => "DASH",
+            Self::DashDot => "DASH_DOT",
+            Self::DashDotDot => "DASH_DOT_DOT",
+            Self::LongDash => "LONG_DASH",
+            Self::Circle => "CIRCLE",
+            Self::DoubleSlim => "DOUBLE_SLIM",
+            Self::SlimThick => "SLIM_THICK",
+            Self::ThickSlim => "THICK_SLIM",
+            Self::SlimThickSlim => "SLIM_THICK_SLIM",
+            Self::Wave => "WAVE",
+            Self::DoubleWave => "DOUBLEWAVE",
+            Self::Thick3d => "THICK3D",
+            Self::ThickRev3d => "THICKREV3D",
+            Self::ThreeD => "3D",
+            Self::Rev3d => "REV3D",
+        }
+    }
+}
+
+/// HWPX `noteLine/@width`의 닫힌 공개 어휘.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteLineWidth {
+    Mm0_1,
+    Mm0_12,
+    Mm0_15,
+    Mm0_2,
+    Mm0_25,
+    Mm0_3,
+    Mm0_4,
+    Mm0_5,
+    Mm0_6,
+    Mm0_7,
+    Mm1_0,
+    Mm1_5,
+    Mm2_0,
+    Mm3_0,
+    Mm4_0,
+    Mm5_0,
+}
+
+impl NoteLineWidth {
+    pub fn as_owpml(self) -> &'static str {
+        match self {
+            Self::Mm0_1 => "0.1 mm",
+            Self::Mm0_12 => "0.12 mm",
+            Self::Mm0_15 => "0.15 mm",
+            Self::Mm0_2 => "0.2 mm",
+            Self::Mm0_25 => "0.25 mm",
+            Self::Mm0_3 => "0.3 mm",
+            Self::Mm0_4 => "0.4 mm",
+            Self::Mm0_5 => "0.5 mm",
+            Self::Mm0_6 => "0.6 mm",
+            Self::Mm0_7 => "0.7 mm",
+            Self::Mm1_0 => "1.0 mm",
+            Self::Mm1_5 => "1.5 mm",
+            Self::Mm2_0 => "2.0 mm",
+            Self::Mm3_0 => "3.0 mm",
+            Self::Mm4_0 => "4.0 mm",
+            Self::Mm5_0 => "5.0 mm",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteLine {
+    /// OWPML HWPUNIT 또는 예약된 음수 길이 값. 의미를 추측하지 않고 보존한다.
+    pub length: i32,
+    pub line_type: NoteLineType,
+    pub width: NoteLineWidth,
+    /// 정규화된 `#RRGGBB`.
+    pub color: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSpacing {
+    pub between_notes: u32,
+    pub below_line: u32,
+    pub above_line: u32,
+}
+
+/// 한 구역의 동적 각주/미주 표식 정책.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteProperties {
+    pub number_format: NoteNumberFormat,
+    pub restart: NoteNumberRestart,
+    pub start: usize,
+    pub position: NotePosition,
+    pub prefix: String,
+    pub suffix: String,
+    pub superscript: bool,
+    /// DOCX에 같은 구역 범위로 내릴 수 없어 별도 정책 판정이 필요한 원본 값.
+    pub note_line: Option<NoteLine>,
+    pub note_spacing: Option<NoteSpacing>,
+}
+
+/// HWPX spine의 구역 하나. 본문과 반복 story 및 주석 정책을 함께 소유한다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Section {
+    pub blocks: Vec<Block>,
+    pub headers: Vec<HeaderFooter>,
+    pub footers: Vec<HeaderFooter>,
+    pub hide_first_header: bool,
+    pub hide_first_footer: bool,
+    pub footnote_properties: Option<NoteProperties>,
+    pub endnote_properties: Option<NoteProperties>,
+}
+
+/// 한글 계열 문서 하나 전체. spine의 구역 경계를 그대로 보존한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Document {
+    pub sections: Vec<Section>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            sections: vec![Section::default()],
+        }
+    }
+}
+
 impl Document {
+    /// 구역 개념이 없는 HWP/HWPML 및 단위 테스트용 단일 구역 문서.
+    pub fn from_blocks(blocks: Vec<Block>) -> Self {
+        Self {
+            sections: vec![Section {
+                blocks,
+                ..Section::default()
+            }],
+        }
+    }
+
     pub fn paragraphs(&self) -> impl Iterator<Item = &Paragraph> {
-        self.blocks.iter().filter_map(|b| match b {
-            Block::Paragraph(p) => Some(p),
-            Block::Table(_) => None,
+        self.sections.iter().flat_map(|section| {
+            section.blocks.iter().filter_map(|b| match b {
+                Block::Paragraph(p) => Some(p),
+                Block::Table(_) => None,
+            })
         })
     }
 
     pub fn tables(&self) -> impl Iterator<Item = &Table> {
-        self.blocks.iter().filter_map(|b| match b {
-            Block::Table(t) => Some(t),
-            Block::Paragraph(_) => None,
+        self.sections.iter().flat_map(|section| {
+            section.blocks.iter().filter_map(|b| match b {
+                Block::Table(t) => Some(t),
+                Block::Paragraph(_) => None,
+            })
         })
     }
 
@@ -562,7 +833,18 @@ impl Document {
             }
             n
         }
-        walk(&self.blocks)
+        self.sections
+            .iter()
+            .map(|section| {
+                walk(&section.blocks)
+                    + section
+                        .headers
+                        .iter()
+                        .chain(&section.footers)
+                        .map(|story| walk(&story.blocks))
+                        .sum::<usize>()
+            })
+            .sum()
     }
 }
 
@@ -726,16 +1008,12 @@ mod tests {
                 blocks: vec![pua("셀\u{F0855}"), Block::Table(inner)],
             }],
         };
-        let doc = Document {
-            blocks: vec![pua("본문\u{F0854}이후"), Block::Table(outer)],
-        };
+        let doc = Document::from_blocks(vec![pua("본문\u{F0854}이후"), Block::Table(outer)]);
         // 본문 1 + 셀 1 + 중첩 1
         assert_eq!(doc.count_private_use_chars(), 3);
 
         // PUA가 없으면 0
-        let clean = Document {
-            blocks: vec![pua("깨끗한 텍스트 『인용』")],
-        };
+        let clean = Document::from_blocks(vec![pua("깨끗한 텍스트 『인용』")]);
         assert_eq!(clean.count_private_use_chars(), 0);
     }
 

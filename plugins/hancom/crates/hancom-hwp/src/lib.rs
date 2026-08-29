@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 use error::{ExitCode, PluginError, Result};
 use officecli_hancom_core::diagnostics::diagnostic_path;
 pub use officecli_hancom_core::diagnostics::escape_diagnostic_text;
+use officecli_hancom_core::model::{Document, NoteKind, NoteProperties};
+
+const MAX_STRUCTURED_WARNING_BYTES: usize = 12 * 1024;
 
 /// 파싱된 명령줄.
 #[derive(Debug, PartialEq)]
@@ -220,6 +223,82 @@ fn report_log_failure<E: Write>(stderr: &mut E, path: &Path, error: &std::io::Er
     );
 }
 
+fn dormant_note_layout_warning(document: &Document) -> Result<Option<String>> {
+    fn policy_value(
+        section: usize,
+        kind: NoteKind,
+        properties: &NoteProperties,
+    ) -> serde_json::Value {
+        let mut value = serde_json::Map::new();
+        value.insert("section".into(), serde_json::json!(section));
+        value.insert(
+            "kind".into(),
+            serde_json::json!(match kind {
+                NoteKind::Footnote => "footnote",
+                NoteKind::Endnote => "endnote",
+            }),
+        );
+        if let Some(line) = &properties.note_line {
+            value.insert(
+                "noteLine".into(),
+                serde_json::json!({
+                    "length": line.length,
+                    "type": line.line_type.as_owpml(),
+                    "width": line.width.as_owpml(),
+                    "color": line.color,
+                }),
+            );
+        }
+        if let Some(spacing) = &properties.note_spacing {
+            value.insert(
+                "noteSpacing".into(),
+                serde_json::json!({
+                    "betweenNotes": spacing.between_notes,
+                    "belowLine": spacing.below_line,
+                    "aboveLine": spacing.above_line,
+                }),
+            );
+        }
+        serde_json::Value::Object(value)
+    }
+
+    let mut affected = Vec::new();
+    for (index, section) in document.sections.iter().enumerate() {
+        for (kind, properties) in [
+            (NoteKind::Footnote, section.footnote_properties.as_ref()),
+            (NoteKind::Endnote, section.endnote_properties.as_ref()),
+        ] {
+            let Some(properties) = properties else {
+                continue;
+            };
+            if properties.note_line.is_some() || properties.note_spacing.is_some() {
+                // parse_section has already proven that no note of this kind is active in
+                // this section. Retain every source value in the warning so dormant
+                // authoring policy is visible instead of being silently discarded.
+                affected.push(policy_value(index + 1, kind, properties));
+            }
+        }
+    }
+    if affected.is_empty() {
+        return Ok(None);
+    }
+
+    let warning = serde_json::json!({
+        "severity": "warning",
+        "code": "HWPX_DORMANT_NOTE_LAYOUT_NOT_MATERIALIZED",
+        "message": "Section-scoped Hancom note line/spacing policy has no DOCX equivalent. The affected sections contain no active note of that kind, so document rendering is unchanged; future notes authored in DOCX will not inherit this policy.",
+        "sections": affected,
+    })
+    .to_string();
+    if warning.len() > MAX_STRUCTURED_WARNING_BYTES {
+        return Err(PluginError::unsupported_feature(format!(
+            "dormant note layout diagnostic is {} bytes, exceeding the mandatory warning channel limit of {MAX_STRUCTURED_WARNING_BYTES} bytes",
+            warning.len()
+        )));
+    }
+    Ok(Some(warning))
+}
+
 /// 바이너리 HWP를 만났을 때의 에러.
 ///
 /// exit 3 (`unsupported_feature`, §6.5 "Feature unsupported in this build")로
@@ -232,9 +311,7 @@ fn unsupported_binary_hwp(detected: &format::SourceFormat) -> PluginError {
             "this is a binary HWP 5.x document (version {}), not HWPX",
             info.version_string()
         ),
-        format::SourceFormat::Hwp3 => {
-            "this is a binary HWP 3.0 document, not HWPX".to_string()
-        }
+        format::SourceFormat::Hwp3 => "this is a binary HWP 3.0 document, not HWPX".to_string(),
         format::SourceFormat::Hwpx => {
             // 도달할 수 없다. needs_conversion()이 false인 경우다.
             "unexpected format state".to_string()
@@ -353,6 +430,13 @@ pub fn run<O: Write, E: Write>(cmd: Command, stdout: &mut O, stderr: &mut E) -> 
                     ));
                 }
             };
+            // This warning is part of the loss-disclosure contract, not verbose logging:
+            // it must survive --quiet and --log-file. Emit and flush it before the first
+            // JSONL item so a broken diagnostic channel cannot yield a silent conversion.
+            if let Some(warning) = dormant_note_layout_warning(&doc)? {
+                writeln!(stderr, "{warning}")?;
+                stderr.flush()?;
+            }
             let count = emit::stream_document(&doc, stdout)?;
 
             // 진단은 stderr 또는 --log-file로. stdout은 JSONL 전용이다(§5.1).

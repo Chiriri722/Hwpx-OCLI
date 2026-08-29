@@ -2150,8 +2150,12 @@ public static partial class WordBatchEmitter
             }
         }
 
+        var bodyReferenceDecoration = TryReadAutomaticNoteReferenceDecoration(
+            word, bodyRefRun, "footnoteReference", "endnoteReference");
         var firstParaRuns = bodyParas.Count > 0
-            ? bodyParas[0].Children.Where(c => IsRoundTrippableNoteRun(word, c)).ToList()
+            ? bodyParas[0].Children
+                .Where(c => IsRoundTrippableNoteRun(word, c, bodyReferenceDecoration))
+                .ToList()
             : new List<DocumentNode>();
 
         // `add footnote`/`add endnote` requires a non-empty `text` (AddFootnote/
@@ -2228,11 +2232,11 @@ public static partial class WordBatchEmitter
         // references it). Forward the source rStyle so AddFootnote/AddEndnote
         // restores it; when the source mark had no rStyle, leave the prop unset
         // and AddFootnote/AddEndnote falls back to the inline superscript.
+        (string Prefix, string Suffix)? noteMarkDecoration = null;
         if (bodyParas.Count > 0)
         {
             var refMarkRun = bodyParas[0].Children.FirstOrDefault(c =>
                 (c.Type == "run" || c.Type == "r")
-                && string.IsNullOrEmpty(c.Text)
                 && (word.GetElementXml(c.Path)?.Contains("footnoteRef", StringComparison.Ordinal) == true
                     || word.GetElementXml(c.Path)?.Contains("endnoteRef", StringComparison.Ordinal) == true));
             if (refMarkRun != null)
@@ -2254,6 +2258,8 @@ public static partial class WordBatchEmitter
                         var refRPrEl = refRunEl.Element(wNs3 + "rPr");
                         if (refRPrEl != null)
                             noteProps["referenceMarkRPr"] = refRPrEl.ToString(System.Xml.Linq.SaveOptions.DisableFormatting);
+                        noteMarkDecoration = TryReadAutomaticNoteReferenceDecoration(
+                            refRunEl, wNs3, "footnoteRef", "endnoteRef");
                     }
                     catch { /* keep the rStyle-only fallback */ }
                 }
@@ -2328,6 +2334,29 @@ public static partial class WordBatchEmitter
                             var symChar = symEl.Attribute(wNs2 + "char")?.Value ?? "";
                             if (symChar.Length > 0)
                                 noteProps["referenceCustomMarkSym"] = symFont + ":" + symChar;
+                        }
+                    }
+                    else
+                    {
+                        // HWPX numbering policies can decorate every automatic note
+                        // reference (for example "1)") in BOTH the body anchor and
+                        // the note-body mark run. These sibling w:t nodes are not
+                        // part of the note text, so the normal run emitter correctly
+                        // skips them together with the reference marker. Preserve
+                        // them explicitly on the add-note item when both copies
+                        // agree. If a third-party document intentionally gives the
+                        // body and note-body markers different decorations, the
+                        // current add vocabulary cannot represent that asymmetry;
+                        // leave both unset instead of silently copying one side to
+                        // the other.
+                        if (bodyReferenceDecoration is { } body
+                            && noteMarkDecoration is { } mark
+                            && body == mark)
+                        {
+                            if (body.Prefix.Length > 0)
+                                noteProps["referencePrefix"] = body.Prefix;
+                            if (body.Suffix.Length > 0)
+                                noteProps["referenceSuffix"] = body.Suffix;
                         }
                     }
                 }
@@ -2482,6 +2511,57 @@ public static partial class WordBatchEmitter
         }
     }
 
+    private static (string Prefix, string Suffix)? TryReadAutomaticNoteReferenceDecoration(
+        WordHandler word,
+        DocumentNode? run,
+        params string[] referenceNames)
+    {
+        if (run == null) return null;
+        var xml = word.GetElementXml(run.Path);
+        if (string.IsNullOrEmpty(xml)) return null;
+        try
+        {
+            var element = System.Xml.Linq.XElement.Parse(xml);
+            var wordNamespace = (System.Xml.Linq.XNamespace)
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            return TryReadAutomaticNoteReferenceDecoration(
+                element, wordNamespace, referenceNames);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static (string Prefix, string Suffix)? TryReadAutomaticNoteReferenceDecoration(
+        System.Xml.Linq.XElement run,
+        System.Xml.Linq.XNamespace wordNamespace,
+        params string[] referenceNames)
+    {
+        var reference = run.Elements().FirstOrDefault(element =>
+            referenceNames.Any(name => element.Name == wordNamespace + name));
+        if (reference == null) return null;
+
+        var customMarkFollows = reference.Attribute(wordNamespace + "customMarkFollows")?.Value;
+        if (customMarkFollows is "1" or "true" or "on") return null;
+
+        var prefix = new System.Text.StringBuilder();
+        var suffix = new System.Text.StringBuilder();
+        bool afterReference = false;
+        foreach (var child in run.Elements())
+        {
+            if (ReferenceEquals(child, reference))
+            {
+                afterReference = true;
+                continue;
+            }
+            if (child.Name != wordNamespace + "t" && child.Name != wordNamespace + "delText")
+                continue;
+            (afterReference ? suffix : prefix).Append(child.Value);
+        }
+        return (prefix.ToString(), suffix.ToString());
+    }
+
     // BUG-DUMP-R27-5: enumerate a footnote/endnote's DIRECT block-level children
     // (top-level <w:p> and <w:tbl>) in document order from its raw XML. A
     // depth-tracked scan keeps paragraphs nested inside table cells (or nested
@@ -2594,8 +2674,13 @@ public static partial class WordBatchEmitter
     // root of "endnote bodies silently dropped". Get's .Text already excludes
     // the ref mark (it contributes no <w:t>), and AddFootnote/AddEndnote rebuilds
     // the ref mark from scratch, so a fused run round-trips correctly as a plain
-    // text run; only a text-less ref mark is dropped.
-    private static bool IsRoundTrippableNoteRun(WordHandler word, DocumentNode run)
+    // text run. A text-less marker is dropped, as is a marker whose only text is
+    // the same prefix/suffix carried by the body reference. Any non-matching text
+    // remains a content run so legacy fused mark+body documents stay lossless.
+    private static bool IsRoundTrippableNoteRun(
+        WordHandler word,
+        DocumentNode run,
+        (string Prefix, string Suffix)? automaticDecoration = null)
     {
         // Tab-only runs align note text after the reference mark; EmitCommentRun
         // round-trips them as `add r text="\t"`. Excluding them silently
@@ -2605,9 +2690,17 @@ public static partial class WordBatchEmitter
         var raw = word.GetElementXml(run.Path);
         if (!string.IsNullOrEmpty(raw)
             && (raw.Contains("footnoteRef", StringComparison.Ordinal)
-                || raw.Contains("endnoteRef", StringComparison.Ordinal))
-            && string.IsNullOrEmpty(run.Text))
-            return false; // a pure reference mark — recreated by AddFootnote/AddEndnote
+                || raw.Contains("endnoteRef", StringComparison.Ordinal)))
+        {
+            if (string.IsNullOrEmpty(run.Text))
+                return false; // a pure reference mark — recreated by AddFootnote/AddEndnote
+            var markerDecoration = TryReadAutomaticNoteReferenceDecoration(
+                word, run, "footnoteRef", "endnoteRef");
+            if (markerDecoration is { } marker
+                && automaticDecoration is { } body
+                && marker == body)
+                return false;
+        }
         return true;
     }
 

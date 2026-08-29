@@ -315,8 +315,7 @@ fn detect_zip<R: Read + Seek>(reader: R) -> Result<SourceFormat> {
         }
         if !s.is_empty() {
             return Err(PluginError::corrupt(format!(
-                "zip container with unexpected mimetype {s:?} (expected {:?})",
-                HWPX_MIMETYPE_VALUE
+                "zip container with unexpected mimetype {s:?} (expected {HWPX_MIMETYPE_VALUE:?})"
             )));
         }
     }

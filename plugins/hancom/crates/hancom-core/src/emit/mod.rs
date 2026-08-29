@@ -27,24 +27,22 @@ mod tests {
     use crate::model::{Block, CharStyle, Inline, ParaStyle, Paragraph, TextRun};
 
     fn sample() -> Document {
-        Document {
-            blocks: vec![
-                Block::Paragraph(Paragraph {
-                    style: ParaStyle::default(),
-                    inlines: vec![Inline::Text(TextRun {
-                        text: "첫 문단".into(),
-                        style: CharStyle::default(),
-                    })],
-                }),
-                Block::Paragraph(Paragraph {
-                    style: ParaStyle::default(),
-                    inlines: vec![Inline::Text(TextRun {
-                        text: "둘째 문단".into(),
-                        style: CharStyle::default(),
-                    })],
-                }),
-            ],
-        }
+        Document::from_blocks(vec![
+            Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![Inline::Text(TextRun {
+                    text: "첫 문단".into(),
+                    style: CharStyle::default(),
+                })],
+            }),
+            Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![Inline::Text(TextRun {
+                    text: "둘째 문단".into(),
+                    style: CharStyle::default(),
+                })],
+            }),
+        ])
     }
 
     #[test]

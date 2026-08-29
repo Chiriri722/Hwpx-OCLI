@@ -25,11 +25,13 @@ pub fn attr(e: &BytesStart<'_>, name: &str) -> Option<String> {
         let a = a.ok()?;
         if local_name(a.key.as_ref()) == name {
             // HWPX 문서 선언은 `version="1.0"`이다.
-            return Some(match a.normalized_value(quick_xml::XmlVersion::Explicit1_0) {
-                Ok(v) => v.into_owned(),
-                // 해제 실패 시에도 값을 버리지 않는다.
-                Err(_) => String::from_utf8_lossy(a.value.as_ref()).into_owned(),
-            });
+            return Some(
+                match a.normalized_value(quick_xml::XmlVersion::Explicit1_0) {
+                    Ok(v) => v.into_owned(),
+                    // 해제 실패 시에도 값을 버리지 않는다.
+                    Err(_) => String::from_utf8_lossy(a.value.as_ref()).into_owned(),
+                },
+            );
         }
     }
     None

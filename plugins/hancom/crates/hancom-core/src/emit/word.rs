@@ -22,8 +22,9 @@ use base64::Engine;
 
 use super::batch::BatchItem;
 use crate::model::{
-    Block, Cell, CharStyle, CheckBox, Document, Equation, Image, Inline, Note, NoteKind, ParaStyle,
-    Paragraph, Table, TextField, VertAlign,
+    Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter, HeaderFooterPage, Image,
+    Inline, Note, NoteKind, NoteProperties, PageNumberField, ParaStyle, Paragraph, Section, Table,
+    TextField, VertAlign,
 };
 
 /// 문단·런 `text` prop의 줄바꿈 문자 (Shift+Enter). `\n`과 혼동하면 안 된다.
@@ -58,9 +59,13 @@ const TYPE_RUN: &str = "run";
 const TYPE_TABLE: &str = "table";
 const TYPE_PICTURE: &str = "picture";
 const TYPE_FORMFIELD: &str = "formfield";
+const TYPE_FIELD: &str = "field";
 const TYPE_EQUATION: &str = "equation";
 const TYPE_FOOTNOTE: &str = "footnote";
 const TYPE_ENDNOTE: &str = "endnote";
+const TYPE_SECTION: &str = "section";
+const TYPE_HEADER: &str = "header";
+const TYPE_FOOTER: &str = "footer";
 
 /// `add` 직후 그 요소를 가리키는 경로.
 ///
@@ -80,6 +85,10 @@ const LAST_PARAGRAPH: &str = "/body/p[last()]";
 struct EmitState {
     footnotes: usize,
     endnotes: usize,
+    headers: usize,
+    footers: usize,
+    active_footnote_properties: Option<NoteProperties>,
+    active_endnote_properties: Option<NoteProperties>,
 }
 
 impl EmitState {
@@ -95,6 +104,54 @@ impl EmitState {
                 self.endnotes += 1;
                 (TYPE_ENDNOTE, format!("/endnote[{}]", self.endnotes))
             }
+        }
+    }
+
+    fn next_story(&mut self, kind: StoryKind) -> (&'static str, String) {
+        match kind {
+            StoryKind::Header => {
+                self.headers += 1;
+                (TYPE_HEADER, format!("/header[{}]", self.headers))
+            }
+            StoryKind::Footer => {
+                self.footers += 1;
+                (TYPE_FOOTER, format!("/footer[{}]", self.footers))
+            }
+        }
+    }
+
+    fn begin_section(&mut self, section: &Section) {
+        self.active_footnote_properties = section.footnote_properties.clone();
+        self.active_endnote_properties = section.endnote_properties.clone();
+    }
+
+    fn note_properties(&self, kind: NoteKind) -> Option<&NoteProperties> {
+        match kind {
+            NoteKind::Footnote => self.active_footnote_properties.as_ref(),
+            NoteKind::Endnote => self.active_endnote_properties.as_ref(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StoryKind {
+    Header,
+    Footer,
+}
+
+#[derive(Clone, Copy)]
+enum StorySlot {
+    Default,
+    Even,
+    First,
+}
+
+impl StorySlot {
+    fn as_docx(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Even => "even",
+            Self::First => "first",
         }
     }
 }
@@ -121,23 +178,277 @@ pub fn try_emit_document<E>(
 ) -> std::result::Result<usize, E> {
     let mut count = 0usize;
     let mut state = EmitState::default();
-    for block in &doc.blocks {
-        let mut items = Vec::new();
-        match block {
-            Block::Paragraph(p) => emit_paragraph(p, &mut state, &mut items),
-            Block::Table(t) => emit_table(t, "/body", &mut state, &mut items),
+
+    // Header/footer attachment resolves /section[N] against section-break
+    // carriers. Build every body block and carrier before creating any part.
+    for (section_index, section) in doc.sections.iter().enumerate() {
+        state.begin_section(section);
+        for block in &section.blocks {
+            let mut items = Vec::new();
+            match block {
+                Block::Paragraph(p) => emit_paragraph(p, &mut state, &mut items),
+                Block::Table(t) => emit_table(t, "/body", &mut state, &mut items),
+            }
+            for item in items {
+                sink(item)?;
+                count += 1;
+            }
         }
-        for item in items {
+
+        let final_section = section_index + 1 == doc.sections.len();
+        if let Some(item) = section_properties_item(section, final_section) {
             sink(item)?;
             count += 1;
         }
     }
+
+    for item in emit_header_footer_stories(doc, &mut state) {
+        sink(item)?;
+        count += 1;
+    }
     Ok(count)
 }
 
+fn section_properties_item(section: &Section, final_section: bool) -> Option<BatchItem> {
+    let mut item = if final_section {
+        BatchItem::set("/")
+    } else {
+        BatchItem::add("/body", TYPE_SECTION).prop("type", "nextPage")
+    };
+
+    item = item.flag(
+        "titlePage",
+        section.hide_first_header || section.hide_first_footer,
+    );
+    item = apply_note_properties(item, "footnotePr", section.footnote_properties.as_ref());
+    item = apply_note_properties(item, "endnotePr", section.endnote_properties.as_ref());
+
+    if final_section && !item.has_props() {
+        None
+    } else {
+        Some(item)
+    }
+}
+
+fn apply_note_properties(
+    mut item: BatchItem,
+    prefix: &str,
+    properties: Option<&NoteProperties>,
+) -> BatchItem {
+    let Some(properties) = properties else {
+        return item;
+    };
+    item = item.prop(
+        &format!("{prefix}.numFmt"),
+        properties.number_format.as_docx(),
+    );
+    item = item.prop(
+        &format!("{prefix}.numRestart"),
+        properties.restart.as_docx(),
+    );
+    item = item.prop(&format!("{prefix}.numStart"), properties.start.to_string());
+    item.prop(&format!("{prefix}.pos"), properties.position.as_docx())
+}
+
+/// HWPX의 BOTH/ODD/EVEN story를 Word의 default/even 슬롯으로 투영한다.
+///
+/// Word의 evenAndOddHeaders는 문서 전역 설정이다. 어느 구역 하나라도 ODD/EVEN을
+/// 쓰면 모든 구역에 even 슬롯을 명시해야 하며, 없는 슬롯은 빈 part로 막아야 앞
+/// 구역의 참조를 상속하지 않는다.
+fn emit_header_footer_stories(doc: &Document, state: &mut EmitState) -> Vec<BatchItem> {
+    let mut out = Vec::new();
+    let parity = doc.sections.iter().any(|section| {
+        section
+            .headers
+            .iter()
+            .chain(&section.footers)
+            .any(|story| story.page != HeaderFooterPage::Both)
+    });
+    let has_headers = doc
+        .sections
+        .iter()
+        .any(|section| !section.headers.is_empty());
+    let has_footers = doc
+        .sections
+        .iter()
+        .any(|section| !section.footers.is_empty());
+
+    for (section_index, section) in doc.sections.iter().enumerate() {
+        let parent = if section_index + 1 == doc.sections.len() {
+            "/".to_string()
+        } else {
+            format!("/section[{}]", section_index + 1)
+        };
+
+        for (kind, present) in [
+            (StoryKind::Header, has_headers),
+            (StoryKind::Footer, has_footers),
+        ] {
+            if !present {
+                continue;
+            }
+
+            emit_story(
+                story_for_slot(section, kind, StorySlot::Default),
+                kind,
+                StorySlot::Default,
+                &parent,
+                state,
+                &mut out,
+            );
+            if parity {
+                emit_story(
+                    story_for_slot(section, kind, StorySlot::Even),
+                    kind,
+                    StorySlot::Even,
+                    &parent,
+                    state,
+                    &mut out,
+                );
+            }
+
+            if section.hide_first_header || section.hide_first_footer {
+                let hidden = match kind {
+                    StoryKind::Header => section.hide_first_header,
+                    StoryKind::Footer => section.hide_first_footer,
+                };
+                let first = if hidden {
+                    None
+                } else {
+                    story_for_slot(section, kind, StorySlot::Default)
+                };
+                emit_story(first, kind, StorySlot::First, &parent, state, &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn story_for_slot(section: &Section, kind: StoryKind, slot: StorySlot) -> Option<&HeaderFooter> {
+    let stories = match kind {
+        StoryKind::Header => &section.headers,
+        StoryKind::Footer => &section.footers,
+    };
+    let preferred = match slot {
+        StorySlot::Default | StorySlot::First => HeaderFooterPage::Odd,
+        StorySlot::Even => HeaderFooterPage::Even,
+    };
+    stories
+        .iter()
+        .find(|story| story.page == preferred)
+        .or_else(|| {
+            stories
+                .iter()
+                .find(|story| story.page == HeaderFooterPage::Both)
+        })
+}
+
+fn emit_story(
+    story: Option<&HeaderFooter>,
+    kind: StoryKind,
+    slot: StorySlot,
+    section_parent: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    let (part_type, part_path) = state.next_story(kind);
+    let base = BatchItem::add(section_parent, part_type).prop("type", slot.as_docx());
+    let Some(story) = story else {
+        out.push(base);
+        return;
+    };
+
+    let first_is_non_paragraph = story
+        .blocks
+        .first()
+        .is_some_and(|block| !matches!(block, Block::Paragraph(_)));
+    let mut consumed_first_paragraph = false;
+    if let Some(Block::Paragraph(paragraph)) = story.blocks.first() {
+        consumed_first_paragraph = true;
+        emit_story_seed(paragraph, base, &part_path, state, out);
+    } else {
+        out.push(base);
+    }
+
+    for (index, block) in story.blocks.iter().enumerate() {
+        if consumed_first_paragraph && index == 0 {
+            continue;
+        }
+        match block {
+            Block::Paragraph(paragraph) => emit_paragraph_at(
+                paragraph,
+                &part_path,
+                &format!("{part_path}/p[last()]"),
+                state,
+                out,
+            ),
+            Block::Table(table) => emit_table(table, &part_path, state, out),
+        }
+    }
+
+    // Header/footer creation always seeds p[1]. If the source starts with a
+    // table, keep it only until all source blocks are appended, then remove it;
+    // the remaining order becomes table, paragraph, ... exactly as in HWPX.
+    if first_is_non_paragraph {
+        out.push(BatchItem::remove(format!("{part_path}/p[1]")));
+    }
+}
+
+fn emit_story_seed(
+    paragraph: &Paragraph,
+    part: BatchItem,
+    part_path: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
+    out.push(part);
+    let mut seed = BatchItem::set(format!("{part_path}/p[1]"));
+    seed = apply_para_props(seed, &paragraph.style);
+    let uniform = paragraph.uniform_style();
+    let collapsible = uniform.is_some() && !paragraph.needs_child_commands();
+    if collapsible {
+        seed = seed.prop("text", flatten_inlines(paragraph, SOFT_BREAK));
+        if let Some(style) = uniform {
+            seed = apply_char_props(seed, style);
+        }
+        if seed.has_props() {
+            out.push(seed);
+        }
+        return;
+    }
+
+    let skip = if let Some(Inline::Text(run)) = paragraph.inlines.first() {
+        seed = seed.prop("text", normalize_breaks(&run.text, SOFT_BREAK));
+        seed = apply_char_props(seed, &run.style);
+        1
+    } else {
+        seed = seed.prop("text", "");
+        0
+    };
+    if seed.has_props() {
+        out.push(seed);
+    }
+    emit_inline_children(
+        &paragraph.inlines[skip..],
+        &format!("{part_path}/p[1]"),
+        state,
+        out,
+    );
+}
+
 fn emit_paragraph(p: &Paragraph, state: &mut EmitState, out: &mut Vec<BatchItem>) {
+    emit_paragraph_at(p, "/body", LAST_PARAGRAPH, state, out);
+}
+
+fn emit_paragraph_at(
+    p: &Paragraph,
+    parent: &str,
+    last_paragraph: &str,
+    state: &mut EmitState,
+    out: &mut Vec<BatchItem>,
+) {
     if let Some(equation) = p.sole_display_equation() {
-        out.push(equation_item("/body", equation));
+        out.push(equation_item(parent, equation));
         return;
     }
 
@@ -145,7 +456,7 @@ fn emit_paragraph(p: &Paragraph, state: &mut EmitState, out: &mut Vec<BatchItem>
 
     // 케이스 1: 서식이 균일하고 별도 자식이 필요 없으면 한 줄로 병합한다.
     if let (Some(style), false) = (uniform, p.needs_child_commands()) {
-        let mut item = BatchItem::add("/body", TYPE_PARAGRAPH);
+        let mut item = BatchItem::add(parent, TYPE_PARAGRAPH);
         item = apply_para_props(item, &p.style);
         item = item.prop("text", emit_text(p));
         item = apply_char_props(item, style);
@@ -155,11 +466,11 @@ fn emit_paragraph(p: &Paragraph, state: &mut EmitState, out: &mut Vec<BatchItem>
 
     // 케이스 2: 다중 서식 또는 이미지·체크박스 포함.
     // `text` prop을 주지 않는다 — 런 자식과 중복되기 때문이다.
-    let mut para = BatchItem::add("/body", TYPE_PARAGRAPH);
+    let mut para = BatchItem::add(parent, TYPE_PARAGRAPH);
     para = apply_para_props(para, &p.style);
     out.push(para);
 
-    emit_paragraph_children(p, LAST_PARAGRAPH, state, out);
+    emit_paragraph_children(p, last_paragraph, state, out);
 }
 
 /// 문단 내용을 자식 명령들로 내보낸다.
@@ -222,6 +533,10 @@ fn emit_inline_children(
                 flush_pending(&mut pending, parent, out);
                 out.push(text_field_item(parent, tf));
             }
+            Inline::PageNumber(field) => {
+                flush_pending(&mut pending, parent, out);
+                out.push(page_number_field_item(parent, field));
+            }
             Inline::Note(note) => {
                 flush_pending(&mut pending, parent, out);
                 emit_note(note, parent, state, out);
@@ -249,16 +564,29 @@ fn equation_item(parent: &str, equation: &Equation) -> BatchItem {
 /// 경로 아래에 이어 붙인다. 이렇게 해야 다중 문단을 `\v`로 평탄화하지 않고
 /// 문단별 서식과 블록 순서를 보존할 수 있다.
 fn emit_note(note: &Note, anchor: &str, state: &mut EmitState, out: &mut Vec<BatchItem>) {
+    let properties = state.note_properties(note.kind).cloned();
     let (note_type, note_path) = state.next_note(note.kind);
 
     let mut consumed_first_paragraph = false;
     if let Some(Block::Paragraph(paragraph)) = note.blocks.first() {
         consumed_first_paragraph = true;
-        emit_note_seed(paragraph, anchor, note_type, &note_path, state, out);
+        emit_note_seed(
+            paragraph,
+            note,
+            properties.as_ref(),
+            anchor,
+            &note_path,
+            state,
+            out,
+        );
     } else {
         // 호스트는 text 속성을 필수로 요구한다. 표가 첫 블록이거나 본문이 비어
         // 있어도 참조 표식이 들어갈 빈 첫 문단은 필요하다.
-        out.push(BatchItem::add(anchor, note_type).prop("text", ""));
+        out.push(apply_note_reference_properties(
+            BatchItem::add(anchor, note_type).prop("text", ""),
+            note,
+            properties.as_ref(),
+        ));
     }
 
     for (index, block) in note.blocks.iter().enumerate() {
@@ -275,15 +603,21 @@ fn emit_note(note: &Note, anchor: &str, state: &mut EmitState, out: &mut Vec<Bat
 /// `add footnote|endnote`가 동시에 만드는 첫 본문 문단을 채운다.
 fn emit_note_seed(
     paragraph: &Paragraph,
+    note: &Note,
+    properties: Option<&NoteProperties>,
     anchor: &str,
-    note_type: &'static str,
     note_path: &str,
     state: &mut EmitState,
     out: &mut Vec<BatchItem>,
 ) {
+    let note_type = match note.kind {
+        NoteKind::Footnote => TYPE_FOOTNOTE,
+        NoteKind::Endnote => TYPE_ENDNOTE,
+    };
     let uniform = paragraph.uniform_style();
     let collapsible = uniform.is_some() && !paragraph.needs_child_commands();
     let mut seed = apply_para_props(BatchItem::add(anchor, note_type), &paragraph.style);
+    seed = apply_note_reference_properties(seed, note, properties);
 
     if collapsible {
         seed = seed.prop("text", flatten_inlines(paragraph, SOFT_BREAK));
@@ -311,6 +645,33 @@ fn emit_note_seed(
         state,
         out,
     );
+}
+
+fn apply_note_reference_properties(
+    mut item: BatchItem,
+    note: &Note,
+    properties: Option<&NoteProperties>,
+) -> BatchItem {
+    let prefix = note
+        .reference_prefix
+        .as_deref()
+        .or_else(|| properties.map(|value| value.prefix.as_str()))
+        .unwrap_or_default();
+    let suffix = note
+        .reference_suffix
+        .as_deref()
+        .or_else(|| properties.map(|value| value.suffix.as_str()))
+        .unwrap_or_default();
+    if !prefix.is_empty() {
+        item = item.prop("referencePrefix", prefix);
+    }
+    if !suffix.is_empty() {
+        item = item.prop("referenceSuffix", suffix);
+    }
+    if let Some(properties) = properties {
+        item = item.prop("referenceSuperscript", properties.superscript.to_string());
+    }
+    item
 }
 
 /// 첫 문단 뒤의 주석 문단을 원래 문단 경계 그대로 추가한다.
@@ -370,6 +731,17 @@ fn text_field_item(parent: &str, tf: &TextField) -> BatchItem {
     item
 }
 
+/// HWPX PAGE/TOTAL_PAGE 자동 번호 → Word의 동적 PAGE/NUMPAGES 필드.
+///
+/// 표시된 숫자를 정적 문자열로 복사하면 페이지 재배치 뒤 즉시 틀어진다. 호스트의
+/// `field` 어휘는 두 종류 모두 복합 필드로 생성하므로 의미를 그대로 유지한다.
+fn page_number_field_item(parent: &str, field: &PageNumberField) -> BatchItem {
+    apply_char_props(
+        BatchItem::add(parent, TYPE_FIELD).prop("fieldType", field.kind.as_docx()),
+        &field.style,
+    )
+}
+
 /// 폼필드 이름 제약: 북마크 이름과 같다 (`officecli help docx formfield`).
 /// 영숫자와 밑줄만 통과시킨다. 어긋나면 이름을 생략하는 편이 안전하다.
 fn is_safe_field_name(name: &str) -> bool {
@@ -399,6 +771,7 @@ fn flatten_inlines(p: &Paragraph, brk: char) -> String {
             Inline::Image(_)
             | Inline::CheckBox(_)
             | Inline::TextField(_)
+            | Inline::PageNumber(_)
             | Inline::Note(_)
             | Inline::Equation(_) => {}
         }
@@ -768,7 +1141,15 @@ fn trim_float(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Align, EquationMode, Note, NoteKind, TextRun};
+    use crate::model::{
+        Align, EquationMode, HeaderFooter, HeaderFooterPage, Note, NoteKind, Section, TextRun,
+    };
+
+    macro_rules! document {
+        (blocks: $blocks:expr $(,)?) => {
+            Document::from_blocks($blocks)
+        };
+    }
 
     fn text_run(t: &str, style: CharStyle) -> Inline {
         Inline::Text(TextRun {
@@ -792,8 +1173,181 @@ mod tests {
     }
 
     #[test]
+    fn emits_section_breaks_then_scoped_header_footer_parts() {
+        let paragraph = |text: &str| {
+            Block::Paragraph(Paragraph {
+                style: ParaStyle::default(),
+                inlines: vec![text_run(text, CharStyle::default())],
+            })
+        };
+        let story = |page, text: &str| HeaderFooter {
+            id: None,
+            page,
+            blocks: vec![paragraph(text)],
+        };
+        let document = Document {
+            sections: vec![
+                Section {
+                    blocks: vec![paragraph("첫 구역")],
+                    headers: vec![story(HeaderFooterPage::Both, "공통 머리말")],
+                    footers: vec![story(HeaderFooterPage::Both, "공통 꼬리말")],
+                    hide_first_header: true,
+                    ..Section::default()
+                },
+                Section {
+                    blocks: vec![paragraph("둘째 구역")],
+                    headers: vec![story(HeaderFooterPage::Odd, "홀수 머리말")],
+                    ..Section::default()
+                },
+            ],
+        };
+
+        let items = emit_document(&document);
+        assert_eq!(items[0].props["text"], "첫 구역");
+        assert_eq!(items[1].r#type, Some("section"));
+        assert_eq!(items[1].parent.as_deref(), Some("/body"));
+        assert_eq!(items[1].props["type"], "nextPage");
+        assert_eq!(items[1].props["titlePage"], "true");
+        assert_eq!(items[2].props["text"], "둘째 구역");
+        assert!(
+            items[..3]
+                .iter()
+                .all(|item| !matches!(item.r#type, Some("header" | "footer"))),
+            "all section anchors must exist before header/footer attachment"
+        );
+
+        let parts: Vec<_> = items[3..]
+            .iter()
+            .filter(|item| matches!(item.r#type, Some("header" | "footer")))
+            .map(|item| {
+                (
+                    item.r#type.expect("part type"),
+                    item.parent.as_deref().expect("section parent"),
+                    item.props.get("type").and_then(serde_json::Value::as_str),
+                )
+            })
+            .collect();
+        assert_eq!(
+            parts,
+            vec![
+                ("header", "/section[1]", Some("default")),
+                // evenAndOddHeaders is document-wide, so BOTH must be copied to even.
+                ("header", "/section[1]", Some("even")),
+                ("header", "/section[1]", Some("first")),
+                ("footer", "/section[1]", Some("default")),
+                ("footer", "/section[1]", Some("even")),
+                // titlePage applies to both stories; the non-hidden footer keeps its
+                // effective default content explicitly.
+                ("footer", "/section[1]", Some("first")),
+                ("header", "/", Some("default")),
+                ("header", "/", Some("even")),
+                ("footer", "/", Some("default")),
+                ("footer", "/", Some("even")),
+            ]
+        );
+
+        let seeded: Vec<_> = items[3..]
+            .iter()
+            .filter(|item| {
+                item.command == "set"
+                    && item
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with("/p[1]"))
+            })
+            .map(|item| {
+                (
+                    item.path.as_deref().expect("seed path"),
+                    item.props.get("text").and_then(serde_json::Value::as_str),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seeded,
+            vec![
+                ("/header[1]/p[1]", Some("공통 머리말")),
+                ("/header[2]/p[1]", Some("공통 머리말")),
+                ("/footer[1]/p[1]", Some("공통 꼬리말")),
+                ("/footer[2]/p[1]", Some("공통 꼬리말")),
+                ("/footer[3]/p[1]", Some("공통 꼬리말")),
+                ("/header[4]/p[1]", Some("홀수 머리말")),
+            ]
+        );
+    }
+
+    #[test]
+    fn seeds_header_paragraph_through_paragraph_vocabulary() {
+        let document = Document {
+            sections: vec![Section {
+                headers: vec![HeaderFooter {
+                    id: None,
+                    page: HeaderFooterPage::Both,
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        style: ParaStyle {
+                            line_spacing_ratio: Some(1.5),
+                            ..ParaStyle::default()
+                        },
+                        inlines: vec![text_run(
+                            "서식 머리말",
+                            CharStyle {
+                                underline: true,
+                                ..CharStyle::default()
+                            },
+                        )],
+                    })],
+                }],
+                ..Section::default()
+            }],
+        };
+
+        let items = emit_document(&document);
+        assert_eq!(items[0].r#type, Some("header"));
+        assert_eq!(
+            items[0].props.len(),
+            1,
+            "part add carries only its slot type"
+        );
+        assert_eq!(items[1].command, "set");
+        assert_eq!(items[1].path.as_deref(), Some("/header[1]/p[1]"));
+        assert_eq!(items[1].props["text"], "서식 머리말");
+        assert_eq!(items[1].props["lineSpacing"], "1.5x");
+        assert_eq!(items[1].props["underline"], "true");
+    }
+
+    #[test]
+    fn removes_automatic_seed_after_table_first_header_story() {
+        let document = Document {
+            sections: vec![Section {
+                headers: vec![HeaderFooter {
+                    id: None,
+                    page: HeaderFooterPage::Both,
+                    blocks: vec![
+                        Block::Table(Table {
+                            rows: 1,
+                            cols: 1,
+                            ..Table::default()
+                        }),
+                        Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![text_run("표 뒤 문단", CharStyle::default())],
+                        }),
+                    ],
+                }],
+                ..Section::default()
+            }],
+        };
+
+        let items = emit_document(&document);
+        assert_eq!(items[0].r#type, Some("header"));
+        assert_eq!(items[1].r#type, Some("table"));
+        assert_eq!(items[2].r#type, Some("paragraph"));
+        assert_eq!(items[3].command, "remove");
+        assert_eq!(items[3].path.as_deref(), Some("/header[1]/p[1]"));
+    }
+
+    #[test]
     fn uniform_paragraph_collapses_to_single_add() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![text_run("안녕하세요", CharStyle::default())],
@@ -808,7 +1362,7 @@ mod tests {
 
     #[test]
     fn mixed_paragraph_splits_into_paragraph_plus_runs() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -838,7 +1392,7 @@ mod tests {
                 mode: EquationMode::Inline,
             })
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -887,7 +1441,7 @@ mod tests {
                 ],
             })],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(Table {
                 rows: 1,
                 cols: 1,
@@ -912,7 +1466,7 @@ mod tests {
 
     #[test]
     fn notes_emit_real_docx_note_elements_at_the_inline_position() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -921,6 +1475,8 @@ mod tests {
                         kind: NoteKind::Footnote,
                         number: Some(3),
                         instance_id: Some("41".into()),
+                        reference_prefix: None,
+                        reference_suffix: None,
                         blocks: vec![
                             Block::Paragraph(Paragraph {
                                 style: ParaStyle::default(),
@@ -941,6 +1497,8 @@ mod tests {
                         kind: NoteKind::Endnote,
                         number: Some(7),
                         instance_id: Some("42".into()),
+                        reference_prefix: None,
+                        reference_suffix: None,
                         blocks: vec![Block::Paragraph(Paragraph {
                             style: ParaStyle::default(),
                             inlines: vec![text_run("미주 본문", CharStyle::default())],
@@ -972,14 +1530,59 @@ mod tests {
     }
 
     #[test]
-    fn note_body_keeps_run_formatting_and_empty_paragraphs() {
+    fn section_note_policy_decorates_dynamic_note_references() {
         let doc = Document {
+            sections: vec![Section {
+                blocks: vec![Block::Paragraph(Paragraph {
+                    style: ParaStyle::default(),
+                    inlines: vec![Inline::Note(Note {
+                        kind: NoteKind::Footnote,
+                        number: Some(3),
+                        instance_id: Some("41".into()),
+                        reference_prefix: None,
+                        reference_suffix: None,
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            style: ParaStyle::default(),
+                            inlines: vec![text_run("각주", CharStyle::default())],
+                        })],
+                    })],
+                })],
+                footnote_properties: Some(NoteProperties {
+                    number_format: crate::model::NoteNumberFormat::LowerRoman,
+                    restart: crate::model::NoteNumberRestart::EachPage,
+                    start: 3,
+                    position: crate::model::NotePosition::BeneathText,
+                    prefix: "[".into(),
+                    suffix: "]".into(),
+                    superscript: false,
+                    note_line: None,
+                    note_spacing: None,
+                }),
+                ..Section::default()
+            }],
+        };
+
+        let items = emit_document(&doc);
+        let note = items
+            .iter()
+            .find(|item| item.r#type == Some(TYPE_FOOTNOTE))
+            .expect("footnote seed");
+        assert_eq!(note.props["referencePrefix"], "[");
+        assert_eq!(note.props["referenceSuffix"], "]");
+        assert_eq!(note.props["referenceSuperscript"], "false");
+    }
+
+    #[test]
+    fn note_body_keeps_run_formatting_and_empty_paragraphs() {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![Inline::Note(Note {
                     kind: NoteKind::Footnote,
                     number: None,
                     instance_id: None,
+                    reference_prefix: None,
+                    reference_suffix: None,
                     blocks: vec![
                         Block::Paragraph(Paragraph {
                             style: ParaStyle::default(),
@@ -1023,6 +1626,8 @@ mod tests {
                     kind,
                     number: None,
                     instance_id: None,
+                    reference_prefix: None,
+                    reference_suffix: None,
                     blocks: vec![
                         Block::Paragraph(Paragraph {
                             style: ParaStyle::default(),
@@ -1037,7 +1642,7 @@ mod tests {
             })
         }
 
-        let doc = Document {
+        let doc = document! {
             blocks: vec![
                 note_block(NoteKind::Footnote, "각주1"),
                 note_block(NoteKind::Endnote, "미주1"),
@@ -1061,7 +1666,7 @@ mod tests {
     #[test]
     fn line_break_becomes_vertical_tab_not_newline() {
         // 핵심 회귀 테스트: \n은 문단 분리이므로 절대 나오면 안 된다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -1079,7 +1684,7 @@ mod tests {
 
     #[test]
     fn children_attach_via_last_predicate_not_absolute_index() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     style: ParaStyle::default(),
@@ -1170,7 +1775,7 @@ mod tests {
                 },
             ],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(t.clone())],
         };
         let items = emit_document(&doc);
@@ -1202,7 +1807,7 @@ mod tests {
 
     #[test]
     fn empty_table_emits_nothing() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(Table::default())],
         };
         assert!(emit_document(&doc).is_empty());
@@ -1210,7 +1815,7 @@ mod tests {
 
     /// 표 하나를 감싸 emit하고 `set` 항목만 (경로, props) 형태로 뽑는다.
     fn table_sets(t: Table) -> Vec<(String, serde_json::Map<String, serde_json::Value>)> {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(t)],
         };
         emit_document(&doc)
@@ -1391,7 +1996,7 @@ mod tests {
         // 실측(2026 대구문학관 참가신청서): 양식 문서는 체크박스를 `☑` 문자가
         // 아니라 `hp:checkBtn` 폼 컨트롤로 넣는다. 문자로 바꾸면 Word에서
         // 켜고 끌 수 없고, 체크 안 된 상자는 아예 사라진다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -1468,7 +2073,7 @@ mod tests {
                 })],
             }],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(t)],
         };
         let items = emit_document(&doc);
@@ -1491,7 +2096,7 @@ mod tests {
     #[test]
     fn click_here_field_becomes_a_fillable_text_formfield() {
         // 누름틀은 양식 입력란이다. 텍스트로 바꾸면 채울 수 없다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![
@@ -1524,7 +2129,7 @@ mod tests {
 
     #[test]
     fn text_field_without_hint_still_emits_a_field() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![Inline::TextField(TextField {
@@ -1592,7 +2197,7 @@ mod tests {
                 blocks,
             }],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(t)],
         };
         let items = emit_document(&doc);
@@ -1657,7 +2262,7 @@ mod tests {
                 ],
             }],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(t)],
         };
         let items = emit_document(&doc);
@@ -1709,7 +2314,7 @@ mod tests {
                 ],
             }],
         };
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(outer)],
         };
         let items = emit_document(&doc);
@@ -1842,7 +2447,7 @@ mod tests {
 
     #[test]
     fn no_emitted_prop_violates_break_invariants() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     style: ParaStyle::default(),
@@ -1884,7 +2489,7 @@ mod tests {
     fn newline_inside_run_text_never_reaches_output() {
         // 회귀 테스트. 실제 한컴 문서는 `<hp:t>` 안에 `<hp:lineBreak/>`를 넣어서
         // 런 텍스트 문자열 자체에 `\n`이 실려 온다. emitter가 반드시 막아야 한다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![
                 // 단일 서식 경로
                 Block::Paragraph(Paragraph {
@@ -1945,7 +2550,7 @@ mod tests {
 
     #[test]
     fn image_without_data_is_skipped() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![Inline::Image(Image {
@@ -1966,7 +2571,7 @@ mod tests {
 
     #[test]
     fn image_with_data_becomes_data_uri() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![Inline::Image(Image {
@@ -1997,7 +2602,7 @@ mod tests {
     #[test]
     fn picture_dimensions_always_carry_a_unit() {
         // 회귀 테스트: 단위 없는 그림 크기는 실측에서 0.0cm로 렌더됐다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![Inline::Image(Image {
@@ -2035,7 +2640,7 @@ mod tests {
 
     #[test]
     fn paragraph_style_maps_to_docx_props() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle {
                     align: Some(crate::model::Align::Center),
@@ -2063,7 +2668,7 @@ mod tests {
     fn hanging_indent_uses_its_own_prop_never_a_negative_value() {
         // 회귀 테스트. 음수 firstLineIndent는 <w:ind w:firstLine="-N"/> 이라는
         // 유효하지 않은 OOXML을 만든다. 코퍼스에 41건 있었다.
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle {
                     indent_left_twip: Some(1714),
@@ -2089,7 +2694,7 @@ mod tests {
 
     #[test]
     fn char_style_maps_size_with_pt_unit() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle::default(),
                 inlines: vec![text_run(
@@ -2113,7 +2718,7 @@ mod tests {
 
     #[test]
     fn multi_paragraph_cell_becomes_multiple_paragraphs() {
-        let doc = Document {
+        let doc = document! {
             blocks: vec![Block::Table(Table {
                 rows: 1,
                 cols: 1,

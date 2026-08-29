@@ -137,6 +137,14 @@ public static class DumpReaderInvoker
                     },
                 };
 
+            // Successful dump-readers may report narrowly scoped loss warnings as
+            // one-line JSON diagnostics. Do not forward ordinary progress text or
+            // arbitrary stderr: only validated warning envelopes cross the host
+            // boundary, unchanged, and the bounded collector prevents diagnostic
+            // flooding. ResidentServer captures Console.Error for response warnings.
+            foreach (var warning in ExtractStructuredWarnings(result.Stderr))
+                Console.Error.WriteLine(warning);
+
             // v6.4: now that the plugin has exited and all JSONL is buffered,
             // open the handler on this thread and replay synchronously. See
             // the rationale comment at the bufferedLines declaration above
@@ -211,4 +219,52 @@ public static class DumpReaderInvoker
 
     private static string Truncate(string s, int max) =>
         DisplayText.Truncate(s, max, "...");
+
+    private static IReadOnlyList<string> ExtractStructuredWarnings(string stderr)
+    {
+        const int maxWarningChars = 12 * 1024;
+        const int maxWarningCount = 8;
+        var accepted = new List<string>();
+        var acceptedChars = 0;
+
+        using var reader = new StringReader(stderr);
+        while (accepted.Count < maxWarningCount && reader.ReadLine() is { } raw)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.Length > maxWarningChars)
+                continue;
+            if (acceptedChars + line.Length + 1 > maxWarningChars)
+                break;
+
+            try
+            {
+                using var json = JsonDocument.Parse(line, new JsonDocumentOptions
+                {
+                    MaxDepth = 32,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    AllowTrailingCommas = false,
+                });
+                var root = json.RootElement;
+                if (root.ValueKind != JsonValueKind.Object ||
+                    !root.TryGetProperty("severity", out var severity) ||
+                    severity.ValueKind != JsonValueKind.String ||
+                    !string.Equals(severity.GetString(), "warning", StringComparison.Ordinal) ||
+                    !root.TryGetProperty("code", out var code) ||
+                    code.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(code.GetString()))
+                {
+                    continue;
+                }
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            accepted.Add(line);
+            acceptedChars += line.Length + 1;
+        }
+
+        return accepted;
+    }
 }

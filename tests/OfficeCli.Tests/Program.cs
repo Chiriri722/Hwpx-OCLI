@@ -4,6 +4,8 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core;
 using OfficeCli.Core.Plugins;
 
@@ -145,6 +147,9 @@ var tests = new (string Name, Action Run)[]
     ("plugins list and info enforce conflict policy end to end", PluginCommandsEnforceConflictPolicyEndToEnd),
     ("plugins info rejects a changed name snapshot and probes an explicit path once", PluginInfoRejectsChangedSnapshot),
     ("host watchdog accepts heartbeats throughout a slow plugin run", HostWatchdogAcceptsHeartbeats),
+    ("dump-reader surfaces only bounded structured success warnings", DumpReaderStructuredWarningsAreFilteredAndBounded),
+    ("field schema accepts emitted character formatting", FieldSchemaAcceptsEmittedCharacterFormatting),
+    ("note reference decorations preserve prefix suffix and baseline", NoteReferenceDecorationsArePreserved),
 };
 
 var failures = 0;
@@ -163,6 +168,110 @@ foreach (var (name, run) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static void NoteReferenceDecorationsArePreserved()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-note-decoration-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(path);
+        using (var handler = new OfficeCli.Handlers.WordHandler(path, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "anchor",
+            });
+            handler.Add("/body/p[1]", "footnote", null, new Dictionary<string, string>
+            {
+                ["text"] = "footnote body",
+                ["referencePrefix"] = "[",
+                ["referenceSuffix"] = ")",
+                ["referenceSuperscript"] = "false",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"footnote decoration props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+
+            handler.Add("/body/p[1]", "endnote", null, new Dictionary<string, string>
+            {
+                ["text"] = "endnote body",
+                ["referencePrefix"] = "<",
+                ["referenceSuffix"] = ">",
+                ["referenceSuperscript"] = "true",
+            });
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"endnote decoration props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            handler.Save();
+        }
+
+        using (var source = new OfficeCli.Handlers.WordHandler(path, editable: false))
+        {
+            var items = OfficeCli.Handlers.WordBatchEmitter.EmitWord(source);
+            var footnote = items.Single(item => item.Command == "add" && item.Type == "footnote");
+            var endnote = items.Single(item => item.Command == "add" && item.Type == "endnote");
+            Assert(footnote.Props?.GetValueOrDefault("referencePrefix") == "["
+                && footnote.Props?.GetValueOrDefault("referenceSuffix") == ")",
+                "footnote dump dropped its reference prefix or suffix");
+            Assert(endnote.Props?.GetValueOrDefault("referencePrefix") == "<"
+                && endnote.Props?.GetValueOrDefault("referenceSuffix") == ">",
+                "endnote dump dropped its reference prefix or suffix");
+            Assert(footnote.Props?.GetValueOrDefault("text") == "footnote body",
+                $"footnote marker decoration leaked into body text: {footnote.Props?.GetValueOrDefault("text")}");
+            Assert(endnote.Props?.GetValueOrDefault("text") == "endnote body",
+                $"endnote marker decoration leaked into body text: {endnote.Props?.GetValueOrDefault("text")}");
+            Assert(footnote.Props?.ContainsKey("referenceMarkRPr") == true
+                && endnote.Props?.ContainsKey("referenceMarkRPr") == true,
+                "decorated note mark run was not recognized by the dump emitter");
+        }
+
+        using var document = WordprocessingDocument.Open(path, false);
+        var main = document.MainDocumentPart!;
+        var footnoteRefRun = main.Document!.Descendants<Run>()
+            .Single(run => run.GetFirstChild<FootnoteReference>() != null);
+        AssertDecoratedReferenceRun(
+            footnoteRefRun, "t,footnoteReference,t", "[", ")", VerticalPositionValues.Baseline);
+
+        var footnoteMarkRun = main.FootnotesPart!.Footnotes!
+            .Descendants<Run>()
+            .Single(run => run.GetFirstChild<FootnoteReferenceMark>() != null);
+        AssertDecoratedReferenceRun(
+            footnoteMarkRun, "t,footnoteRef,t", "[", ")", VerticalPositionValues.Baseline);
+
+        var endnoteRefRun = main.Document!.Descendants<Run>()
+            .Single(run => run.GetFirstChild<EndnoteReference>() != null);
+        AssertDecoratedReferenceRun(
+            endnoteRefRun, "t,endnoteReference,t", "<", ">", VerticalPositionValues.Superscript);
+
+        var endnoteMarkRun = main.EndnotesPart!.Endnotes!
+            .Descendants<Run>()
+            .Single(run => run.GetFirstChild<EndnoteReferenceMark>() != null);
+        AssertDecoratedReferenceRun(
+            endnoteMarkRun, "t,endnoteRef,t", "<", ">", VerticalPositionValues.Superscript);
+    }
+    finally
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+}
+
+static void AssertDecoratedReferenceRun(
+    Run run,
+    string expectedChildren,
+    string prefix,
+    string suffix,
+    VerticalPositionValues verticalAlignment)
+{
+    var children = string.Join(",", run.ChildElements
+        .Where(child => child is not RunProperties)
+        .Select(child => child.LocalName));
+    Assert(children == expectedChildren,
+        $"reference children differ: expected {expectedChildren}, got {children}");
+    var text = run.Elements<Text>().Select(element => element.Text).ToArray();
+    Assert(text.SequenceEqual(new[] { prefix, suffix }),
+        $"reference decorations differ: {string.Join("|", text)}");
+    var align = run.RunProperties?.GetFirstChild<VerticalTextAlignment>()?.Val?.Value;
+    Assert(align == verticalAlignment,
+        $"reference vertical alignment differs: expected {verticalAlignment}, got {align}");
+}
 
 static void RelativeEnvironmentOverrideIsRejected()
 {
@@ -1089,6 +1198,58 @@ static void HostWatchdogAcceptsHeartbeats()
     Assert(result.ExitCode == 0, $"heartbeat child exited {result.ExitCode}: {result.Stderr}");
     Assert(stdout.SequenceEqual(["completed"]), "host did not drain the slow plugin's final stdout");
     Assert(string.IsNullOrEmpty(result.Stderr), "heartbeat plumbing leaked into diagnostic stderr");
+}
+
+static void DumpReaderStructuredWarningsAreFilteredAndBounded()
+{
+    const string expected = "{\"severity\":\"warning\",\"code\":\"HWPX_DORMANT_NOTE_LAYOUT_NOT_MATERIALIZED\",\"sections\":[{\"section\":1}]}";
+    var stderr = string.Join('\n',
+        "dumped 4 batch items from sample.hwpx",
+        "{\"heartbeat\":true}",
+        "not json",
+        "{\"severity\":\"error\",\"code\":\"NOT_A_WARNING\"}",
+        "{\"severity\":\"warning\",\"code\":\"\"}",
+        expected,
+        "{\"severity\":\"warning\",\"code\":\"TOO_LARGE\",\"detail\":\"" + new string('x', 12 * 1024) + "\"}");
+
+    var method = typeof(DumpReaderInvoker).GetMethod(
+        "ExtractStructuredWarnings",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new MissingMethodException(typeof(DumpReaderInvoker).FullName, "ExtractStructuredWarnings");
+    var warnings = method.Invoke(null, [stderr]) as IReadOnlyList<string>
+        ?? throw new InvalidOperationException("ExtractStructuredWarnings returned null");
+
+    Assert(warnings.Count == 1, $"expected one accepted warning, got {warnings.Count}");
+    Assert(warnings[0] == expected, "structured warning JSON was not surfaced unchanged");
+}
+
+static void FieldSchemaAcceptsEmittedCharacterFormatting()
+{
+    var schemaType = typeof(DumpReaderInvoker).Assembly.GetType("OfficeCli.Help.SchemaHelpLoader")
+        ?? throw new TypeLoadException("OfficeCli.Help.SchemaHelpLoader");
+    var method = schemaType.GetMethod(
+        "ValidateProperties",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new MissingMethodException(schemaType.FullName, "ValidateProperties");
+    var props = new Dictionary<string, string>
+    {
+        ["fieldType"] = "page",
+        ["text"] = "1",
+        ["font"] = "Batang",
+        ["size"] = "12pt",
+        ["bold"] = "true",
+        ["italic"] = "true",
+        ["underline"] = "single",
+        ["strike"] = "true",
+        ["color"] = "#112233",
+        ["highlight"] = "yellow",
+        ["superscript"] = "true",
+    };
+    var unknown = method.Invoke(null, ["docx", "field", "add", props]) as IReadOnlyList<string>
+        ?? throw new InvalidOperationException("ValidateProperties returned null");
+
+    Assert(unknown.Count == 0,
+        $"field schema rejected emitted character formatting: {string.Join(", ", unknown)}");
 }
 
 static string TestAppHostPath()

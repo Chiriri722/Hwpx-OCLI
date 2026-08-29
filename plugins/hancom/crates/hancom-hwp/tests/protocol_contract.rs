@@ -335,6 +335,144 @@ fn dump_emits_structural_footnotes_and_endnotes_in_inline_order() {
 }
 
 #[test]
+fn dump_emits_section_note_policy_and_instance_decorations() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="ROMAN_SMALL" userChar="" prefixChar="(" suffixChar=")" supscript="0"/>"#,
+            r#"<hp:numbering type="ON_PAGE" newNum="3"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="1"/>"#,
+            r#"</hp:footNotePr></hp:secPr><hp:t>본문</hp:t><hp:ctrl>"#,
+            r#"<hp:footNote number="3" prefixChar="91" suffixChar="93"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:t>각주</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+    ));
+
+    let items: Vec<Value> = dump_stdout(&builder)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid batch item"))
+        .collect();
+    let note = items
+        .iter()
+        .find(|item| item["type"] == "footnote")
+        .expect("footnote batch item");
+    assert_eq!(note["props"]["referencePrefix"], "[");
+    assert_eq!(note["props"]["referenceSuffix"], "]");
+    assert_eq!(note["props"]["referenceSuperscript"], "false");
+
+    let section = items
+        .iter()
+        .find(|item| item["command"] == "set" && item["path"] == "/")
+        .expect("final section properties");
+    assert_eq!(section["props"]["footnotePr.numFmt"], "lowerRoman");
+    assert_eq!(section["props"]["footnotePr.numRestart"], "eachPage");
+    assert_eq!(section["props"]["footnotePr.numStart"], "3");
+    assert_eq!(section["props"]["footnotePr.pos"], "beneath");
+}
+
+fn dormant_note_layout_document(active_note: bool) -> HwpxBuilder {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let note = if active_note {
+        format!(
+            r#"<hp:ctrl><hp:footNote number="1"><hp:subList><hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>실제 각주</hp:t></hp:run></hp:p></hp:subList></hp:footNote></hp:ctrl>"#
+        )
+    } else {
+        String::new()
+    };
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{pp}"><hp:run charPrIDRef="{cp}"><hp:secPr><hp:footNotePr>"#,
+            r#"<hp:autoNumFormat type="DIGIT"/><hp:numbering type="CONTINUOUS" newNum="1"/>"#,
+            r#"<hp:placement place="EACH_COLUMN" beneathText="0"/>"#,
+            r##"<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>"##,
+            r#"<hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>"#,
+            r#"</hp:footNotePr></hp:secPr><hp:t>본문</hp:t>{note}</hp:run></hp:p>"#,
+        ),
+        pp = para_pr,
+        cp = char_pr,
+        note = note,
+    ));
+    builder
+}
+
+#[test]
+fn dormant_note_layout_emits_a_structured_mandatory_warning() {
+    let builder = dormant_note_layout_document(false);
+    let (_dir, path) = builder.write_to_temp("dormant-note-layout.hwpx");
+    let out = plugin().arg("dump").arg(path).assert().success();
+    let output = out.get_output();
+
+    assert!(
+        !output.stdout.is_empty(),
+        "successful dump must still emit JSONL"
+    );
+    let stderr = String::from_utf8(output.stderr.clone()).expect("utf-8 stderr");
+    let diagnostic: Value = stderr
+        .lines()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .expect("structured warning line");
+    assert_eq!(diagnostic["severity"], "warning");
+    assert_eq!(
+        diagnostic["code"],
+        "HWPX_DORMANT_NOTE_LAYOUT_NOT_MATERIALIZED"
+    );
+    assert_eq!(diagnostic["sections"][0]["section"], 1);
+    assert_eq!(diagnostic["sections"][0]["kind"], "footnote");
+    assert_eq!(diagnostic["sections"][0]["noteLine"]["length"], -1);
+    assert_eq!(diagnostic["sections"][0]["noteLine"]["type"], "SOLID");
+    assert_eq!(diagnostic["sections"][0]["noteLine"]["width"], "0.12 mm");
+    assert_eq!(
+        diagnostic["sections"][0]["noteSpacing"]["betweenNotes"],
+        283
+    );
+}
+
+#[test]
+fn quiet_does_not_suppress_the_mandatory_dormant_layout_warning() {
+    let builder = dormant_note_layout_document(false);
+    let (_dir, path) = builder.write_to_temp("quiet-dormant-note-layout.hwpx");
+    let out = plugin()
+        .arg("dump")
+        .arg(path)
+        .arg("--quiet")
+        .assert()
+        .success();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8 stderr");
+    let lines: Vec<_> = stderr.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "quiet should retain only the mandatory warning"
+    );
+    let diagnostic: Value = serde_json::from_str(lines[0]).expect("structured warning JSON");
+    assert_eq!(
+        diagnostic["code"],
+        "HWPX_DORMANT_NOTE_LAYOUT_NOT_MATERIALIZED"
+    );
+}
+
+#[test]
+fn active_note_layout_exits_three_before_any_stdout_is_emitted() {
+    let builder = dormant_note_layout_document(true);
+    let (_dir, path) = builder.write_to_temp("active-note-layout.hwpx");
+    let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
+    assert!(
+        out.get_output().stdout.is_empty(),
+        "unsupported layout must be detected before streaming starts"
+    );
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8 stderr");
+    assert!(stderr.contains("noteLine") && stderr.contains("noteSpacing"));
+}
+
+#[test]
 fn canonical_binary_reads_owpml_and_single_xml_hml() {
     let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"]).write_to_temp("sample.owpml");
     let owpml_out = canonical_plugin()

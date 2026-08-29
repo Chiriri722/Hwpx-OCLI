@@ -712,6 +712,7 @@ public partial class WordHandler
         if (!properties.TryGetValue("text", out var fnText))
             throw new ArgumentException("'text' property is required for footnote type");
         OfficeCli.Core.ParseHelpers.ValidateXmlText(fnText, "text", allowSoftBreakChar: true);
+        var (fnPrefix, fnSuffix, fnSuperscript) = ReadNoteReferenceDecoration(properties);
 
         if (parent is not Paragraph fnPara)
             throw new ArgumentException("Footnotes must be added to a paragraph: /body/p[N]");
@@ -758,6 +759,8 @@ public partial class WordHandler
                 && !string.IsNullOrEmpty(fnRefStyle)
             ? new RunProperties(new RunStyle { Val = fnRefStyle })
             : new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript });
+        if (fnSuperscript.HasValue)
+            ApplyRunFormatting(fnRefMarkRPr, "vertAlign", fnSuperscript.Value ? "superscript" : "baseline");
         var footnote = new Footnote { Id = fnId };
         // BUG-DUMP-NOTEREF-CUSTOMMARK-BODY: a CUSTOM-mark footnote's body does NOT
         // begin with the auto-number <w:footnoteRef> — its leading run is the
@@ -773,6 +776,9 @@ public partial class WordHandler
             IsTruthy(properties.GetValueOrDefault("referenceCustomMarkFollows"))
             || (properties.TryGetValue("referenceCustomMark", out var fnBodyMark)
                 && !string.IsNullOrEmpty(fnBodyMark));
+        if (fnCustomMark && (fnPrefix.Length > 0 || fnSuffix.Length > 0))
+            throw new ArgumentException(
+                "referencePrefix/referenceSuffix cannot be combined with a custom footnote mark.");
         // The authored text run carries `text` VERBATIM — no synthetic leading
         // space. Real Word footnotes place no space between the reference mark
         // and the first content run (the mark's own glyph spacing handles the
@@ -798,9 +804,12 @@ public partial class WordHandler
             // text; the verbatim Text node dropped that structural tab.
             var fnTextRun = new Run();
             AppendTextWithBreaks(fnTextRun, fnText);
+            var fnMarkRun = new Run(fnRefMarkRPr);
+            AppendDecoratedNoteReference(
+                fnMarkRun, fnPrefix, new FootnoteReferenceMark(), fnSuffix);
             fnContentPara = new Paragraph(
                 new ParagraphProperties(new ParagraphStyleId { Val = "FootnoteText" }),
-                new Run(fnRefMarkRPr, new FootnoteReferenceMark()),
+                fnMarkRun,
                 ApplyNoteSeedRevision(fnTextRun, properties)   // BUG-DUMP-NOTE-DEL
             );
         }
@@ -827,6 +836,8 @@ public partial class WordHandler
                 && !string.IsNullOrEmpty(fnRefRPrXml)
             ? new RunProperties(fnRefRPrXml)
             : new RunProperties(new RunStyle { Val = "FootnoteReference" });
+        if (fnSuperscript.HasValue)
+            ApplyRunFormatting(fnRefRPr, "vertAlign", fnSuperscript.Value ? "superscript" : "baseline");
         if (fnPara.ParagraphProperties?.BiDi != null)
             ApplyRunFormatting(fnRefRPr, "rtl", "true");
         // BUG-DUMP-NOTEREF-CUSTOMMARK: a custom-mark reference carries
@@ -835,7 +846,8 @@ public partial class WordHandler
         var fnRef = new FootnoteReference { Id = fnId };
         if (IsTruthy(properties.GetValueOrDefault("referenceCustomMarkFollows")))
             fnRef.CustomMarkFollows = true;
-        var fnRefRun = new Run(fnRefRPr, fnRef);
+        var fnRefRun = new Run(fnRefRPr);
+        AppendDecoratedNoteReference(fnRefRun, fnPrefix, fnRef, fnSuffix);
         properties.TryGetValue("referenceCustomMark", out var fnMark);
         var fnToInsert = ApplyNoteRefMarkAndRevision(fnRefRun, fnMark, properties);
         InsertIntoParagraph(fnPara, fnToInsert, index);
@@ -849,6 +861,7 @@ public partial class WordHandler
         if (!properties.TryGetValue("text", out var enText))
             throw new ArgumentException("'text' property is required for endnote type");
         OfficeCli.Core.ParseHelpers.ValidateXmlText(enText, "text", allowSoftBreakChar: true);
+        var (enPrefix, enSuffix, enSuperscript) = ReadNoteReferenceDecoration(properties);
 
         if (parent is not Paragraph enPara)
             throw new ArgumentException("Endnotes must be added to a paragraph: /body/p[N]");
@@ -885,6 +898,8 @@ public partial class WordHandler
                 && !string.IsNullOrEmpty(enRefStyle)
             ? new RunProperties(new RunStyle { Val = enRefStyle })
             : new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript });
+        if (enSuperscript.HasValue)
+            ApplyRunFormatting(enRefMarkRPr, "vertAlign", enSuperscript.Value ? "superscript" : "baseline");
         var endnote = new Endnote { Id = enId };
         // BUG-DUMP-NOTEREF-CUSTOMMARK-BODY: mirror AddFootnote — a custom-mark
         // endnote's body leads with the literal glyph (styled EndnoteReference),
@@ -894,6 +909,9 @@ public partial class WordHandler
             IsTruthy(properties.GetValueOrDefault("referenceCustomMarkFollows"))
             || (properties.TryGetValue("referenceCustomMark", out var enBodyMark)
                 && !string.IsNullOrEmpty(enBodyMark));
+        if (enCustomMark && (enPrefix.Length > 0 || enSuffix.Length > 0))
+            throw new ArgumentException(
+                "referencePrefix/referenceSuffix cannot be combined with a custom endnote mark.");
         // Verbatim text run — no synthetic leading space (mirrors AddFootnote).
         Paragraph enContentPara;
         if (enCustomMark)
@@ -907,9 +925,12 @@ public partial class WordHandler
             // text into structural <w:tab/> / <w:br/> instead of a literal glyph.
             var enTextRun = new Run();
             AppendTextWithBreaks(enTextRun, enText);
+            var enMarkRun = new Run(enRefMarkRPr);
+            AppendDecoratedNoteReference(
+                enMarkRun, enPrefix, new EndnoteReferenceMark(), enSuffix);
             enContentPara = new Paragraph(
                 new ParagraphProperties(new ParagraphStyleId { Val = "EndnoteText" }),
-                new Run(enRefMarkRPr, new EndnoteReferenceMark()),
+                enMarkRun,
                 ApplyNoteSeedRevision(enTextRun, properties)   // BUG-DUMP-NOTE-DEL
             );
         }
@@ -931,6 +952,8 @@ public partial class WordHandler
                 && !string.IsNullOrEmpty(enRefRPrXml)
             ? new RunProperties(enRefRPrXml)
             : new RunProperties(new RunStyle { Val = "EndnoteReference" });
+        if (enSuperscript.HasValue)
+            ApplyRunFormatting(enRefRPr, "vertAlign", enSuperscript.Value ? "superscript" : "baseline");
         if (enPara.ParagraphProperties?.BiDi != null)
             ApplyRunFormatting(enRefRPr, "rtl", "true");
         // BUG-DUMP-NOTEREF-CUSTOMMARK: mirror AddFootnote — restore a custom
@@ -938,13 +961,50 @@ public partial class WordHandler
         var enRef = new EndnoteReference { Id = enId };
         if (IsTruthy(properties.GetValueOrDefault("referenceCustomMarkFollows")))
             enRef.CustomMarkFollows = true;
-        var enRefRun = new Run(enRefRPr, enRef);
+        var enRefRun = new Run(enRefRPr);
+        AppendDecoratedNoteReference(enRefRun, enPrefix, enRef, enSuffix);
         properties.TryGetValue("referenceCustomMark", out var enMark);
         var enToInsert = ApplyNoteRefMarkAndRevision(enRefRun, enMark, properties);
         InsertIntoParagraph(enPara, enToInsert, index);
 
         var resultPath = $"/endnote[@endnoteId={enId}]";
         return resultPath;
+    }
+
+    private static (string Prefix, string Suffix, bool? Superscript)
+        ReadNoteReferenceDecoration(Dictionary<string, string> properties)
+    {
+        var prefix = properties.GetValueOrDefault("referencePrefix") ?? "";
+        var suffix = properties.GetValueOrDefault("referenceSuffix") ?? "";
+        OfficeCli.Core.ParseHelpers.ValidateXmlText(prefix, "referencePrefix");
+        OfficeCli.Core.ParseHelpers.ValidateXmlText(suffix, "referenceSuffix");
+        if (prefix.IndexOfAny(new[] { '\t', '\r', '\n', '\v' }) >= 0
+            || suffix.IndexOfAny(new[] { '\t', '\r', '\n', '\v' }) >= 0)
+            throw new ArgumentException(
+                "referencePrefix/referenceSuffix must be inline text without tabs or line breaks.");
+
+        bool? superscript = null;
+        if (properties.TryGetValue("referenceSuperscript", out var rawSuperscript))
+        {
+            superscript = rawSuperscript.Trim().ToLowerInvariant() switch
+            {
+                "1" or "true" or "yes" or "on" => true,
+                "0" or "false" or "no" or "off" => false,
+                _ => throw new ArgumentException(
+                    $"Invalid referenceSuperscript value '{rawSuperscript}'. Valid values: true, false."),
+            };
+        }
+        return (prefix, suffix, superscript);
+    }
+
+    private static void AppendDecoratedNoteReference(
+        Run run, string prefix, OpenXmlElement reference, string suffix)
+    {
+        if (prefix.Length > 0)
+            run.AppendChild(new Text(prefix) { Space = SpaceProcessingModeValues.Preserve });
+        run.AppendChild(reference);
+        if (suffix.Length > 0)
+            run.AppendChild(new Text(suffix) { Space = SpaceProcessingModeValues.Preserve });
     }
 
     // BUG-DUMP-NOTEREF-CUSTOMMARK-DEL: append a note reference's custom mark glyph

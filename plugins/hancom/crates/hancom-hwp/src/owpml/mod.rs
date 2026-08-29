@@ -68,13 +68,13 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
     };
 
     let paths: Vec<String> = pkg.section_paths().to_vec();
-    let mut blocks = Vec::new();
+    let mut sections = Vec::with_capacity(paths.len());
     for p in &paths {
         let xml = pkg.read_section_xml(p)?;
-        blocks.extend(section::parse_section(&xml, &styles)?);
+        sections.push(section::parse_section(&xml, &styles)?);
     }
 
-    let mut doc = Document { blocks };
+    let mut doc = Document { sections };
     resolve_images(&mut pkg, &mut doc)?;
     Ok(doc)
 }
@@ -84,7 +84,13 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
 /// 찾지 못한 참조는 `data`가 `None`으로 남고, emitter가 그 이미지를 건너뛴다.
 fn resolve_images<R: Read + Seek>(pkg: &mut Package<R>, doc: &mut Document) -> Result<()> {
     let mut budget = ImageBudget::default();
-    resolve_in_blocks(pkg, &mut doc.blocks, &mut budget)
+    for section in &mut doc.sections {
+        resolve_in_blocks(pkg, &mut section.blocks, &mut budget)?;
+        for story in section.headers.iter_mut().chain(&mut section.footers) {
+            resolve_in_blocks(pkg, &mut story.blocks, &mut budget)?;
+        }
+    }
+    Ok(())
 }
 
 /// 블록 목록을 재귀로 훑는다. 셀 안 중첩표도 따라간다.

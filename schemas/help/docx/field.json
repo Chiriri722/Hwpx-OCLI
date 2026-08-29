@@ -14,7 +14,41 @@
     "positional": ["/field[N]"]
   },
   "note": "Complex field (fldChar: begin/instr/separate/result/end), addressed as a whole at /field[N]; /body/p[N]/r[M] returns the inner fieldChar run, not the field. Per-type required props: mergefield/ref → name (aka fieldName/bookmarkName); seq → identifier; styleref → styleName; docproperty → propertyName; if → expression (+ optional trueText/falseText); date/time accept optional format.",
+  "extends": [
+    "_shared/run",
+    "_shared/run.docx-pptx",
+    "_shared/run.docx-xlsx"
+  ],
   "properties": {
+    "highlight": {
+      "type": "color",
+      "description": "Word built-in highlight color applied uniformly to every run of the field.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop highlight=yellow"
+      ],
+      "readback": "n/a (applied to the field's run properties)",
+      "enforcement": "report"
+    },
+    "strike": {
+      "type": "bool",
+      "description": "single strikethrough applied uniformly to every run of the field.",
+      "aliases": [
+        "strikethrough",
+        "font.strike",
+        "font.strikethrough"
+      ],
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop strike=true"
+      ],
+      "readback": "n/a (applied to the field's run properties)",
+      "enforcement": "strict"
+    },
     "evaluated": {
       "type": "bool",
       "description": "cross-handler protocol flag — true when the field has a cached result run that the opening application can display, false when the field was written without a cached value (view text substitutes #OCLI_NOTEVAL!{instr}; view issues emits subtype field_not_evaluated). For dirty cached fields the cache is still trusted by evaluated; staleness surfaces separately via subtype field_cache_stale. Read this via get --json instead of pattern-matching the sentinel, since multiple fields per paragraph and literal user content may collide.",

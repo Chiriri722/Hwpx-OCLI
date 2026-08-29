@@ -15,8 +15,10 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use super::model::{
-    Block, Cell, Equation, EquationMode, Image, Inline, Note, NoteKind, Paragraph, Table,
-    TextField, TextRun,
+    Block, Cell, Equation, EquationMode, HeaderFooter, HeaderFooterPage, Image, Inline, Note,
+    NoteKind, NoteLine, NoteLineType, NoteLineWidth, NoteNumberFormat, NoteNumberRestart,
+    NotePosition, NoteProperties, NoteSpacing, PageNumberField, PageNumberKind, Paragraph, Section,
+    Table, TextField, TextRun,
 };
 use super::styles::{normalize_color, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
@@ -29,23 +31,773 @@ const MAX_TABLE_COLS: usize = 512;
 const MAX_TABLE_CELLS: usize = 100_000;
 const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
 
-pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Vec<Block>> {
+pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Section> {
+    let mut section = Section::default();
+    parse_section_metadata(xml, styles, &mut section)?;
+    section.blocks = parse_section_body(xml, styles)?;
+    validate_active_note_layouts(&section)?;
+    Ok(section)
+}
+
+fn validate_active_note_layouts(section: &Section) -> Result<()> {
+    for (kind, properties) in [
+        (NoteKind::Footnote, section.footnote_properties.as_ref()),
+        (NoteKind::Endnote, section.endnote_properties.as_ref()),
+    ] {
+        let Some(properties) = properties else {
+            continue;
+        };
+        if properties.note_line.is_none() && properties.note_spacing.is_none() {
+            continue;
+        }
+        if blocks_contain_note_kind(&section.blocks, kind) {
+            let label = match kind {
+                NoteKind::Footnote => "footnote",
+                NoteKind::Endnote => "endnote",
+            };
+            let present = match (
+                properties.note_line.is_some(),
+                properties.note_spacing.is_some(),
+            ) {
+                (true, true) => "noteLine and noteSpacing",
+                (true, false) => "noteLine",
+                (false, true) => "noteSpacing",
+                (false, false) => unreachable!(),
+            };
+            return Err(PluginError::unsupported_feature(format!(
+                "section contains an active {label} and authored {present}; DOCX has no equivalent section-scoped note layout, so conversion would lose formatting"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 구역 정의와 머리말/꼬리말 story를 먼저 읽는다.
+///
+/// 이들은 본문 첫 문단의 `run/ctrl` 안에 들어가므로 본문 파서와 같은 스트림에서
+/// 수집하면 중첩 문단 종료를 바깥 문단 종료로 오인하기 쉽다. 입력은 이미 패키지
+/// 한계 안의 문자열이므로 두 번 순회해 경계를 단순하고 검증 가능하게 유지한다.
+fn parse_section_metadata(xml: &str, styles: &StyleTable, section: &mut Section) -> Result<()> {
     let mut reader = Reader::from_str(xml);
     let config = reader.config_mut();
     config.trim_text(false);
     config.expand_empty_elements = true;
 
-    let mut blocks = Vec::new();
+    let mut saw_section_properties = false;
+    let mut body_started = false;
     let mut buf = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Eof => break,
             Event::Start(e) => {
-                let name_owned = e.name();
-                if local_name(name_owned.as_ref()) == "p" {
-                    let owned = e.into_owned();
-                    blocks.extend(parse_paragraph(&mut reader, &owned, styles, 0)?);
+                let name = local_name(e.name().as_ref());
+                match name.as_str() {
+                    "secPr" => {
+                        if saw_section_properties {
+                            return Err(PluginError::corrupt(
+                                "section contains more than one secPr",
+                            ));
+                        }
+                        saw_section_properties = true;
+                        parse_section_properties(&mut reader, section)?;
+                    }
+                    "header" | "footer" => {
+                        if body_started {
+                            return Err(PluginError::unsupported_feature(format!(
+                                "{name} starts after body content; mid-section header/footer activation cannot be represented faithfully in DOCX"
+                            )));
+                        }
+                        let owned = e.into_owned();
+                        let story = parse_header_footer(&mut reader, &owned, styles)?;
+                        let stories = if name == "header" {
+                            &mut section.headers
+                        } else {
+                            &mut section.footers
+                        };
+                        stories.push(story);
+                    }
+                    _ if starts_visible_body_content(&name) => body_started = true,
+                    _ => {}
+                }
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => body_started = true,
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                body_started = true;
+            }
+            Event::GeneralRef(_) => body_started = true,
+            // A completed empty paragraph is still an authored body block. A
+            // header/footer control in any later paragraph is a mid-section
+            // activation even though no visible text preceded it.
+            Event::End(event) if local_name(event.name().as_ref()) == "p" => {
+                body_started = true;
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    validate_story_set("header", &section.headers)?;
+    validate_story_set("footer", &section.footers)?;
+    validate_first_page_story(section)?;
+    Ok(())
+}
+
+fn starts_visible_body_content(name: &str) -> bool {
+    matches!(
+        name,
+        "tbl"
+            | "pic"
+            | "equation"
+            | "rect"
+            | "ellipse"
+            | "line"
+            | "arc"
+            | "polygon"
+            | "curve"
+            | "connectLine"
+            | "container"
+            | "textart"
+            | "ole"
+            | "video"
+            | "checkBtn"
+            | "fieldBegin"
+            | "autoNum"
+            | "footNote"
+            | "endNote"
+            | "tab"
+            | "lineBreak"
+            | "linebreak"
+    )
+}
+
+/// Multiple same-slot controls and BOTH+parity mixtures are valid HWP timelines,
+/// but their page-activation order cannot be lowered to one DOCX section yet.
+/// A single ODD or EVEN definition is also exact: the missing DOCX slot is
+/// materialized as an empty part so it cannot inherit content from a prior section.
+fn validate_story_set(kind: &str, stories: &[HeaderFooter]) -> Result<()> {
+    let supported = match stories {
+        [] => true,
+        [_] => true,
+        [first, second] => {
+            matches!(
+                (first.page, second.page),
+                (HeaderFooterPage::Odd, HeaderFooterPage::Even)
+                    | (HeaderFooterPage::Even, HeaderFooterPage::Odd)
+            )
+        }
+        _ => false,
+    };
+    if supported {
+        return Ok(());
+    }
+
+    Err(PluginError::unsupported_feature(format!(
+        "section {kind} controls form an unverified overlap timeline; supported shapes are one BOTH/ODD/EVEN definition or one ODD+EVEN pair"
+    )))
+}
+
+fn validate_first_page_story(section: &Section) -> Result<()> {
+    if section.hide_first_header == section.hide_first_footer {
+        return Ok(());
+    }
+    let (kind, stories) = if section.hide_first_header {
+        ("footer", &section.footers)
+    } else {
+        ("header", &section.headers)
+    };
+    if stories
+        .iter()
+        .any(|story| story.page != HeaderFooterPage::Both)
+    {
+        return Err(PluginError::unsupported_feature(format!(
+            "one-sided first-page hiding requires choosing an unverified ODD/EVEN {kind} for the first page"
+        )));
+    }
+    Ok(())
+}
+
+/// `hs:sec`의 직접 자식 문단만 본문으로 읽는다.
+fn parse_section_body(xml: &str, styles: &StyleTable) -> Result<Vec<Block>> {
+    let mut reader = Reader::from_str(xml);
+    let config = reader.config_mut();
+    config.trim_text(false);
+    config.expand_empty_elements = true;
+
+    let mut blocks = Vec::new();
+    let mut root_seen = false;
+    let mut root_closed = false;
+    let mut depth = 0usize;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if !root_seen {
+                    if name != "sec" {
+                        return Err(PluginError::corrupt(format!(
+                            "section XML root must be sec, got {name}"
+                        )));
+                    }
+                    root_seen = true;
+                } else if depth == 0 && name == "p" {
+                    let owned = event.into_owned();
+                    blocks.extend(parse_paragraph(&mut reader, &owned, styles, 0, None)?);
+                } else {
+                    depth = depth.saturating_add(1);
+                }
+            }
+            Event::End(event) if root_seen => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 && name == "sec" {
+                    root_closed = true;
+                    break;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if !root_seen || !root_closed {
+        return Err(PluginError::corrupt(
+            "section XML is missing a complete sec root element",
+        ));
+    }
+    Ok(blocks)
+}
+
+fn parse_section_properties(reader: &mut Reader<&[u8]>, section: &mut Section) -> Result<()> {
+    let mut depth = 0usize;
+    let mut saw_visibility = false;
+    let mut saw_footnote_properties = false;
+    let mut saw_endnote_properties = false;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt("unexpected end of XML inside secPr"));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 {
+                    match name.as_str() {
+                        "visibility" => {
+                            if saw_visibility {
+                                return Err(PluginError::corrupt(
+                                    "secPr contains more than one visibility element",
+                                ));
+                            }
+                            saw_visibility = true;
+                            section.hide_first_header = parse_bool_attr(&event, "hideFirstHeader")?;
+                            section.hide_first_footer = parse_bool_attr(&event, "hideFirstFooter")?;
+                        }
+                        "footNotePr" => {
+                            if saw_footnote_properties {
+                                return Err(PluginError::corrupt(
+                                    "secPr contains more than one footNotePr element",
+                                ));
+                            }
+                            saw_footnote_properties = true;
+                            section.footnote_properties = Some(parse_note_properties(
+                                reader,
+                                "footNotePr",
+                                NoteKind::Footnote,
+                            )?);
+                            buf.clear();
+                            continue;
+                        }
+                        "endNotePr" => {
+                            if saw_endnote_properties {
+                                return Err(PluginError::corrupt(
+                                    "secPr contains more than one endNotePr element",
+                                ));
+                            }
+                            saw_endnote_properties = true;
+                            section.endnote_properties = Some(parse_note_properties(
+                                reader,
+                                "endNotePr",
+                                NoteKind::Endnote,
+                            )?);
+                            buf.clear();
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                depth = depth.saturating_add(1);
+            }
+            Event::End(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 && name == "secPr" {
+                    break;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+fn parse_note_properties(
+    reader: &mut Reader<&[u8]>,
+    parent_tag: &str,
+    kind: NoteKind,
+) -> Result<NoteProperties> {
+    let mut auto_format = None;
+    let mut numbering = None;
+    let mut position = None;
+    let mut note_line = None;
+    let mut note_spacing = None;
+    let mut depth = 0usize;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected end of XML inside {parent_tag}"
+                )));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 {
+                    match name.as_str() {
+                        "autoNumFormat" => {
+                            if auto_format.is_some() {
+                                return Err(PluginError::corrupt(format!(
+                                    "{parent_tag} contains more than one autoNumFormat element"
+                                )));
+                            }
+                            auto_format = Some(parse_note_auto_format(&event, parent_tag)?);
+                        }
+                        "numbering" => {
+                            if numbering.is_some() {
+                                return Err(PluginError::corrupt(format!(
+                                    "{parent_tag} contains more than one numbering element"
+                                )));
+                            }
+                            numbering = Some(parse_note_numbering(&event, parent_tag, kind)?);
+                        }
+                        "placement" => {
+                            if position.is_some() {
+                                return Err(PluginError::corrupt(format!(
+                                    "{parent_tag} contains more than one placement element"
+                                )));
+                            }
+                            position = Some(parse_note_position(&event, parent_tag, kind)?);
+                        }
+                        "noteLine" => {
+                            if note_line.is_some() {
+                                return Err(PluginError::corrupt(format!(
+                                    "{parent_tag} contains more than one noteLine element"
+                                )));
+                            }
+                            note_line = Some(parse_note_line(&event, parent_tag)?);
+                        }
+                        "noteSpacing" => {
+                            if note_spacing.is_some() {
+                                return Err(PluginError::corrupt(format!(
+                                    "{parent_tag} contains more than one noteSpacing element"
+                                )));
+                            }
+                            note_spacing = Some(parse_note_spacing(&event, parent_tag)?);
+                        }
+                        _ => {
+                            return Err(PluginError::corrupt(format!(
+                                "{parent_tag} contains unknown direct child {name}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(PluginError::corrupt(format!(
+                        "{parent_tag} child elements must be empty; found nested {name}"
+                    )));
+                }
+                depth = depth.saturating_add(1);
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{parent_tag} contains unexpected text"
+                )));
+            }
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "{parent_tag} contains unexpected CDATA"
+                )));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "{parent_tag} contains an unexpected entity reference"
+                )));
+            }
+            Event::End(event) => {
+                let name = local_name(event.name().as_ref());
+                if depth == 0 && name == parent_tag {
+                    break;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let (number_format, prefix, suffix, superscript) = auto_format
+        .ok_or_else(|| PluginError::corrupt(format!("{parent_tag} is missing autoNumFormat")))?;
+    let (restart, start) = numbering
+        .ok_or_else(|| PluginError::corrupt(format!("{parent_tag} is missing numbering")))?;
+    let position = position
+        .ok_or_else(|| PluginError::corrupt(format!("{parent_tag} is missing placement")))?;
+
+    Ok(NoteProperties {
+        number_format,
+        restart,
+        start,
+        position,
+        prefix,
+        suffix,
+        superscript,
+        note_line,
+        note_spacing,
+    })
+}
+
+fn required_attr(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+    child_tag: &str,
+    name: &str,
+) -> Result<String> {
+    attr(event, name).ok_or_else(|| {
+        PluginError::corrupt(format!(
+            "{parent_tag}/{child_tag} is missing required {name}"
+        ))
+    })
+}
+
+fn parse_note_line(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+) -> Result<NoteLine> {
+    let raw_length = required_attr(event, parent_tag, "noteLine", "length")?;
+    let length = raw_length.parse::<i32>().map_err(|_| {
+        PluginError::corrupt(format!(
+            "{parent_tag}/noteLine has invalid length {raw_length:?}"
+        ))
+    })?;
+
+    let raw_type = required_attr(event, parent_tag, "noteLine", "type")?;
+    let line_type = match raw_type.trim().to_ascii_uppercase().as_str() {
+        "NONE" => NoteLineType::None,
+        "SOLID" => NoteLineType::Solid,
+        "DOT" => NoteLineType::Dot,
+        "DASH" => NoteLineType::Dash,
+        "DASH_DOT" => NoteLineType::DashDot,
+        "DASH_DOT_DOT" => NoteLineType::DashDotDot,
+        "LONG_DASH" => NoteLineType::LongDash,
+        "CIRCLE" => NoteLineType::Circle,
+        "DOUBLE_SLIM" => NoteLineType::DoubleSlim,
+        "SLIM_THICK" => NoteLineType::SlimThick,
+        "THICK_SLIM" => NoteLineType::ThickSlim,
+        "SLIM_THICK_SLIM" => NoteLineType::SlimThickSlim,
+        "WAVE" => NoteLineType::Wave,
+        "DOUBLEWAVE" => NoteLineType::DoubleWave,
+        "THICK3D" => NoteLineType::Thick3d,
+        "THICKREV3D" => NoteLineType::ThickRev3d,
+        "3D" => NoteLineType::ThreeD,
+        "REV3D" => NoteLineType::Rev3d,
+        _ => {
+            return Err(PluginError::corrupt(format!(
+                "{parent_tag}/noteLine has invalid type {raw_type:?}"
+            )));
+        }
+    };
+
+    let raw_width = required_attr(event, parent_tag, "noteLine", "width")?;
+    let width = match raw_width.trim() {
+        "0.1 mm" => NoteLineWidth::Mm0_1,
+        "0.12 mm" => NoteLineWidth::Mm0_12,
+        "0.15 mm" => NoteLineWidth::Mm0_15,
+        "0.2 mm" => NoteLineWidth::Mm0_2,
+        "0.25 mm" => NoteLineWidth::Mm0_25,
+        "0.3 mm" => NoteLineWidth::Mm0_3,
+        "0.4 mm" => NoteLineWidth::Mm0_4,
+        "0.5 mm" => NoteLineWidth::Mm0_5,
+        "0.6 mm" => NoteLineWidth::Mm0_6,
+        "0.7 mm" => NoteLineWidth::Mm0_7,
+        "1.0 mm" => NoteLineWidth::Mm1_0,
+        "1.5 mm" => NoteLineWidth::Mm1_5,
+        "2.0 mm" => NoteLineWidth::Mm2_0,
+        "3.0 mm" => NoteLineWidth::Mm3_0,
+        "4.0 mm" => NoteLineWidth::Mm4_0,
+        "5.0 mm" => NoteLineWidth::Mm5_0,
+        _ => {
+            return Err(PluginError::corrupt(format!(
+                "{parent_tag}/noteLine has invalid width {raw_width:?}"
+            )));
+        }
+    };
+
+    let raw_color = required_attr(event, parent_tag, "noteLine", "color")?;
+    let rgb = raw_color
+        .trim()
+        .strip_prefix('#')
+        .unwrap_or(raw_color.trim());
+    if rgb.len() != 6 || !rgb.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err(PluginError::corrupt(format!(
+            "{parent_tag}/noteLine has invalid RGB color {raw_color:?}"
+        )));
+    }
+    let color = normalize_color(raw_color.clone()).ok_or_else(|| {
+        PluginError::corrupt(format!(
+            "{parent_tag}/noteLine has invalid color {raw_color:?}"
+        ))
+    })?;
+
+    Ok(NoteLine {
+        length,
+        line_type,
+        width,
+        color,
+    })
+}
+
+fn parse_note_spacing(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+) -> Result<NoteSpacing> {
+    fn parse_value(
+        event: &quick_xml::events::BytesStart<'_>,
+        parent_tag: &str,
+        name: &str,
+    ) -> Result<u32> {
+        let raw = required_attr(event, parent_tag, "noteSpacing", name)?;
+        raw.parse::<u32>().map_err(|_| {
+            PluginError::corrupt(format!(
+                "{parent_tag}/noteSpacing has invalid {name} {raw:?}"
+            ))
+        })
+    }
+
+    Ok(NoteSpacing {
+        between_notes: parse_value(event, parent_tag, "betweenNotes")?,
+        below_line: parse_value(event, parent_tag, "belowLine")?,
+        above_line: parse_value(event, parent_tag, "aboveLine")?,
+    })
+}
+
+type ParsedAutoFormat = (NoteNumberFormat, String, String, bool);
+
+fn parse_note_auto_format(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+) -> Result<ParsedAutoFormat> {
+    let raw = attr(event, "type").ok_or_else(|| {
+        PluginError::corrupt(format!("{parent_tag}/autoNumFormat is missing type"))
+    })?;
+    let number_format = match raw.trim().to_ascii_uppercase().as_str() {
+        "DIGIT" => NoteNumberFormat::Decimal,
+        "ROMAN_SMALL" => NoteNumberFormat::LowerRoman,
+        "ROMAN_CAPITAL" => NoteNumberFormat::UpperRoman,
+        "LATIN_SMALL" => NoteNumberFormat::LowerLetter,
+        "LATIN_CAPITAL" => NoteNumberFormat::UpperLetter,
+        // Both formats use the conventional *, dagger, double-dagger sequence.
+        "SYMBOL" => NoteNumberFormat::Chicago,
+        unsupported => {
+            return Err(PluginError::unsupported_feature(format!(
+                "{parent_tag} uses unsupported automatic note number format {unsupported}"
+            )));
+        }
+    };
+    if let Some(user_char) = attr(event, "userChar").filter(|value| !value.is_empty()) {
+        return Err(PluginError::unsupported_feature(format!(
+            "{parent_tag}/autoNumFormat userChar {user_char:?} cannot be preserved without changing automatic note numbering"
+        )));
+    }
+    Ok((
+        number_format,
+        attr(event, "prefixChar").unwrap_or_default(),
+        attr(event, "suffixChar").unwrap_or_default(),
+        parse_bool_attr(event, "supscript")?,
+    ))
+}
+
+fn parse_note_numbering(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+    kind: NoteKind,
+) -> Result<(NoteNumberRestart, usize)> {
+    let raw = attr(event, "type")
+        .ok_or_else(|| PluginError::corrupt(format!("{parent_tag}/numbering is missing type")))?;
+    let restart = match raw.trim().to_ascii_uppercase().as_str() {
+        "CONTINUOUS" => NoteNumberRestart::Continuous,
+        "ON_SECTION" => NoteNumberRestart::EachSection,
+        "ON_PAGE" if kind == NoteKind::Footnote => NoteNumberRestart::EachPage,
+        "ON_PAGE" => {
+            return Err(PluginError::unsupported_feature(
+                "endNotePr cannot preserve ON_PAGE numbering in DOCX",
+            ));
+        }
+        invalid => {
+            return Err(PluginError::corrupt(format!(
+                "{parent_tag}/numbering has invalid type {invalid}"
+            )));
+        }
+    };
+    let start = match attr(event, "newNum") {
+        Some(raw_start) => raw_start.parse::<usize>().map_err(|_| {
+            PluginError::corrupt(format!(
+                "{parent_tag}/numbering has invalid newNum {raw_start:?}"
+            ))
+        })?,
+        None => 1,
+    };
+    Ok((restart, start))
+}
+
+fn parse_note_position(
+    event: &quick_xml::events::BytesStart<'_>,
+    parent_tag: &str,
+    kind: NoteKind,
+) -> Result<NotePosition> {
+    let raw = attr(event, "place")
+        .ok_or_else(|| PluginError::corrupt(format!("{parent_tag}/placement is missing place")))?;
+    let beneath_text = parse_bool_attr(event, "beneathText")?;
+    match kind {
+        NoteKind::Footnote => match raw.trim().to_ascii_uppercase().as_str() {
+            "EACH_COLUMN" => Ok(if beneath_text {
+                NotePosition::BeneathText
+            } else {
+                NotePosition::PageBottom
+            }),
+            "MERGED_COLUMN" | "RIGHT_MOST_COLUMN" => Err(PluginError::unsupported_feature(
+                format!("DOCX cannot preserve footNotePr placement {raw}"),
+            )),
+            invalid => Err(PluginError::corrupt(format!(
+                "footNotePr/placement has invalid place {invalid}"
+            ))),
+        },
+        NoteKind::Endnote => {
+            if beneath_text {
+                return Err(PluginError::unsupported_feature(
+                    "DOCX cannot preserve endNotePr beneathText=true",
+                ));
+            }
+            match raw.trim().to_ascii_uppercase().as_str() {
+                "END_OF_DOCUMENT" => Ok(NotePosition::DocumentEnd),
+                "END_OF_SECTION" => Ok(NotePosition::SectionEnd),
+                invalid => Err(PluginError::corrupt(format!(
+                    "endNotePr/placement has invalid place {invalid}"
+                ))),
+            }
+        }
+    }
+}
+
+fn parse_bool_attr(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<bool> {
+    let Some(raw) = attr(event, name) else {
+        return Ok(false);
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => Err(PluginError::corrupt(format!(
+            "{name} has invalid boolean value {raw:?}"
+        ))),
+    }
+}
+
+fn parse_header_footer(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    styles: &StyleTable,
+) -> Result<HeaderFooter> {
+    let tag = local_name(start.name().as_ref());
+    let raw_page = attr(start, "applyPageType").unwrap_or_else(|| "BOTH".to_owned());
+    let page = match raw_page.trim().to_ascii_uppercase().as_str() {
+        "BOTH" => HeaderFooterPage::Both,
+        "ODD" => HeaderFooterPage::Odd,
+        "EVEN" => HeaderFooterPage::Even,
+        _ => {
+            return Err(PluginError::corrupt(format!(
+                "{tag} has invalid applyPageType {raw_page:?}"
+            )));
+        }
+    };
+
+    let mut blocks = Vec::new();
+    let mut saw_sub_list = false;
+    let mut inside_sub_list = false;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(format!(
+                    "unexpected end of XML inside {tag}"
+                )));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if name == "subList" {
+                    if saw_sub_list {
+                        return Err(PluginError::corrupt(format!(
+                            "{tag} contains more than one subList"
+                        )));
+                    }
+                    saw_sub_list = true;
+                    inside_sub_list = true;
+                } else if !inside_sub_list {
+                    return Err(PluginError::corrupt(format!(
+                        "{tag} contains {name} outside subList"
+                    )));
+                } else if name == "p" {
+                    let owned = event.into_owned();
+                    blocks.extend(parse_paragraph(reader, &owned, styles, 0, None)?);
+                } else {
+                    return Err(PluginError::corrupt(format!(
+                        "{tag} subList contains unexpected direct child {name}"
+                    )));
+                }
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                let location = if inside_sub_list {
+                    "direct text inside subList"
+                } else {
+                    "text outside subList"
+                };
+                return Err(PluginError::corrupt(format!("{tag} contains {location}")));
+            }
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                let location = if inside_sub_list {
+                    "direct CDATA inside subList"
+                } else {
+                    "CDATA outside subList"
+                };
+                return Err(PluginError::corrupt(format!("{tag} contains {location}")));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "{tag} contains an unexpected entity reference"
+                )));
+            }
+            Event::End(event) => {
+                let name = local_name(event.name().as_ref());
+                if name == "subList" && inside_sub_list {
+                    inside_sub_list = false;
+                } else if name == tag {
+                    if inside_sub_list {
+                        return Err(PluginError::corrupt(format!(
+                            "{tag} ended before its subList"
+                        )));
+                    }
+                    break;
                 }
             }
             _ => {}
@@ -53,7 +805,22 @@ pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Vec<Block>> {
         buf.clear();
     }
 
-    Ok(blocks)
+    if !saw_sub_list {
+        return Err(PluginError::corrupt(format!(
+            "{tag} is missing its required subList"
+        )));
+    }
+    if blocks_contain_note(&blocks) {
+        return Err(PluginError::unsupported_feature(format!(
+            "{tag} contains a footnote or endnote, which DOCX headers and footers cannot contain"
+        )));
+    }
+
+    Ok(HeaderFooter {
+        id: attr(start, "id"),
+        page,
+        blocks,
+    })
 }
 
 /// `hp:p` 하나를 읽어 블록들로 변환한다.
@@ -64,6 +831,7 @@ fn parse_paragraph(
     start: &quick_xml::events::BytesStart<'static>,
     styles: &StyleTable,
     depth: usize,
+    note_context: Option<NoteKind>,
 ) -> Result<Vec<Block>> {
     let para_style = styles.para_style(attr(start, "paraPrIDRef").as_deref());
 
@@ -89,6 +857,12 @@ fn parse_paragraph(
             Event::Start(e) => {
                 let name_owned = e.name();
                 match local_name(name_owned.as_ref()).as_str() {
+                    // 구역 메타데이터와 반복 story는 별도 1차 순회에서 읽는다.
+                    // 여기서 소비하지 않으면 그 안의 `p` 종료를 바깥 본문 문단
+                    // 종료로 오인하고 텍스트도 본문으로 유출한다.
+                    "secPr" => skip_element(reader, "secPr")?,
+                    "header" => skip_element(reader, "header")?,
+                    "footer" => skip_element(reader, "footer")?,
                     "run" => {
                         run_style = Some(styles.char_style(attr(&e, "charPrIDRef").as_deref()));
                     }
@@ -101,6 +875,17 @@ fn parse_paragraph(
                     }
                     "tab" => current.inlines.push(Inline::Tab),
                     "lineBreak" | "linebreak" => current.inlines.push(Inline::LineBreak),
+                    "autoNum" => {
+                        let owned = e.into_owned();
+                        if let Some(field) = parse_auto_number(
+                            reader,
+                            &owned,
+                            run_style.clone().unwrap_or_default(),
+                            note_context,
+                        )? {
+                            current.inlines.push(Inline::PageNumber(field));
+                        }
+                    }
                     "equation" => {
                         let owned = e.into_owned();
                         current
@@ -121,12 +906,19 @@ fn parse_paragraph(
                             "note nesting exceeds the maximum depth of {MAX_DEPTH}"
                         )));
                     }
+                    name if name.eq_ignore_ascii_case("footnote")
+                        || name.eq_ignore_ascii_case("endnote") =>
+                    {
+                        return Err(PluginError::corrupt(format!(
+                            "unrecognized case-confused note element {name}"
+                        )));
+                    }
                     "tbl" if depth < MAX_DEPTH => {
                         // 표 앞까지의 문단을 먼저 확정한다.
                         validate_display_equation_placement(&current)?;
                         flush_paragraph(&mut out, &mut current, &para_style);
                         let owned = e.into_owned();
-                        let table = parse_table(reader, &owned, styles, depth + 1)?;
+                        let table = parse_table(reader, &owned, styles, depth + 1, note_context)?;
                         out.push(Block::Table(table));
                     }
                     "pic" => {
@@ -220,6 +1012,158 @@ fn parse_paragraph(
     }
 
     Ok(out)
+}
+
+/// `hp:autoNum` 가운데 동적 페이지 계수기만 모델로 올린다.
+///
+/// 각주/미주 본문 첫 런의 FOOTNOTE/ENDNOTE autoNum은 참조 표식의 구조적 사본이다.
+/// 실제 DOCX 표식은 `add footnote|endnote`가 다시 만들므로 그 두 종류는 소비만 한다.
+/// 그 밖의 표·그림·수식 번호는 T2-4의 목록 구조 없이는 정확히 낮출 수 없으므로
+/// 조용히 지우지 않고 거부한다.
+fn parse_auto_number(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+    style: super::model::CharStyle,
+    note_context: Option<NoteKind>,
+) -> Result<Option<PageNumberField>> {
+    let raw_kind = attr(start, "numType")
+        .ok_or_else(|| PluginError::corrupt("autoNum is missing required numType"))?;
+    let kind = match raw_kind.trim().to_ascii_uppercase().as_str() {
+        "PAGE" => Some(PageNumberKind::Page),
+        "TOTAL_PAGE" => Some(PageNumberKind::TotalPages),
+        "FOOTNOTE" if note_context == Some(NoteKind::Footnote) => None,
+        "ENDNOTE" if note_context == Some(NoteKind::Endnote) => None,
+        "FOOTNOTE" | "ENDNOTE" if note_context.is_some() => {
+            let enclosing = match note_context.expect("guarded by is_some") {
+                NoteKind::Footnote => "footnote",
+                NoteKind::Endnote => "endnote",
+            };
+            return Err(PluginError::corrupt(format!(
+                "autoNum numType {} does not match its enclosing {enclosing}",
+                raw_kind.trim().to_ascii_uppercase()
+            )));
+        }
+        "FOOTNOTE" | "ENDNOTE" => {
+            return Err(PluginError::unsupported_feature(format!(
+                "autoNum numType {} appears outside its matching note and cannot be dropped",
+                raw_kind.trim().to_ascii_uppercase()
+            )));
+        }
+        other => {
+            return Err(PluginError::unsupported_feature(format!(
+                "autoNum numType {other} cannot yet be represented without its numbering structure"
+            )));
+        }
+    };
+
+    let mut saw_format = false;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt("unexpected end of XML inside autoNum"));
+            }
+            Event::Start(event) => {
+                let name = local_name(event.name().as_ref());
+                if name != "autoNumFormat" {
+                    return Err(PluginError::unsupported_feature(format!(
+                        "autoNum contains unsupported child {name}"
+                    )));
+                }
+                if saw_format {
+                    return Err(PluginError::corrupt(
+                        "autoNum contains more than one autoNumFormat",
+                    ));
+                }
+                saw_format = true;
+                if kind.is_some() {
+                    validate_page_auto_number_format(&event)?;
+                }
+                consume_empty_auto_number_format(reader)?;
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(
+                    "autoNum contains unexpected text content",
+                ));
+            }
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt(
+                    "autoNum contains unexpected CDATA content",
+                ));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(
+                    "autoNum contains an unexpected entity reference",
+                ));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "autoNum" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if !saw_format {
+        return Err(PluginError::corrupt(
+            "autoNum is missing required autoNumFormat",
+        ));
+    }
+
+    Ok(kind.map(|kind| PageNumberField { kind, style }))
+}
+
+fn validate_page_auto_number_format(event: &quick_xml::events::BytesStart<'_>) -> Result<()> {
+    let number_format = attr(event, "type").unwrap_or_else(|| "DIGIT".to_owned());
+    let user_char = attr(event, "userChar").unwrap_or_default();
+    let prefix = attr(event, "prefixChar").unwrap_or_default();
+    let suffix = attr(event, "suffixChar").unwrap_or_default();
+    let superscript = parse_bool_attr(event, "supscript")?;
+
+    if number_format.eq_ignore_ascii_case("DIGIT")
+        && user_char.is_empty()
+        && prefix.is_empty()
+        && suffix.is_empty()
+        && !superscript
+    {
+        return Ok(());
+    }
+
+    Err(PluginError::unsupported_feature(format!(
+        "autoNum PAGE/TOTAL_PAGE format is not an exact DOCX mapping: type={number_format:?}, userChar={user_char:?}, prefixChar={prefix:?}, suffixChar={suffix:?}, supscript={superscript}"
+    )))
+}
+
+fn consume_empty_auto_number_format(reader: &mut Reader<&[u8]>) -> Result<()> {
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt(
+                    "unexpected end of XML inside autoNumFormat",
+                ));
+            }
+            Event::Start(event) => {
+                return Err(PluginError::corrupt(format!(
+                    "autoNumFormat must be empty, found child {}",
+                    local_name(event.name().as_ref())
+                )));
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt("autoNumFormat must not contain text"));
+            }
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt("autoNumFormat must not contain CDATA"));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(
+                    "autoNumFormat must not contain entity references",
+                ));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "autoNumFormat" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(())
 }
 
 fn validate_display_equation_placement(paragraph: &Paragraph) -> Result<()> {
@@ -380,10 +1324,17 @@ fn parse_note(
             )));
         }
     };
+    if let Some(user_char) = parse_note_wchar_attr(start, "userChar", &tag)? {
+        return Err(PluginError::unsupported_feature(format!(
+            "{tag} userChar {user_char:?} cannot be preserved without changing automatic note numbering"
+        )));
+    }
+    let reference_prefix = parse_note_wchar_attr(start, "prefixChar", &tag)?;
+    let reference_suffix = parse_note_wchar_attr(start, "suffixChar", &tag)?;
 
     let mut blocks = Vec::new();
     let mut saw_sub_list = false;
-    let mut sub_list_depth = 0usize;
+    let mut inside_sub_list = false;
     let mut buf = Vec::new();
 
     loop {
@@ -395,35 +1346,54 @@ fn parse_note(
             }
             Event::Start(event) => {
                 let name = local_name(event.name().as_ref());
-                match name.as_str() {
-                    "subList" if sub_list_depth == 0 => {
-                        if saw_sub_list {
-                            return Err(PluginError::corrupt(format!(
-                                "{tag} contains more than one subList"
-                            )));
-                        }
-                        saw_sub_list = true;
-                        sub_list_depth = 1;
-                    }
-                    "subList" => sub_list_depth += 1,
-                    "p" if sub_list_depth == 1 => {
-                        let owned = event.into_owned();
-                        blocks.extend(parse_paragraph(reader, &owned, styles, depth)?);
-                    }
-                    _ if sub_list_depth == 0 => {
+                if name == "subList" {
+                    if saw_sub_list {
                         return Err(PluginError::corrupt(format!(
-                            "{tag} contains {name} outside subList"
+                            "{tag} contains more than one subList"
                         )));
                     }
-                    _ => {}
+                    saw_sub_list = true;
+                    inside_sub_list = true;
+                } else if !inside_sub_list {
+                    return Err(PluginError::corrupt(format!(
+                        "{tag} contains {name} outside subList"
+                    )));
+                } else if name == "p" {
+                    let owned = event.into_owned();
+                    blocks.extend(parse_paragraph(reader, &owned, styles, depth, Some(kind))?);
+                } else {
+                    return Err(PluginError::corrupt(format!(
+                        "{tag} subList contains unexpected direct child {name}"
+                    )));
                 }
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                let location = if inside_sub_list {
+                    "direct text inside subList"
+                } else {
+                    "text outside subList"
+                };
+                return Err(PluginError::corrupt(format!("{tag} contains {location}")));
+            }
+            Event::CData(text) if !String::from_utf8_lossy(text.as_ref()).trim().is_empty() => {
+                let location = if inside_sub_list {
+                    "direct CDATA inside subList"
+                } else {
+                    "CDATA outside subList"
+                };
+                return Err(PluginError::corrupt(format!("{tag} contains {location}")));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "{tag} contains an unexpected entity reference"
+                )));
             }
             Event::End(event) => {
                 let name = local_name(event.name().as_ref());
-                if name == "subList" && sub_list_depth > 0 {
-                    sub_list_depth -= 1;
+                if name == "subList" && inside_sub_list {
+                    inside_sub_list = false;
                 } else if name == tag {
-                    if sub_list_depth != 0 {
+                    if inside_sub_list {
                         return Err(PluginError::corrupt(format!(
                             "{tag} ended before its subList"
                         )));
@@ -453,8 +1423,38 @@ fn parse_note(
         kind,
         number: attr_usize(start, "number"),
         instance_id: attr(start, "instId"),
+        reference_prefix,
+        reference_suffix,
         blocks,
     })
+}
+
+fn parse_note_wchar_attr(
+    start: &quick_xml::events::BytesStart<'_>,
+    name: &str,
+    tag: &str,
+) -> Result<Option<String>> {
+    let Some(raw) = attr(start, name) else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "0" {
+        return Ok(None);
+    }
+    let value = raw.parse::<u32>().map_err(|_| {
+        PluginError::corrupt(format!("{tag} has invalid UTF-16 {name} value {raw:?}"))
+    })?;
+    if value > u16::MAX as u32 {
+        return Err(PluginError::corrupt(format!(
+            "{tag} {name} value {value} exceeds a UTF-16 code unit"
+        )));
+    }
+    let character = char::from_u32(value).ok_or_else(|| {
+        PluginError::corrupt(format!(
+            "{tag} {name} value {value} is an unpaired UTF-16 surrogate"
+        ))
+    })?;
+    Ok(Some(character.to_string()))
 }
 
 fn blocks_contain_note(blocks: &[Block]) -> bool {
@@ -467,6 +1467,19 @@ fn blocks_contain_note(blocks: &[Block]) -> bool {
             .cells
             .iter()
             .any(|cell| blocks_contain_note(&cell.blocks)),
+    })
+}
+
+fn blocks_contain_note_kind(blocks: &[Block], kind: NoteKind) -> bool {
+    blocks.iter().any(|block| match block {
+        Block::Paragraph(paragraph) => paragraph.inlines.iter().any(|inline| match inline {
+            Inline::Note(note) => note.kind == kind,
+            _ => false,
+        }),
+        Block::Table(table) => table
+            .cells
+            .iter()
+            .any(|cell| blocks_contain_note_kind(&cell.blocks, kind)),
     })
 }
 
@@ -501,6 +1514,7 @@ fn parse_table(
     start: &quick_xml::events::BytesStart<'static>,
     styles: &StyleTable,
     depth: usize,
+    note_context: Option<NoteKind>,
 ) -> Result<Table> {
     let declared_rows = attr_usize(start, "rowCnt");
     let declared_cols = attr_usize(start, "colCnt");
@@ -520,7 +1534,7 @@ fn parse_table(
                     "tr" => col_cursor = 0,
                     "tc" => {
                         let owned = e.into_owned();
-                        let mut cell = parse_cell(reader, &owned, styles, depth)?;
+                        let mut cell = parse_cell(reader, &owned, styles, depth, note_context)?;
                         // cellAddr가 없었다면 커서로 채운다.
                         if cell.addr_missing {
                             cell.inner.row = row_cursor;
@@ -635,6 +1649,7 @@ fn parse_cell(
     _start: &quick_xml::events::BytesStart<'static>,
     styles: &StyleTable,
     depth: usize,
+    note_context: Option<NoteKind>,
 ) -> Result<ParsedCell> {
     let mut cell = Cell {
         row_span: 1,
@@ -676,8 +1691,13 @@ fn parse_cell(
                         let owned = e.into_owned();
                         // 중첩표를 평탄화하지 않고 블록으로 그대로 담는다.
                         // docx도 셀 안에 표를 넣을 수 있다(실측 확인).
-                        cell.blocks
-                            .extend(parse_paragraph(reader, &owned, styles, depth + 1)?);
+                        cell.blocks.extend(parse_paragraph(
+                            reader,
+                            &owned,
+                            styles,
+                            depth + 1,
+                            note_context,
+                        )?);
                     }
                     _ => {}
                 }
