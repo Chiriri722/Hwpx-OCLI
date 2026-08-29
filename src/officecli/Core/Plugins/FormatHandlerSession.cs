@@ -124,13 +124,14 @@ internal sealed class FormatHandlerSession : IDisposable
 
         // Open handshake. Plugin must reply with `ok` carrying capabilities
         // + vocabulary before we surface the session to callers.
-        var openArgs = new JsonObject
+        var openFields = new JsonObject
         {
             ["path"] = _filePath,
             ["editable"] = editable,
         };
-        var reply = SendRaw("open", null, openArgs, props: null,
-            idleTimeoutSec: _plugin.Manifest.ResolveIdleTimeout("open"));
+        var reply = SendRaw("open", null, args: null, props: null,
+            idleTimeoutSec: _plugin.Manifest.ResolveIdleTimeout("open"),
+            topLevelFields: openFields);
         try
         {
             _sessionCaps = reply is null
@@ -150,28 +151,56 @@ internal sealed class FormatHandlerSession : IDisposable
     /// </summary>
     public JsonNode? Send(string msgType, string? command, JsonObject? args = null, JsonObject? props = null)
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(FormatHandlerSession));
-        if (_broken)
-            throw new CliException(
-                $"Format-handler session for '{_plugin.Manifest.Name}' is no longer usable (stream was closed earlier).")
-            { Code = "plugin_stream_closed" };
-
-        // Capability gate: short-circuit verbs the plugin already declared it
-        // does not support, avoiding a wasted round-trip and ambiguous errors.
-        if (command is not null && _sessionCaps?.Capabilities?.Commands is { Count: > 0 } cmds
-            && !cmds.Contains(command))
-        {
-            throw new CliException(
-                $"Format-handler plugin '{_plugin.Manifest.Name}' does not implement command '{command}'.")
-            { Code = "unsupported_command" };
-        }
+        EnsureUsable();
+        if (command is not null) EnsureCapability(command);
 
         var verbForTimeout = command ?? msgType;
         var idle = _plugin.Manifest.ResolveIdleTimeout(verbForTimeout);
         return SendRaw(msgType, command, args, props, idle);
     }
 
-    private JsonNode? SendRaw(string msgType, string? command, JsonObject? args, JsonObject? props, int idleTimeoutSec)
+    /// <summary>
+    /// Flush pending plugin mutations through the protocol-v1 lifecycle frame.
+    /// The capability name remains <c>save</c>, but the wire envelope is
+    /// <c>{"msg_type":"save"}</c>, not a proxied command.
+    /// </summary>
+    public JsonNode? Save()
+    {
+        EnsureUsable();
+        EnsureCapability("save");
+        return SendRaw("save", command: null, args: null, props: null,
+            idleTimeoutSec: _plugin.Manifest.ResolveIdleTimeout("save"));
+    }
+
+    private void EnsureUsable()
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(FormatHandlerSession));
+        if (_broken)
+            throw new CliException(
+                $"Format-handler session for '{_plugin.Manifest.Name}' is no longer usable (stream was closed earlier).")
+            { Code = "plugin_stream_closed" };
+    }
+
+    private void EnsureCapability(string verb)
+    {
+        // Capability gate: short-circuit verbs the plugin already declared it
+        // does not support, avoiding a wasted round-trip and ambiguous errors.
+        if (_sessionCaps?.Capabilities?.Commands is not { Count: > 0 } commands
+            || commands.Contains(verb))
+            return;
+
+        throw new CliException(
+            $"Format-handler plugin '{_plugin.Manifest.Name}' does not implement session verb '{verb}'.")
+        { Code = "unsupported_command" };
+    }
+
+    private JsonNode? SendRaw(
+        string msgType,
+        string? command,
+        JsonObject? args,
+        JsonObject? props,
+        int idleTimeoutSec,
+        JsonObject? topLevelFields = null)
     {
         if (_stdinWriter is null || _stdoutReader is null)
             throw new InvalidOperationException("Session not started.");
@@ -181,6 +210,15 @@ internal sealed class FormatHandlerSession : IDisposable
             ["protocol"] = 1,
             ["msg_type"] = msgType,
         };
+        if (topLevelFields is not null)
+        {
+            foreach (var (name, value) in topLevelFields)
+            {
+                if (request.ContainsKey(name) || name is "command" or "args" or "props")
+                    throw new InvalidOperationException($"Reserved protocol field cannot be replaced: {name}");
+                request[name] = value?.DeepClone();
+            }
+        }
         if (command is not null) request["command"] = command;
         if (args is not null) request["args"] = args;
         if (props is not null) request["props"] = props;

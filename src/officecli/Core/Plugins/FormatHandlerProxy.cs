@@ -281,19 +281,7 @@ internal sealed class FormatHandlerProxy : IDocumentHandler
         }
     }
 
-    public void Save()
-    {
-        try
-        {
-            _session.Send("command", "save", new JsonObject());
-        }
-        catch (CliException ex) when (ex.Code == "unsupported_command")
-        {
-            // Plugin doesn't support save — silently skip. The Dispose path
-            // will still flush on session close. Built-in handlers always
-            // implement Save; plugins predating the verb may not.
-        }
-    }
+    public void Save() => _session.Save();
 
     public void Dispose() => _session.Dispose();
 

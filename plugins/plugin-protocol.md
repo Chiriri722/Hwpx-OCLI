@@ -413,7 +413,7 @@ Plugin replies:
 ```json
 {"protocol":1,"msg_type":"ok","result":{
   "capabilities":{
-    "commands":["add","set","get","query","remove","move","save","raw","raw-set"],
+    "commands":["add","set","get","query","remove","move","save","raw","raw_set"],
     "features":["save","extract-binary"]
   },
   "vocabulary":{
@@ -425,9 +425,11 @@ Plugin replies:
 ```
 
 Failure to handshake within the verb's idle timeout terminates the session.
-The host caches the returned capabilities and vocabulary; subsequent
-commands not present in `commands` are short-circuited with
-`unsupported_command` without round-tripping.
+The host caches the returned capabilities and vocabulary; subsequent verbs
+not present in `commands` are short-circuited with `unsupported_command`
+without round-tripping. `commands` is the capability list retained for v1
+compatibility; `save` appears in it even though `save` uses its dedicated
+lifecycle envelope rather than `msg_type:"command"`.
 
 After handshake, each request gets exactly one reply before the next request
 is sent (§6.2).

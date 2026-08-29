@@ -112,6 +112,39 @@ if (args is ["--heartbeat-child"])
     return 0;
 }
 
+if (args is ["open", _]
+    && Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG") is { Length: > 0 } wireLog)
+{
+    var advertisedCommands = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS")
+        ?? "[\"get\",\"save\"]";
+    using var log = new StreamWriter(wireLog, append: false, new UTF8Encoding(false))
+    {
+        AutoFlush = true,
+        NewLine = "\n",
+    };
+
+    while (Console.ReadLine() is { } line)
+    {
+        log.WriteLine(line);
+        using var frame = JsonDocument.Parse(line);
+        var msgType = frame.RootElement.GetProperty("msg_type").GetString();
+        if (msgType == "open")
+        {
+            Console.WriteLine(
+                "{\"protocol\":1,\"msg_type\":\"ok\",\"result\":{" +
+                "\"capabilities\":{\"commands\":" + advertisedCommands + ",\"features\":[]}," +
+                "\"vocabulary\":{\"addable_types\":[],\"settable_props\":{},\"path_segments\":[]}}}");
+        }
+        else
+        {
+            Console.WriteLine("{\"protocol\":1,\"msg_type\":\"ok\",\"result\":null}");
+        }
+        Console.Out.Flush();
+        if (msgType == "close") return 0;
+    }
+    return 0;
+}
+
 var tests = new (string Name, Action Run)[]
 {
     ("relative environment overrides are rejected", RelativeEnvironmentOverrideIsRejected),
@@ -149,6 +182,8 @@ var tests = new (string Name, Action Run)[]
     ("plugins list and info enforce conflict policy end to end", PluginCommandsEnforceConflictPolicyEndToEnd),
     ("plugins info rejects a changed name snapshot and probes an explicit path once", PluginInfoRejectsChangedSnapshot),
     ("host watchdog accepts heartbeats throughout a slow plugin run", HostWatchdogAcceptsHeartbeats),
+    ("format-handler lifecycle frames match protocol v1", FormatHandlerLifecycleFramesMatchProtocolV1),
+    ("format-handler save cannot report false durability", FormatHandlerSaveCannotReportFalseDurability),
     ("dump-reader surfaces only bounded structured success warnings", DumpReaderStructuredWarningsAreFilteredAndBounded),
     ("field schema accepts emitted character formatting", FieldSchemaAcceptsEmittedCharacterFormatting),
     ("style schema accepts emitted paragraph indents", StyleSchemaAcceptsEmittedParagraphIndents),
@@ -176,6 +211,84 @@ foreach (var (name, run) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static void FormatHandlerLifecycleFramesMatchProtocolV1()
+{
+    var documentPath = Path.Combine(Path.GetTempPath(), $"officecli-format-wire-{Guid.NewGuid():N}.wire");
+    var wireLog = Path.Combine(Path.GetTempPath(), $"officecli-format-wire-{Guid.NewGuid():N}.jsonl");
+    var originalLog = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG");
+    var originalCommands = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS");
+    try
+    {
+        File.WriteAllText(documentPath, "wire contract");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", wireLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", "[\"get\",\"save\"]");
+
+        using (var handler = OpenContractFormatHandler(documentPath))
+            handler.Save();
+
+        var frames = File.ReadAllLines(wireLog);
+        Assert(frames.Length == 3, $"expected open/save/close frames, got {frames.Length}");
+
+        using var open = JsonDocument.Parse(frames[0]);
+        var openRoot = open.RootElement;
+        Assert(openRoot.GetProperty("msg_type").GetString() == "open", "first frame is not open");
+        Assert(openRoot.TryGetProperty("path", out var path)
+               && path.GetString() == Path.GetFullPath(documentPath),
+            "open frame does not carry the canonical top-level path");
+        Assert(openRoot.TryGetProperty("editable", out var editable) && editable.GetBoolean(),
+            "open frame does not carry the canonical top-level editable flag");
+        Assert(!openRoot.TryGetProperty("args", out _), "open lifecycle fields were nested under args");
+
+        using var save = JsonDocument.Parse(frames[1]);
+        var saveRoot = save.RootElement;
+        Assert(saveRoot.GetProperty("msg_type").GetString() == "save", "second frame is not save");
+        Assert(!saveRoot.TryGetProperty("command", out _), "save was sent as a command envelope");
+        Assert(!saveRoot.TryGetProperty("args", out _), "save lifecycle frame carried command args");
+
+        using var close = JsonDocument.Parse(frames[2]);
+        Assert(close.RootElement.GetProperty("msg_type").GetString() == "close", "third frame is not close");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", originalLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", originalCommands);
+        File.Delete(documentPath);
+        File.Delete(wireLog);
+    }
+}
+
+static void FormatHandlerSaveCannotReportFalseDurability()
+{
+    var documentPath = Path.Combine(Path.GetTempPath(), $"officecli-format-nosave-{Guid.NewGuid():N}.wire");
+    var wireLog = Path.Combine(Path.GetTempPath(), $"officecli-format-nosave-{Guid.NewGuid():N}.jsonl");
+    var originalLog = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG");
+    var originalCommands = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS");
+    try
+    {
+        File.WriteAllText(documentPath, "wire contract");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", wireLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", "[\"get\"]");
+
+        using var handler = OpenContractFormatHandler(documentPath);
+        try
+        {
+            handler.Save();
+            throw new InvalidOperationException("Save succeeded although the plugin omitted the save capability");
+        }
+        catch (CliException ex)
+        {
+            Assert(ex.Code == "unsupported_command", $"unexpected missing-save error code: {ex.Code}");
+        }
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", originalLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", originalCommands);
+        File.Delete(documentPath);
+        File.Delete(wireLog);
+    }
+}
 
 static void StyleAddPreservesNumericIdsAndForwardNextReferences()
 {
@@ -2059,6 +2172,51 @@ static bool InvokeBool(string name, params object[] args)
         ?? throw new MissingMethodException(typeof(PluginRegistry).FullName, name);
     return method.Invoke(null, args) as bool?
         ?? throw new InvalidOperationException($"{name} returned no Boolean value");
+}
+
+static IDocumentHandler OpenContractFormatHandler(string filePath)
+{
+    var assembly = typeof(PluginRegistry).Assembly;
+    var sessionType = assembly.GetType("OfficeCli.Core.Plugins.FormatHandlerSession")
+        ?? throw new TypeLoadException("OfficeCli.Core.Plugins.FormatHandlerSession");
+    var proxyType = assembly.GetType("OfficeCli.Core.Plugins.FormatHandlerProxy")
+        ?? throw new TypeLoadException("OfficeCli.Core.Plugins.FormatHandlerProxy");
+    var plugin = new ResolvedPlugin(TestAppHostPath(), new PluginManifest
+    {
+        Name = "officecli-format-wire",
+        Version = "1.0.0",
+        Protocol = 1,
+        Kinds = ["format-handler"],
+        Extensions = [".wire"],
+        Runtime = "dotnet",
+        IdleTimeoutSeconds = new PluginIdleTimeout { Default = 5 },
+    });
+
+    var session = Activator.CreateInstance(
+        sessionType,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        args: [filePath, plugin],
+        culture: null)
+        ?? throw new InvalidOperationException("could not create format-handler session");
+    try
+    {
+        var start = sessionType.GetMethod("Start", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new MissingMethodException(sessionType.FullName, "Start");
+        start.Invoke(session, [true]);
+        return Activator.CreateInstance(
+            proxyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [session],
+            culture: null) as IDocumentHandler
+            ?? throw new InvalidOperationException("could not create format-handler proxy");
+    }
+    catch
+    {
+        (session as IDisposable)?.Dispose();
+        throw;
+    }
 }
 
 static PluginManifest Manifest(string name, string version) => new()

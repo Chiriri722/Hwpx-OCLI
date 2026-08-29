@@ -267,7 +267,10 @@ public sealed class PluginSessionCapabilities
 /// <summary>Capabilities subobject of <see cref="PluginSessionCapabilities"/>.</summary>
 public sealed class PluginCapabilities
 {
-    /// <summary>Wire-form command verbs the plugin implements (e.g. <c>["get","set","save"]</c>).</summary>
+    /// <summary>
+    /// Session verbs the plugin implements: proxied command names plus the
+    /// lifecycle <c>save</c> capability (e.g. <c>["get","set","save"]</c>).
+    /// </summary>
     [JsonPropertyName("commands")]
     public List<string>? Commands { get; set; }
 
