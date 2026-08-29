@@ -473,6 +473,28 @@ fn active_note_layout_exits_three_before_any_stdout_is_emitted() {
 }
 
 #[test]
+fn active_numbering_failure_exits_three_before_any_stdout_is_emitted() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let numbered = builder.para_pr_with_heading(ParaPr::default(), "NUMBER", "6", 0);
+    builder.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="6" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="20" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    builder.section(para(&char_pr, &numbered, "지원하지 않는 번호 배치"));
+    let (_dir, path) = builder.write_to_temp("active-numbering-layout.hwpx");
+
+    let out = canonical_plugin().arg("dump").arg(path).assert().code(3);
+    assert!(
+        out.get_output().stdout.is_empty(),
+        "numbering validation must finish before JSONL streaming starts"
+    );
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).expect("utf-8 stderr");
+    assert!(stderr.contains("widthAdjust"), "{stderr}");
+}
+
+#[test]
 fn canonical_binary_reads_owpml_and_single_xml_hml() {
     let (_owpml_dir, owpml) = simple_doc(&["OWPML 확장자"]).write_to_temp("sample.owpml");
     let owpml_out = canonical_plugin()

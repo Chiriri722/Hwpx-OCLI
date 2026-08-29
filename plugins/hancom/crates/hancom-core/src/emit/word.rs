@@ -23,8 +23,8 @@ use base64::Engine;
 use super::batch::BatchItem;
 use crate::model::{
     Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter, HeaderFooterPage, Image,
-    Inline, Note, NoteKind, NoteProperties, PageNumberField, ParaStyle, Paragraph, Section, Table,
-    TextField, VertAlign,
+    Inline, Note, NoteKind, NoteProperties, NumberingDefinition, PageNumberField, ParaStyle,
+    Paragraph, Section, Table, TextField, VertAlign,
 };
 
 /// 문단·런 `text` prop의 줄바꿈 문자 (Shift+Enter). `\n`과 혼동하면 안 된다.
@@ -66,6 +66,9 @@ const TYPE_ENDNOTE: &str = "endnote";
 const TYPE_SECTION: &str = "section";
 const TYPE_HEADER: &str = "header";
 const TYPE_FOOTER: &str = "footer";
+const TYPE_ABSTRACT_NUM: &str = "abstractNum";
+const TYPE_NUM: &str = "num";
+const TYPE_NUMBERING_LEVEL: &str = "level";
 
 /// `add` 직후 그 요소를 가리키는 경로.
 ///
@@ -179,6 +182,28 @@ pub fn try_emit_document<E>(
     let mut count = 0usize;
     let mut state = EmitState::default();
 
+    // Numbering is a document-level resource. Every abstract definition must
+    // exist before its num instance, and every num must exist before a body
+    // paragraph can reference it.
+    for definition in &doc.numberings {
+        sink(emit_abstract_numbering(definition))?;
+        count += 1;
+        let parent = format!("/numbering/abstractNum[@id={}]", definition.id);
+        for level in &definition.levels {
+            sink(emit_numbering_level(&parent, level))?;
+            count += 1;
+        }
+    }
+    for definition in &doc.numberings {
+        sink(
+            BatchItem::add("/numbering", TYPE_NUM)
+                .prop("id", definition.id.to_string())
+                .prop("abstractNumId", definition.id.to_string())
+                .prop("continue", "true"),
+        )?;
+        count += 1;
+    }
+
     // Header/footer attachment resolves /section[N] against section-break
     // carriers. Build every body block and carrier before creating any part.
     for (section_index, section) in doc.sections.iter().enumerate() {
@@ -207,6 +232,48 @@ pub fn try_emit_document<E>(
         count += 1;
     }
     Ok(count)
+}
+
+fn emit_abstract_numbering(definition: &NumberingDefinition) -> BatchItem {
+    BatchItem::add("/numbering", TYPE_ABSTRACT_NUM)
+        .prop("id", definition.id.to_string())
+        .prop(
+            "type",
+            if definition.bullet {
+                "hybridMultilevel"
+            } else {
+                "multilevel"
+            },
+        )
+}
+
+fn emit_numbering_level(parent: &str, level: &crate::model::NumberingLevel) -> BatchItem {
+    let mut item = BatchItem::add(parent, TYPE_NUMBERING_LEVEL)
+        .prop("ilvl", level.level.to_string())
+        .prop("format", level.format.as_docx())
+        .prop("lvlText", level.text.clone())
+        .prop("start", level.start.to_string())
+        // OfficeCLI otherwise invents (level + 1) * 720 / 360 twips.
+        // HWP paragraph margins are already represented on ParaStyle, so make
+        // the numbering definition layout-neutral.
+        .prop("indent", "0")
+        .prop("hanging", "0")
+        .prop("justification", level.justification.as_docx())
+        .prop("suff", "space");
+
+    if let Some(font) = &level.marker_style.font {
+        item = item.prop("font", font.clone());
+    }
+    if let Some(size) = level.marker_style.size_pt {
+        item = item.prop("size", format!("{}pt", trim_float(size)));
+    }
+    if let Some(color) = &level.marker_style.color {
+        item = item.prop("color", color.clone());
+    }
+    item = item
+        .flag("bold", level.marker_style.bold)
+        .flag("italic", level.marker_style.italic);
+    item
 }
 
 fn section_properties_item(section: &Section, final_section: bool) -> Option<BatchItem> {
@@ -821,6 +888,14 @@ fn normalize_breaks(s: &str, brk: char) -> String {
 }
 
 fn apply_para_props(mut item: BatchItem, s: &ParaStyle) -> BatchItem {
+    if let Some(numbering) = s.numbering {
+        item = item
+            .prop("numId", numbering.num_id.to_string())
+            .prop("numLevel", numbering.level.to_string());
+        if numbering.outline {
+            item = item.prop("outlineLvl", numbering.level.to_string());
+        }
+    }
     if let Some(a) = s.align {
         item = item.prop("align", a.as_docx());
     }
@@ -1200,6 +1275,7 @@ mod tests {
                     ..Section::default()
                 },
             ],
+            numberings: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1298,6 +1374,7 @@ mod tests {
                 }],
                 ..Section::default()
             }],
+            numberings: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1335,6 +1412,7 @@ mod tests {
                 }],
                 ..Section::default()
             }],
+            numberings: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1560,6 +1638,7 @@ mod tests {
                 }),
                 ..Section::default()
             }],
+            numberings: Vec::new(),
         };
 
         let items = emit_document(&doc);
@@ -2650,6 +2729,7 @@ mod tests {
                     space_before_twip: Some(100),
                     space_after_twip: Some(120),
                     line_spacing_ratio: Some(1.6),
+                    numbering: None,
                 },
                 inlines: vec![text_run("제목", CharStyle::default())],
             })],

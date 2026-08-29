@@ -25,6 +25,7 @@ pub const NS_DECL: &str = concat!(
 pub struct HwpxBuilder {
     char_prs: Vec<String>,
     para_prs: Vec<String>,
+    ref_list_extras: Vec<String>,
     sections: Vec<String>,
     bindata: Vec<(String, Vec<u8>)>,
     manifest_extra: Vec<(String, String, String)>, // (id, href, media-type)
@@ -41,6 +42,7 @@ impl Default for HwpxBuilder {
         Self {
             char_prs: Vec::new(),
             para_prs: Vec::new(),
+            ref_list_extras: Vec::new(),
             sections: Vec::new(),
             bindata: Vec::new(),
             manifest_extra: Vec::new(),
@@ -70,6 +72,27 @@ impl HwpxBuilder {
     pub fn para_pr(&mut self, p: ParaPr) -> String {
         let id = self.para_prs.len().to_string();
         self.para_prs.push(p.to_xml(&id));
+        id
+    }
+
+    /// 목록/글머리표처럼 `hh:refList` 직속에 놓이는 테스트 XML을 추가한다.
+    pub fn ref_list_xml(&mut self, xml: impl Into<String>) -> &mut Self {
+        self.ref_list_extras.push(xml.into());
+        self
+    }
+
+    /// `hh:heading`을 가진 문단 모양을 추가한다.
+    pub fn para_pr_with_heading(
+        &mut self,
+        p: ParaPr,
+        heading_type: &str,
+        id_ref: &str,
+        level: usize,
+    ) -> String {
+        let id = self.para_prs.len().to_string();
+        let heading =
+            format!(r#"<hh:heading type="{heading_type}" idRef="{id_ref}" level="{level}"/>"#);
+        self.para_prs.push(p.to_xml_with_extra(&id, &heading));
         id
     }
 
@@ -240,6 +263,7 @@ impl HwpxBuilder {
                 r#"<hh:refList>"#,
                 r#"<hh:charProperties itemCnt="{cc}">{chars}</hh:charProperties>"#,
                 r#"<hh:paraProperties itemCnt="{pc}">{paras}</hh:paraProperties>"#,
+                r#"{extras}"#,
                 r#"</hh:refList>"#,
                 r#"</hh:head>"#,
             ),
@@ -248,6 +272,7 @@ impl HwpxBuilder {
             chars = self.char_prs.join(""),
             pc = self.para_prs.len(),
             paras = self.para_prs.join(""),
+            extras = self.ref_list_extras.join(""),
         )
     }
 }
@@ -353,6 +378,10 @@ impl ParaPr {
     }
 
     fn to_xml(&self, id: &str) -> String {
+        self.to_xml_with_extra(id, "")
+    }
+
+    fn to_xml_with_extra(&self, id: &str, extra: &str) -> String {
         let mut inner = String::new();
         if let Some(a) = &self.align {
             inner.push_str(&format!(
@@ -384,6 +413,7 @@ impl ParaPr {
                 r#"<hh:lineSpacing type="PERCENT" value="{p}" unit="HWPUNIT"/>"#
             ));
         }
+        inner.push_str(extra);
 
         if inner.is_empty() {
             format!(r#"<hh:paraPr id="{id}"/>"#)

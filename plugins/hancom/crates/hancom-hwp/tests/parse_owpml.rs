@@ -1773,3 +1773,596 @@ fn skips_linesegarray_render_cache() {
     assert_eq!(p.plain_text(), "본문");
     assert_eq!(p.inlines.len(), 1);
 }
+
+#[test]
+fn emits_number_bullet_and_section_outline_definitions_before_body() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let plain = b.para_pr(ParaPr::default());
+    let number0 = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "7", 0);
+    let number1 = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "7", 1);
+    // NUMBER and BULLET deliberately reuse source id=7. Their typed tables are
+    // distinct in OWPML and must not collide in the DOCX numbering id space.
+    let bullet = b.para_pr_with_heading(ParaPr::default(), "BULLET", "7", 0);
+    let outline = b.para_pr_with_heading(ParaPr::default(), "OUTLINE", "0", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="2">"#,
+        r#"<hh:numbering id="7" start="1">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="0">^1.^2.</hh:paraHead>"#,
+        r#"</hh:numbering>"#,
+        r#"<hh:numbering id="9" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+        r#"<hh:bullets itemCnt="1"><hh:bullet id="7" char="-" useImage="0">"#,
+        r#"<hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/>"#,
+        r#"</hh:bullet></hh:bullets>"#,
+    ));
+    b.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{plain}"><hp:run charPrIDRef="{cp}">"#,
+            r#"<hp:secPr outlineShapeIDRef="9"/><hp:t>본문</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{number0}"><hp:run charPrIDRef="{cp}"><hp:t>번호 1</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{number1}"><hp:run charPrIDRef="{cp}"><hp:t>번호 1-가</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{bullet}"><hp:run charPrIDRef="{cp}"><hp:t>글머리</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{outline}"><hp:run charPrIDRef="{cp}"><hp:t>개요</hp:t></hp:run></hp:p>"#,
+        ),
+        plain = plain,
+        cp = cp,
+        number0 = number0,
+        number1 = number1,
+        bullet = bullet,
+        outline = outline,
+    ));
+
+    let items = emit_document(&parse(&b));
+    let abstract_nums: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("abstractNum"))
+        .collect();
+    let nums: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("num"))
+        .collect();
+    assert_eq!(abstract_nums.len(), 3);
+    assert_eq!(nums.len(), 3);
+    let first_body = items
+        .iter()
+        .position(|item| item.r#type == Some("paragraph"))
+        .expect("body paragraph");
+    assert!(
+        items.iter().take(first_body).all(|item| matches!(
+            item.r#type,
+            Some("abstractNum") | Some("level") | Some("num")
+        )),
+        "all numbering resources must precede body items: {items:#?}"
+    );
+    let level = |id: usize, ilvl: usize| {
+        let parent = format!("/numbering/abstractNum[@id={id}]");
+        let ilvl = ilvl.to_string();
+        items
+            .iter()
+            .find(|item| {
+                item.r#type == Some("level")
+                    && item.parent.as_deref() == Some(parent.as_str())
+                    && item.props.get("ilvl").and_then(|value| value.as_str())
+                        == Some(ilvl.as_str())
+            })
+            .expect("numbering level")
+    };
+
+    assert_eq!(abstract_nums[0].props["id"], "1");
+    assert_eq!(abstract_nums[0].props["type"], "multilevel");
+    assert_eq!(level(1, 0).props["format"], "decimal");
+    assert_eq!(level(1, 0).props["lvlText"], "%1.");
+    assert_eq!(level(1, 1).props["format"], "ganada");
+    assert_eq!(level(1, 1).props["lvlText"], "%1.%2.");
+    assert_eq!(level(1, 0).props["indent"], "0");
+    assert_eq!(level(1, 0).props["hanging"], "0");
+    assert_eq!(level(1, 0).props["suff"], "space");
+
+    assert_eq!(abstract_nums[1].props["id"], "2");
+    assert_eq!(abstract_nums[2].props["id"], "3");
+    assert_eq!(abstract_nums[2].props["type"], "hybridMultilevel");
+    assert_eq!(level(3, 0).props["format"], "bullet");
+    assert_eq!(level(3, 0).props["lvlText"], "-");
+    for (index, num) in nums.iter().enumerate() {
+        let id = (index + 1).to_string();
+        assert_eq!(num.props["id"], id);
+        assert_eq!(num.props["abstractNumId"], id);
+        assert_eq!(num.props["continue"], "true");
+    }
+
+    let paragraph = |text: &str| {
+        items
+            .iter()
+            .find(|item| item.props.get("text").and_then(|v| v.as_str()) == Some(text))
+            .unwrap_or_else(|| panic!("missing paragraph {text:?}"))
+    };
+    assert_eq!(paragraph("번호 1").props["numId"], "1");
+    assert_eq!(paragraph("번호 1").props["numLevel"], "0");
+    assert_eq!(paragraph("번호 1-가").props["numId"], "1");
+    assert_eq!(paragraph("번호 1-가").props["numLevel"], "1");
+    assert_eq!(paragraph("글머리").props["numId"], "3");
+    assert_eq!(paragraph("개요").props["numId"], "2");
+    assert_eq!(paragraph("개요").props["outlineLvl"], "0");
+}
+
+#[test]
+fn expands_official_numbering_path_tokens_without_repeating_level_one() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "5", 2);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="5" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^n</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^N</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="3" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">(^1-^3)</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    b.section(para(&cp, &numbered, "셋째 단계"));
+
+    let items = emit_document(&parse(&b));
+    let levels: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("level"))
+        .collect();
+    assert_eq!(levels[0].props["lvlText"], "%1");
+    assert_eq!(levels[1].props["lvlText"], "%1.%2.");
+    assert_eq!(levels[2].props["lvlText"], "(%1-%3)");
+}
+
+#[test]
+fn emits_every_verified_hwp_number_format() {
+    let cases = [
+        ("DIGIT", "decimal"),
+        ("CIRCLED_DIGIT", "decimalEnclosedCircle"),
+        ("ROMAN_CAPITAL", "upperRoman"),
+        ("ROMAN_SMALL", "lowerRoman"),
+        ("LATIN_CAPITAL", "upperLetter"),
+        ("LATIN_SMALL", "lowerLetter"),
+        ("HANGUL_SYLLABLE", "ganada"),
+        ("HANGUL_JAMO", "chosung"),
+    ];
+
+    for (source_format, target_format) in cases {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "1", 0);
+        b.ref_list_xml(format!(
+            concat!(
+                r#"<hh:numberings itemCnt="1"><hh:numbering id="1" start="0">"#,
+                r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="{source_format}" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+                r#"</hh:numbering></hh:numberings>"#,
+            ),
+            source_format = source_format,
+        ));
+        b.section(para(&cp, &numbered, source_format));
+
+        let level = emit_document(&parse(&b))
+            .into_iter()
+            .find(|item| item.r#type == Some("level"))
+            .expect("numbering level");
+        assert_eq!(level.props["format"], target_format, "{source_format}");
+    }
+}
+
+#[test]
+fn rejects_unsafe_numbering_marker_templates() {
+    let cases = [
+        (
+            "^2.",
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "unavailable level",
+        ),
+        (
+            "%1.",
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "literal %",
+        ),
+        (
+            "^x",
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "unsupported ^x",
+        ),
+        (
+            "^",
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "incomplete ^ token",
+        ),
+    ];
+
+    for (template, expected_code, expected_message) in cases {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "1", 0);
+        b.ref_list_xml(format!(
+            concat!(
+                r#"<hh:numberings itemCnt="1"><hh:numbering id="1" start="0">"#,
+                r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">{template}</hh:paraHead>"#,
+                r#"</hh:numbering></hh:numberings>"#,
+            ),
+            template = template,
+        ));
+        b.section(para(&cp, &numbered, "안전하지 않은 번호 표식"));
+
+        let error = read_document_from(Cursor::new(b.build()))
+            .expect_err("unsafe numbering marker must fail closed");
+        assert_eq!(error.code, expected_code, "template={template:?}");
+        assert!(
+            error.message.contains(expected_message),
+            "template={template:?}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn shares_one_numbering_instance_across_number_outline_and_plain_gaps() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let plain = b.para_pr(ParaPr::default());
+    let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "5", 0);
+    let outline = b.para_pr_with_heading(ParaPr::default(), "OUTLINE", "0", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="5" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    b.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{plain}"><hp:run charPrIDRef="{cp}"><hp:secPr outlineShapeIDRef="5"/><hp:t>일반 앞</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{numbered}"><hp:run charPrIDRef="{cp}"><hp:t>직접 번호</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{plain}"><hp:run charPrIDRef="{cp}"><hp:t>일반 사이</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{outline}"><hp:run charPrIDRef="{cp}"><hp:t>개요 번호</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{numbered}"><hp:run charPrIDRef="{cp}"><hp:t>직접 번호 계속</hp:t></hp:run></hp:p>"#,
+        ),
+        plain = plain,
+        numbered = numbered,
+        outline = outline,
+        cp = cp,
+    ));
+
+    let items = emit_document(&parse(&b));
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.r#type == Some("abstractNum"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.r#type == Some("num"))
+            .count(),
+        1
+    );
+    for text in ["직접 번호", "개요 번호", "직접 번호 계속"] {
+        let paragraph = items
+            .iter()
+            .find(|item| item.props.get("text").and_then(|v| v.as_str()) == Some(text))
+            .expect("numbered paragraph");
+        assert_eq!(paragraph.props["numId"], "1", "{text}");
+    }
+    let plain_between = items
+        .iter()
+        .find(|item| item.props.get("text").and_then(|v| v.as_str()) == Some("일반 사이"))
+        .expect("plain paragraph");
+    assert!(!plain_between.props.contains_key("numId"));
+}
+
+#[test]
+fn duplicate_number_definition_does_not_poison_same_id_bullet_namespace() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let bullet = b.para_pr_with_heading(ParaPr::default(), "BULLET", "7", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="2">"#,
+        r#"<hh:numbering id="7" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead></hh:numbering>"#,
+        r#"<hh:numbering id="7" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1)</hh:paraHead></hh:numbering>"#,
+        r#"</hh:numberings>"#,
+        r#"<hh:bullets itemCnt="1"><hh:bullet id="7" char="-" useImage="0"><hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/></hh:bullet></hh:bullets>"#,
+    ));
+    b.section(para(&cp, &bullet, "분리된 글머리표 ID 공간"));
+
+    let items = emit_document(&parse(&b));
+    let definition = items
+        .iter()
+        .find(|item| item.r#type == Some("abstractNum"))
+        .expect("active bullet definition");
+    assert_eq!(definition.props["id"], "2");
+    let paragraph = items
+        .iter()
+        .find(|item| item.r#type == Some("paragraph"))
+        .expect("bullet paragraph");
+    assert_eq!(paragraph.props["numId"], "2");
+}
+
+#[test]
+fn rejects_an_ambiguous_active_number_definition() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "7", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="2">"#,
+        r#"<hh:numbering id="7" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead></hh:numbering>"#,
+        r#"<hh:numbering id="7" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1)</hh:paraHead></hh:numbering>"#,
+        r#"</hh:numberings>"#,
+    ));
+    b.section(para(&cp, &numbered, "모호한 번호 정의"));
+
+    let error = read_document_from(Cursor::new(b.build()))
+        .expect_err("an active duplicate id must be rejected");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("ambiguous duplicate numbering id 7"));
+}
+
+#[test]
+fn rejects_numbering_start_outside_the_docx_integer_range() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "1", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="1" start="0">"#,
+        r#"<hh:paraHead start="4294967295" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    b.section(para(&cp, &numbered, "너무 큰 시작 번호"));
+
+    let error = read_document_from(Cursor::new(b.build()))
+        .expect_err("start values outside the target integer range must fail");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error.message.contains("DOCX integer range"), "{error:?}");
+}
+
+#[test]
+fn rejects_active_dangling_or_unrepresentable_numbering() {
+    let cases = [
+        (
+            "dangling numbering",
+            "NUMBER",
+            "404",
+            "",
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+        ),
+        (
+            "image bullet",
+            "BULLET",
+            "4",
+            concat!(
+                r#"<hh:bullets itemCnt="1"><hh:bullet id="4" char="" useImage="1">"#,
+                r#"<hh:img binaryItemIDRef="image1"/>"#,
+                r#"<hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/>"#,
+                r#"</hh:bullet></hh:bullets>"#,
+            ),
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+        ),
+        (
+            "checkable bullet",
+            "BULLET",
+            "5",
+            concat!(
+                r#"<hh:bullets itemCnt="1"><hh:bullet id="5" char="□" checkedChar="☑" useImage="0">"#,
+                r#"<hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="1"/>"#,
+                r#"</hh:bullet></hh:bullets>"#,
+            ),
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+        ),
+    ];
+
+    for (label, kind, id_ref, definitions, code) in cases {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let pp = b.para_pr_with_heading(ParaPr::default(), kind, id_ref, 0);
+        b.ref_list_xml(definitions);
+        b.section(para(&cp, &pp, label));
+        let error = read_document_from(Cursor::new(b.build()))
+            .expect_err("active lossy numbering must fail closed");
+        assert_eq!(error.code, code, "case {label}: {error:?}");
+        assert!(
+            error.message.contains("number") || error.message.contains("bullet"),
+            "case {label}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn resolves_outline_numbering_per_section_and_ignores_dormant_lossy_templates() {
+    let mut b = HwpxBuilder::new();
+    let cp = b.char_pr(CharPr::plain());
+    let plain = b.para_pr(ParaPr::default());
+    let outline = b.para_pr_with_heading(ParaPr::default(), "OUTLINE", "0", 0);
+    b.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="2">"#,
+        r#"<hh:numbering id="1" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        // The unused second level is intentionally unrepresentable. It must
+        // remain dormant because no paragraph activates level 1.
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="99" textOffsetType="PERCENT" textOffset="50" numFormat="CIRCLED_HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="1">^2.</hh:paraHead>"#,
+        r#"</hh:numbering>"#,
+        r#"<hh:numbering id="2" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="0" autoIndent="0" widthAdjust="0" textOffsetType="PERCENT" textOffset="0" numFormat="ROMAN_SMALL" charPrIDRef="4294967295" checkable="0">^1)</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+        // A wholly dormant image bullet must not block unrelated outlines.
+        r#"<hh:bullets itemCnt="1"><hh:bullet id="8" char="" useImage="1"><hh:img binaryItemIDRef="image1"/><hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/></hh:bullet></hh:bullets>"#,
+    ));
+    b.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{plain}"><hp:run charPrIDRef="{cp}"><hp:secPr outlineShapeIDRef="1"/><hp:t>구역 1</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{outline}"><hp:run charPrIDRef="{cp}"><hp:t>첫 개요</hp:t></hp:run></hp:p>"#,
+        ),
+        plain = plain,
+        cp = cp,
+        outline = outline,
+    ));
+    b.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{plain}"><hp:run charPrIDRef="{cp}"><hp:secPr outlineShapeIDRef="2"/><hp:t>구역 2</hp:t></hp:run></hp:p>"#,
+            r#"<hp:p paraPrIDRef="{outline}"><hp:run charPrIDRef="{cp}"><hp:t>둘째 개요</hp:t></hp:run></hp:p>"#,
+        ),
+        plain = plain,
+        cp = cp,
+        outline = outline,
+    ));
+
+    let doc = parse(&b);
+    assert_eq!(doc.numberings.len(), 2, "dormant image bullet stays absent");
+    assert_eq!(doc.numberings[0].levels.len(), 1);
+    let items = emit_document(&doc);
+    let paragraph = |text: &str| {
+        items
+            .iter()
+            .find(|item| item.props.get("text").and_then(|v| v.as_str()) == Some(text))
+            .expect("authored outline paragraph")
+    };
+    assert_eq!(paragraph("첫 개요").props["numId"], "1");
+    assert_eq!(paragraph("둘째 개요").props["numId"], "2");
+    let second = items
+        .iter()
+        .find(|item| {
+            item.r#type == Some("level")
+                && item.parent.as_deref() == Some("/numbering/abstractNum[@id=2]")
+                && item.props["ilvl"] == "0"
+        })
+        .expect("second outline level");
+    assert_eq!(second.props["format"], "lowerRoman");
+}
+
+#[test]
+fn preserves_pua_bullet_and_verified_marker_character_style() {
+    let mut b = HwpxBuilder::new();
+    let body_cp = b.char_pr(CharPr::plain());
+    let marker_cp = b.char_pr(CharPr {
+        height: Some(1400),
+        text_color: Some("#123456".into()),
+        bold: true,
+        italic: true,
+        font_hangul: Some("Wingdings".into()),
+        ..CharPr::default()
+    });
+    let bullet = b.para_pr_with_heading(ParaPr::default(), "BULLET", "4", 0);
+    b.ref_list_xml(format!(
+        concat!(
+            r#"<hh:bullets itemCnt="1"><hh:bullet id="4" char="&#xF06C;" useImage="0">"#,
+            r#"<hh:paraHead level="0" align="CENTER" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="{marker_cp}" checkable="0"/>"#,
+            r#"</hh:bullet></hh:bullets>"#,
+        ),
+        marker_cp = marker_cp,
+    ));
+    b.section(para(&body_cp, &bullet, "PUA 글머리"));
+
+    let doc = parse(&b);
+    assert_eq!(doc.count_private_use_chars(), 1);
+    let definition = emit_document(&doc)
+        .into_iter()
+        .find(|item| item.r#type == Some("level"))
+        .expect("bullet level");
+    assert_eq!(definition.props["lvlText"], "\u{F06C}");
+    assert_eq!(definition.props["justification"], "center");
+    assert_eq!(definition.props["font"], "Wingdings");
+    assert_eq!(definition.props["size"], "14pt");
+    assert_eq!(definition.props["color"], "#123456");
+    assert_eq!(definition.props["bold"], "true");
+    assert_eq!(definition.props["italic"], "true");
+}
+
+#[test]
+fn accepts_hancom_oracle_auto_indent_bullet_offsets() {
+    for offset in ["10", "15", "50"] {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let bullet = b.para_pr_with_heading(ParaPr::default(), "BULLET", "6", 0);
+        b.ref_list_xml(format!(
+            concat!(
+                r#"<hh:bullets itemCnt="1"><hh:bullet id="6" char="-" useImage="0">"#,
+                r#"<hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="{offset}" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/>"#,
+                r#"</hh:bullet></hh:bullets>"#,
+            ),
+            offset = offset,
+        ));
+        b.section(para(&cp, &bullet, "한컴 글머리표 배치"));
+
+        let items = emit_document(&parse(&b));
+        let level = items
+            .iter()
+            .find(|item| item.r#type == Some("level"))
+            .expect("bullet numbering level");
+        assert_eq!(level.props["format"], "bullet", "offset={offset}");
+        assert_eq!(level.props["indent"], "0", "offset={offset}");
+        assert_eq!(level.props["hanging"], "0", "offset={offset}");
+        assert_eq!(level.props["suff"], "space", "offset={offset}");
+    }
+}
+
+#[test]
+fn rejects_non_integer_numbering_geometry_without_rounding() {
+    let cases = [
+        ("0.4", "50", "widthAdjust"),
+        ("NaN", "50", "widthAdjust"),
+        ("0", "15.5", "textOffset"),
+        ("0", "NaN", "textOffset"),
+    ];
+    for (width, offset, message) in cases {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "6", 0);
+        b.ref_list_xml(format!(
+            concat!(
+                r#"<hh:numberings itemCnt="1"><hh:numbering id="6" start="0">"#,
+                r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="{width}" textOffsetType="PERCENT" textOffset="{offset}" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+                r#"</hh:numbering></hh:numberings>"#,
+            ),
+            width = width,
+            offset = offset,
+        ));
+        b.section(para(&cp, &numbered, "비정수 번호 배치"));
+
+        let error = read_document_from(Cursor::new(b.build()))
+            .expect_err("non-integer numbering geometry must not be rounded");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "width={width} offset={offset}: {error:?}"
+        );
+        assert!(error.message.contains(message), "{error:?}");
+    }
+}
+
+#[test]
+fn rejects_active_unverified_numbering_layouts_before_emission() {
+    let cases = [
+        ("20", "1", "PERCENT", "50", "widthAdjust"),
+        ("0", "1", "PERCENT", "15", "unverified list layout"),
+        ("0", "1", "PERCENT", "25", "unverified list layout"),
+        ("0", "1", "HWPUNIT", "50", "unverified list layout"),
+        ("0", "0", "PERCENT", "50", "unverified list layout"),
+    ];
+    for (width, auto, offset_type, offset, message) in cases {
+        let mut b = HwpxBuilder::new();
+        let cp = b.char_pr(CharPr::plain());
+        let numbered = b.para_pr_with_heading(ParaPr::default(), "NUMBER", "6", 0);
+        b.ref_list_xml(format!(
+            concat!(
+                r#"<hh:numberings itemCnt="1"><hh:numbering id="6" start="0">"#,
+                r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="{auto}" widthAdjust="{width}" textOffsetType="{offset_type}" textOffset="{offset}" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+                r#"</hh:numbering></hh:numberings>"#,
+            ),
+            auto = auto,
+            width = width,
+            offset_type = offset_type,
+            offset = offset,
+        ));
+        b.section(para(&cp, &numbered, "검증되지 않은 번호 배치"));
+
+        let error = read_document_from(Cursor::new(b.build()))
+            .expect_err("active unverified layout cannot be emitted");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature
+        );
+        assert!(error.message.contains(message), "{error:?}");
+    }
+}

@@ -8,9 +8,13 @@ use std::collections::HashMap;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use super::model::{hwpunit_to_point, hwpunit_to_twip, Align, CharStyle, ParaStyle, VertAlign};
+use super::model::{
+    hwpunit_to_point, hwpunit_to_twip, Align, CharStyle, NumberingDefinition, ParaStyle,
+    ParagraphNumbering, Section, VertAlign,
+};
+use super::numbering::{NumberingCatalog, RawHeading, SourceKind};
 use super::xml::{attr, local_name};
-use crate::error::Result;
+use crate::error::{PluginError, Result};
 
 #[derive(Debug, Default)]
 pub struct StyleTable {
@@ -23,6 +27,8 @@ pub struct StyleTable {
     /// `<hh:fontfaces><hh:fontface lang="HANGUL"><hh:font id="0" face="한컴바탕"/>`
     /// 에 있다. 이 표 없이 `@hangul` 을 그대로 쓰면 `font: "0"` 같은 값이 나간다.
     pub fonts: HashMap<String, String>,
+    para_headings: HashMap<String, Vec<RawHeading>>,
+    numbering_catalog: NumberingCatalog,
 }
 
 impl StyleTable {
@@ -38,6 +44,21 @@ impl StyleTable {
             .unwrap_or_default()
     }
 
+    pub(crate) fn scoped<'a>(&'a self, outline_id: Option<&'a str>) -> SectionStyles<'a> {
+        SectionStyles {
+            table: self,
+            outline_id,
+        }
+    }
+
+    pub(crate) fn materialize_numberings(
+        &self,
+        sections: &[Section],
+    ) -> Result<Vec<NumberingDefinition>> {
+        self.numbering_catalog
+            .materialize(sections, &self.char_styles)
+    }
+
     /// header.xml을 파싱한다.
     ///
     /// header.xml이 없거나 깨져도 실패로 보지 않는다. 서식 없이 텍스트만
@@ -49,6 +70,7 @@ impl StyleTable {
 
         let mut table = StyleTable {
             fonts: font_names.clone(),
+            numbering_catalog: NumberingCatalog::parse(xml),
             ..Default::default()
         };
         let mut reader = Reader::from_str(xml);
@@ -61,6 +83,7 @@ impl StyleTable {
         // 현재 열려 있는 charPr / paraPr
         let mut cur_char: Option<(String, CharStyle)> = None;
         let mut cur_para: Option<(String, ParaStyle)> = None;
+        let mut cur_headings: Vec<RawHeading> = Vec::new();
         let mut buf = Vec::new();
 
         loop {
@@ -89,6 +112,7 @@ impl StyleTable {
                         "paraPr" => {
                             let id = attr(&e, "id").unwrap_or_default();
                             cur_para = Some((id, ParaStyle::default()));
+                            cur_headings.clear();
                         }
                         // ── charPr 자식들 ──
                         "bold" if cur_char.is_some() => {
@@ -197,6 +221,9 @@ impl StyleTable {
                                 }
                             }
                         }
+                        "heading" if cur_para.is_some() => {
+                            cur_headings.push(RawHeading::from_start(&e));
+                        }
                         _ => {}
                     }
                 }
@@ -210,6 +237,11 @@ impl StyleTable {
                         }
                         "paraPr" => {
                             if let Some((id, style)) = cur_para.take() {
+                                if !cur_headings.is_empty() {
+                                    table
+                                        .para_headings
+                                        .insert(id.clone(), std::mem::take(&mut cur_headings));
+                                }
                                 table.para_styles.insert(id, style);
                             }
                         }
@@ -226,11 +258,118 @@ impl StyleTable {
             table.char_styles.insert(id, style);
         }
         if let Some((id, style)) = cur_para.take() {
+            if !cur_headings.is_empty() {
+                table
+                    .para_headings
+                    .insert(id.clone(), std::mem::take(&mut cur_headings));
+            }
             table.para_styles.insert(id, style);
         }
 
         Ok(table)
     }
+}
+
+pub(crate) struct SectionStyles<'a> {
+    table: &'a StyleTable,
+    outline_id: Option<&'a str>,
+}
+
+impl SectionStyles<'_> {
+    pub fn char_style(&self, id: Option<&str>) -> CharStyle {
+        self.table.char_style(id)
+    }
+
+    pub fn para_style(&self, id: Option<&str>) -> Result<ParaStyle> {
+        let mut style = self.table.para_style(id);
+        let Some(id) = id else {
+            return Ok(style);
+        };
+        let Some(headings) = self.table.para_headings.get(id) else {
+            return Ok(style);
+        };
+        if headings.len() != 1 {
+            return Err(PluginError::corrupt(format!(
+                "active paraPr {id} contains {} heading elements",
+                headings.len()
+            )));
+        }
+        let heading = &headings[0];
+        let kind = heading
+            .kind
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| PluginError::corrupt(format!("active paraPr {id} heading has no type")))?
+            .to_ascii_uppercase();
+        if kind == "NONE" {
+            return Ok(style);
+        }
+        let level = heading
+            .level
+            .as_deref()
+            .and_then(|value| value.trim().parse::<u8>().ok())
+            .ok_or_else(|| {
+                PluginError::corrupt(format!("active paraPr {id} heading has no valid level"))
+            })?;
+        if level > 8 {
+            return Err(PluginError::unsupported_feature(format!(
+                "active paraPr {id} numbering level {level} exceeds the DOCX limit"
+            )));
+        }
+
+        let (source_kind, source_id, outline) = match kind.as_str() {
+            "NUMBER" => (
+                SourceKind::Number,
+                required_heading_id(heading, id, "numbering")?,
+                false,
+            ),
+            "BULLET" => (
+                SourceKind::Bullet,
+                required_heading_id(heading, id, "bullet")?,
+                false,
+            ),
+            "OUTLINE" => (
+                SourceKind::Number,
+                self.outline_id.ok_or_else(|| {
+                    PluginError::corrupt(format!(
+                        "active outline paraPr {id} has no section outlineShapeIDRef numbering"
+                    ))
+                })?,
+                true,
+            ),
+            other => {
+                return Err(PluginError::unsupported_feature(format!(
+                    "active paraPr {id} uses unsupported heading type {other}"
+                )));
+            }
+        };
+        let target_id = self
+            .table
+            .numbering_catalog
+            .resolve_target(source_kind, source_id)?;
+        style.numbering = Some(ParagraphNumbering {
+            num_id: target_id,
+            level,
+            outline,
+        });
+        Ok(style)
+    }
+}
+
+fn required_heading_id<'a>(
+    heading: &'a RawHeading,
+    para_style_id: &str,
+    label: &str,
+) -> Result<&'a str> {
+    heading
+        .id_ref
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            PluginError::corrupt(format!(
+                "active paraPr {para_style_id} {label} heading has no idRef"
+            ))
+        })
 }
 
 /// `hh:fontfaces` 에서 `hh:font/@id` → `@face` 표를 만든다.

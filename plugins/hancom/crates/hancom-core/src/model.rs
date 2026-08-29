@@ -118,6 +118,8 @@ pub struct ParaStyle {
     pub space_after_twip: Option<i64>,
     /// 줄간격 배수 (예: 1.6).
     pub line_spacing_ratio: Option<f64>,
+    /// 문단에 적용할 DOCX 번호 매기기 인스턴스와 단계.
+    pub numbering: Option<ParagraphNumbering>,
 }
 
 impl ParaStyle {
@@ -139,6 +141,85 @@ impl ParaStyle {
             self.indent_hanging_twip = None;
         }
     }
+}
+
+/// 문단이 참조하는 번호 매기기 인스턴스.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParagraphNumbering {
+    /// `/numbering/num[@id=N]`의 `numId`.
+    pub num_id: u32,
+    /// DOCX `ilvl` (0..=8).
+    pub level: u8,
+    /// HWPX 구역 개요 번호에서 유래했는지. 이 경우 `outlineLvl`도 함께 내보낸다.
+    pub outline: bool,
+}
+
+/// DOCX 번호 단계의 표식 형식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumberingFormat {
+    Decimal,
+    DecimalEnclosedCircle,
+    UpperRoman,
+    LowerRoman,
+    UpperLetter,
+    LowerLetter,
+    Ganada,
+    Chosung,
+    Bullet,
+}
+
+impl NumberingFormat {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Decimal => "decimal",
+            Self::DecimalEnclosedCircle => "decimalEnclosedCircle",
+            Self::UpperRoman => "upperRoman",
+            Self::LowerRoman => "lowerRoman",
+            Self::UpperLetter => "upperLetter",
+            Self::LowerLetter => "lowerLetter",
+            Self::Ganada => "ganada",
+            Self::Chosung => "chosung",
+            Self::Bullet => "bullet",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumberingJustification {
+    Left,
+    Center,
+    Right,
+}
+
+impl NumberingJustification {
+    pub fn as_docx(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// 하나의 `w:lvl`에 필요한 손실 없는 번호 표식 정보.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberingLevel {
+    pub level: u8,
+    pub start: u32,
+    pub format: NumberingFormat,
+    pub text: String,
+    pub justification: NumberingJustification,
+    pub marker_style: CharStyle,
+}
+
+/// HWPX `hh:numbering` 또는 `hh:bullet` 하나를 내린 DOCX 추상 번호 정의.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberingDefinition {
+    /// `abstractNumId`와 이를 참조하는 `numId`에 같은 안정 ID를 사용한다.
+    pub id: u32,
+    pub bullet: bool,
+    /// 실제 문단에서 필요한 단계까지만 물질화한다.
+    pub levels: Vec<NumberingLevel>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -759,12 +840,14 @@ pub struct Section {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
     pub sections: Vec<Section>,
+    pub numberings: Vec<NumberingDefinition>,
 }
 
 impl Default for Document {
     fn default() -> Self {
         Self {
             sections: vec![Section::default()],
+            numberings: Vec::new(),
         }
     }
 }
@@ -777,6 +860,7 @@ impl Document {
                 blocks,
                 ..Section::default()
             }],
+            numberings: Vec::new(),
         }
     }
 
@@ -833,7 +917,8 @@ impl Document {
             }
             n
         }
-        self.sections
+        let body_count: usize = self
+            .sections
             .iter()
             .map(|section| {
                 walk(&section.blocks)
@@ -844,7 +929,20 @@ impl Document {
                         .map(|story| walk(&story.blocks))
                         .sum::<usize>()
             })
-            .sum()
+            .sum();
+        body_count
+            + self
+                .numberings
+                .iter()
+                .flat_map(|definition| &definition.levels)
+                .map(|level| {
+                    level
+                        .text
+                        .chars()
+                        .filter(|character| is_private_use(*character))
+                        .count()
+                })
+                .sum::<usize>()
     }
 }
 

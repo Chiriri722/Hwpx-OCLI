@@ -20,7 +20,7 @@ use super::model::{
     NotePosition, NoteProperties, NoteSpacing, PageNumberField, PageNumberKind, Paragraph, Section,
     Table, TextField, TextRun,
 };
-use super::styles::{normalize_color, StyleTable};
+use super::styles::{normalize_color, SectionStyles, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
 use crate::error::{PluginError, Result};
 
@@ -32,11 +32,35 @@ const MAX_TABLE_CELLS: usize = 100_000;
 const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
 
 pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Section> {
+    let outline_id = find_section_outline_id(xml)?;
+    let styles = styles.scoped(outline_id.as_deref());
     let mut section = Section::default();
-    parse_section_metadata(xml, styles, &mut section)?;
-    section.blocks = parse_section_body(xml, styles)?;
+    parse_section_metadata(xml, &styles, &mut section)?;
+    section.blocks = parse_section_body(xml, &styles)?;
     validate_active_note_layouts(&section)?;
     Ok(section)
+}
+
+/// `secPr` is nested in the first paragraph, while header/footer stories can
+/// appear elsewhere in that paragraph. Read the section outline reference in a
+/// small pre-pass so every story and nested table resolves OUTLINE headings
+/// against the same section-scoped numbering definition.
+fn find_section_outline_id(xml: &str) -> Result<Option<String>> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().expand_empty_elements = true;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => return Ok(None),
+            Event::Start(start) if local_name(start.name().as_ref()) == "secPr" => {
+                return Ok(
+                    attr(&start, "outlineShapeIDRef").filter(|value| !value.trim().is_empty())
+                );
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 fn validate_active_note_layouts(section: &Section) -> Result<()> {
@@ -77,7 +101,11 @@ fn validate_active_note_layouts(section: &Section) -> Result<()> {
 /// 이들은 본문 첫 문단의 `run/ctrl` 안에 들어가므로 본문 파서와 같은 스트림에서
 /// 수집하면 중첩 문단 종료를 바깥 문단 종료로 오인하기 쉽다. 입력은 이미 패키지
 /// 한계 안의 문자열이므로 두 번 순회해 경계를 단순하고 검증 가능하게 유지한다.
-fn parse_section_metadata(xml: &str, styles: &StyleTable, section: &mut Section) -> Result<()> {
+fn parse_section_metadata(
+    xml: &str,
+    styles: &SectionStyles<'_>,
+    section: &mut Section,
+) -> Result<()> {
     let mut reader = Reader::from_str(xml);
     let config = reader.config_mut();
     config.trim_text(false);
@@ -218,7 +246,7 @@ fn validate_first_page_story(section: &Section) -> Result<()> {
 }
 
 /// `hs:sec`의 직접 자식 문단만 본문으로 읽는다.
-fn parse_section_body(xml: &str, styles: &StyleTable) -> Result<Vec<Block>> {
+fn parse_section_body(xml: &str, styles: &SectionStyles<'_>) -> Result<Vec<Block>> {
     let mut reader = Reader::from_str(xml);
     let config = reader.config_mut();
     config.trim_text(false);
@@ -717,7 +745,7 @@ fn parse_bool_attr(event: &quick_xml::events::BytesStart<'_>, name: &str) -> Res
 fn parse_header_footer(
     reader: &mut Reader<&[u8]>,
     start: &quick_xml::events::BytesStart<'static>,
-    styles: &StyleTable,
+    styles: &SectionStyles<'_>,
 ) -> Result<HeaderFooter> {
     let tag = local_name(start.name().as_ref());
     let raw_page = attr(start, "applyPageType").unwrap_or_else(|| "BOTH".to_owned());
@@ -829,11 +857,11 @@ fn parse_header_footer(
 fn parse_paragraph(
     reader: &mut Reader<&[u8]>,
     start: &quick_xml::events::BytesStart<'static>,
-    styles: &StyleTable,
+    styles: &SectionStyles<'_>,
     depth: usize,
     note_context: Option<NoteKind>,
 ) -> Result<Vec<Block>> {
-    let para_style = styles.para_style(attr(start, "paraPrIDRef").as_deref());
+    let para_style = styles.para_style(attr(start, "paraPrIDRef").as_deref())?;
 
     let mut out: Vec<Block> = Vec::new();
     let mut current = Paragraph {
@@ -1311,7 +1339,7 @@ fn read_equation_script(reader: &mut Reader<&[u8]>) -> Result<String> {
 fn parse_note(
     reader: &mut Reader<&[u8]>,
     start: &quick_xml::events::BytesStart<'static>,
-    styles: &StyleTable,
+    styles: &SectionStyles<'_>,
     depth: usize,
 ) -> Result<Note> {
     let tag = local_name(start.name().as_ref());
@@ -1512,7 +1540,7 @@ fn push_text(p: &mut Paragraph, text: String, style: super::model::CharStyle) {
 fn parse_table(
     reader: &mut Reader<&[u8]>,
     start: &quick_xml::events::BytesStart<'static>,
-    styles: &StyleTable,
+    styles: &SectionStyles<'_>,
     depth: usize,
     note_context: Option<NoteKind>,
 ) -> Result<Table> {
@@ -1647,7 +1675,7 @@ struct ParsedCell {
 fn parse_cell(
     reader: &mut Reader<&[u8]>,
     _start: &quick_xml::events::BytesStart<'static>,
-    styles: &StyleTable,
+    styles: &SectionStyles<'_>,
     depth: usize,
     note_context: Option<NoteKind>,
 ) -> Result<ParsedCell> {

@@ -2,6 +2,7 @@
 
 mod equation;
 pub mod model;
+mod numbering;
 pub mod package;
 pub mod section;
 pub mod styles;
@@ -74,7 +75,11 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
         sections.push(section::parse_section(&xml, &styles)?);
     }
 
-    let mut doc = Document { sections };
+    let numberings = styles.materialize_numberings(&sections)?;
+    let mut doc = Document {
+        sections,
+        numberings,
+    };
     resolve_images(&mut pkg, &mut doc)?;
     Ok(doc)
 }
