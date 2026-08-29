@@ -198,6 +198,7 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 머리말/꼬리말 (`hp:header` / `hp:footer`) | 구역별 `header` / `footer` default·even·first story |
 | 페이지 번호 (`hp:autoNum` PAGE/TOTAL_PAGE) | 동적 `PAGE` / `NUMPAGES` field |
 | 목록 번호 (`hh:numbering` / `hh:bullet` / 구역 개요) | 동적 `abstractNum` + `num` + 문단 `numId`/`numLevel` |
+| 이름 스타일 (`hh:styles` + `styleIDRef`) | 활성 `style` 정의 + 문단 `style`, 직접 서식 override 유지 |
 | 수식 (`hp:equation`) | `equation` (`formula`=LaTeX, `mode`=inline/display) |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
@@ -224,6 +225,13 @@ timeline은 DOCX 한 구역으로 넓히지 않고 exit 3으로 거부한다.
 허용한다. 활성 이미지/체크형 글머리표, 미지원 형식, 검증되지 않은 배치 값은 stdout 전에
 exit 3으로 거부한다. PUA 표식은 G6 정책대로 치환을 추측하지 않고 그대로 보존·진단한다.
 
+이름 스타일은 본문·표·주석·머리말/꼬리말이 실제 참조하는 PARA 스타일과 다음 스타일
+의존성만 만든다. 숫자 ID와 기본 이름, 문단/런 속성, `nextStyleIDRef`, NUMBER/BULLET 및
+구역 OUTLINE을 보존하면서 문단의 직접 `paraPrIDRef`·런 서식은 별도 override로 남긴다.
+한컴 네이티브 결과에 따라 `lockForm`을 Word `locked`로 추측하지 않으며, 한 스타일이
+구역마다 다른 개요 정의를 요구하는 경우에는 부분 출력 없이 exit 3으로 거부한다.
+세부 경계는 [`../../docs/adr/0009-hancom-named-style-policy.md`](../../docs/adr/0009-hancom-named-style-policy.md)에 기록했다.
+
 수식은 공식 수식 형식 r1.3을 기준으로 분수·근호·첨자·주요 연산자와 함수·적분·행렬·
 cases/pile/alignment·색상을 OfficeCLI LaTeX로 옮기며, OfficeCLI가 네이티브 OMML로 만든다.
 인라인/표시 배치와 문단·표 셀 안의 형제 순서를 보존한다. 의미를 근사해야 하는
@@ -241,16 +249,15 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 ### 아직 안 되는 것
 
 - 도형·글상자 (`hp:rect`, `hp:textart` 등)
-- 스타일 이름 (`styleIDRef` → docx `style`)
 - HWPX **쓰기** (그래서 `format-handler`가 아니라 `dump-reader`다 — `docs/01-protocol-contract.md` ADR-1)
 
 ## 개발
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 79개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 89개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
-cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 62개
+cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 63개
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo build --workspace --locked --release
@@ -313,7 +320,7 @@ crates/
     src/owpml/
       package.rs        ZIP 컨테이너, content.hpf spine, BinData 해석
       equation/         수식 스크립트의 엄격 파싱·LaTeX 변환
-      styles.rs         header.xml 글자/문단 모양 표
+      styles.rs         header.xml 글자/문단 모양·이름 스타일 표
       section.rs        본문 파싱, 표/문단 구조 평탄화
       model.rs          공용 model 임시 호환 re-export
       xml.rs            quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)

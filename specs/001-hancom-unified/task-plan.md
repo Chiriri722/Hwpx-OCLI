@@ -251,10 +251,22 @@ R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
       [HWPX plugin run 33243420505](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420505)와
       [action pin run 33243420494](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420494)도
       양 OS에서 성공했다. 결정 경계는 ADR-0008에 고정했다.
-- [ ] T2-5 · 스타일 이름 (`styleIDRef` → docx `style`)
+- [x] T2-5 · 스타일 이름 (`styleIDRef` → docx `style`). 커밋 `50adcc31`에서
+      본문·표·주석·머리말/꼬리말이 실제 참조하는 PARA 스타일과 비자기
+      `nextStyleIDRef` 폐쇄만 strict하게 물질화했다. 정확한 숫자 ID·기본 이름,
+      문단/런 속성, 다음 스타일, 개요 수준과 NUMBER/BULLET/구역 OUTLINE 번호를
+      보존하며 직접 `paraPrIDRef`/런 서식은 별도 override로 유지한다. 한컴 네이티브
+      오라클에 따라 `lockForm`은 검증만 하고 DOCX `locked`로 추측하지 않으며,
+      `outlineShapeIDRef=0`의 암묵 기본 개요만 좁게 지원한다. 한 스타일이 구역마다
+      다른 개요 번호를 요구하거나 활성 참조·정의가 손상되면 JSONL 전에 실패한다.
+      로컬 513개 Rust 테스트·40개 host 계약·Clippy·release·정확한 SDK build,
+      공개 281개 코퍼스 기준선(226 성공/23 corrupt/32 unsupported), 실제 224항목
+      replay·DOCX validate 오류 0과 `plugins lint` unknown prop 0을 통과했다.
+      결정 경계는 ADR-0009에 고정했다.
 - [ ] T2-6 · 도형·글상자 (`hp:rect`, `hp:textart` 등) → docx shape/textbox
 - [ ] T2-7 · 차트 → docx chart. **R1의 "차트 형식 r1.2" 스펙이 필수**
-- [ ] T2-8 · 보류 항목 재평가: G5 스타일 매핑, G6 PUA 치환 (실측 근거 확보 시)
+- [ ] T2-8 · 보류 항목 재평가: G5 스타일 매핑은 T2-5에서 완료. G6 PUA 치환은
+      신뢰할 대응표·글꼴별 오라클 확보 시 재평가
 - [ ] T2-9 · 각 항목마다 `plugins lint`(호스트 내장 docx 스키마 검증) 재실행 — 어휘 변경 시 필수
 
 ### P3 — HWPX 쓰기 / format-handler 승격 (A2 실행)
@@ -378,7 +390,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0·P1 완료 · P2 진행 중(T2-5 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1 완료 · P2 진행 중(T2-6 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -397,14 +409,21 @@ T2-3은 구역 spine·머리말/꼬리말·페이지 필드와 구역별 주석 
 T2-4는 NUMBER/BULLET/OUTLINE을 동적 DOCX 목록으로 보존하고 한컴 네이티브 배치 오라클과
 49개 공개 코퍼스에서 검증했다. 구현 커밋은 `025418bc`, RHWP level 10 호환성 수정은
 `2289ca60`이며 수정 원격 게이트 `33243420505`/`33243420494`가 양 OS에서 성공했다.
+T2-5는 활성 이름 스타일과 직접 서식을 분리해 보존하고, 이름 스타일이 소유한 목록·구역 개요를
+연결했다. 구현 커밋 `50adcc31`은 281개 공개 코퍼스의 기존 성공/실패 기준선을 유지하면서
+실제 OfficeCLI 224항목 replay·lint·validate를 통과했다. 숫자 ID, 선행 `next` 참조,
+`lockForm`, 직접 NONE과 스타일 OUTLINE, 암묵 outline 0의 경계는 한컴 2020 네이티브
+DOCX 오라클과 ADR-0009에 고정했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T2-5에서 `hh:styles`의 실제 사용 스타일과 문단 `styleIDRef`를 연결하고, 매달린 참조가
-   생기지 않도록 OfficeCLI `style` 정의 생성과 문단 적용을 같은 변경으로 구현한다.
-2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
-3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
-5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
+1. T2-6에서 공개/한컴 생성 표본의 도형·글상자 구조와 실제 OfficeCLI shape/textbox
+   투영 경계를 먼저 실측하고, 무손실 폐쇄 부분집합만 구현한다.
+2. T2-7은 고정한 공식 차트 형식 r1.2와 네이티브 DOCX 오라클을 함께 사용해 차트
+   데이터·계열·축·레이아웃의 보존 가능 범위를 확정한다.
+3. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
+4. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
+5. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
+6. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.

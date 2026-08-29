@@ -37,7 +37,9 @@
 
 ### 기존 계획 재확인
 - P0(G1, G2), P1(G3, G4), P-1 회귀 코퍼스는 완료 상태다.
-- G5 스타일 매핑은 코퍼스에서 실제 개요 스타일 사용이 0건이고, OfficeCLI가 참조 스타일 정의를 자동 생성하지 않아 보류됐다.
+- G5 스타일 매핑은 최초 5개 코퍼스에서 실제 개요 스타일 사용이 0건이고 OfficeCLI가
+  참조 스타일 정의를 자동 생성하지 않아 보류됐다. 후속 공개 281개 코퍼스와 한컴
+  네이티브 오라클을 확보해 2026-08-29 T2-5에서 정의 생성까지 완료했다.
 - G6 PUA 문자는 신뢰할 수 있는 대응표가 없어 보존 및 진단까지만 구현됐다.
 - `docs/02-handover.md`의 테스트 167개 및 중첩표 평탄화 설명은 현재 코드보다 오래된 기록이다. 최신 기준은 `docs/03-work-plan.md`와 실제 테스트다.
 
@@ -222,3 +224,11 @@
 - image/checkable bullet과 호스트가 표현하지 못하는 marker 서식은 exit 3이다. PUA 표식은 G6 정책대로 보존하고 진단 개수에 포함한다. 비정수 geometry와 DOCX int 범위 밖 start가 반올림·overflow되지 않도록 RED→GREEN으로 보강했다.
 - 첫 원격 네이티브 HWP 회귀 run `33243198631`에서 RHWP가 dormant HWP level 10을 보존한다는 사실을 발견했다. 활성 문단이 쓰는 level 1만 materialize하도록 RED→GREEN으로 수정했고, 같은 pinned RHWP `english.hwp`를 실제 OfficeCLI에서 다시 열어 동적 번호와 DOCX validate 오류 0을 확인했다.
 - 로컬 게이트는 Rust 502개, Clippy `-D warnings`, release, 포맷/diff, .NET host build 오류 0이다. 공개 49개 코퍼스는 47개 성공·unknown prop 0이며 남은 2개는 기존 mid-section header/footer 한계다. 실제 offset 10/15 문단은 동적 `numId`/`numLevel`을 유지하고 생성 DOCX validate 오류 0이었다. 구현 커밋은 `025418bc`, RHWP 호환성 수정은 `2289ca60`이다. 수정 [HWPX plugin run 33243420505](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420505)와 [action pin run 33243420494](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33243420494)가 양 OS에서 모두 성공했고, 결정은 ADR-0008이다.
+
+### 2026-08-29 T2-5 이름 스타일
+- `hh:styles`의 활성 PARA 정의와 문단 `styleIDRef`를 연결하고, 본문·표·주석·머리말/꼬리말에서 실제 참조된 스타일과 비자기 `nextStyleIDRef` 의존성만 물질화한다. 활성 그래프는 정확한 `itemCnt`, 유일 ID, 기본 `name`, paraPr/charPr 대상과 bool `lockForm`을 엄격히 검증하고 dormant 손상 정의는 무시한다.
+- 스타일은 정확한 숫자 ID·기본 이름, `next`, 숫자 `uiPriority`, 문단/런 속성, NUMBER/BULLET/OUTLINE 번호와 개요 수준을 보존한다. 직접 `paraPrIDRef`와 런 서식은 스타일로 흡수하지 않고 문단 override로 유지한다. 네이티브 근거가 없는 `engName` fallback이나 `basedOn` 추론은 하지 않는다.
+- 한컴 2020 오라클에서 직접 paraPr의 heading이 NONE인 51개 문단도 활성 개요 스타일의 `outlineLvl`/번호를 상속했고, `lockForm=1`인 활성 스타일 네 개는 DOCX `w:locked`를 만들지 않았다. `outlineShapeIDRef=0`인데 명시 numbering이 없는 문서는 반복 `%1.` decimal 기본 개요를 만들었다. 이 세 경계를 그대로 구현했다.
+- 한 이름 스타일이 여러 구역의 다른 outline 정의를 요구하면 단일 DOCX 스타일로 근사하지 않고 exit 3, 활성 정의/의존성이 손상되면 exit 2로 stdout 전에 실패한다. 일반 NUMBER/BULLET의 missing ID는 암묵 outline 0 규칙으로 숨기지 않는다.
+- 공개 281개 HWPX 전수 회귀는 226 성공/23 corrupt/32 unsupported로 기존 기준선을 유지했다. 대표 fixture의 224개 BatchItem은 `plugins lint` unknown prop 0, 실제 OfficeCLI batch 224/224, DOCX validate 오류 0이며 `/styles/18`의 ID·이름·개요·번호가 읽혀 나왔다.
+- 로컬 게이트는 Rust 513개, 40개 .NET host 계약, Clippy `-D warnings`, release, 정확한 SDK 10.0.302 build, 포맷/diff 검사다. 구현 커밋은 `50adcc31`, 결정은 ADR-0009다.
