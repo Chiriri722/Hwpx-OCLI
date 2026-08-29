@@ -4,6 +4,7 @@ mod common;
 
 use std::io::Cursor;
 
+use base64::Engine;
 use common::*;
 use officecli_hwpx::emit::word::emit_document;
 use officecli_hwpx::owpml::model::{
@@ -55,6 +56,304 @@ fn supported_ellipse_xml() -> &'static str {
       <hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER" horzRelTo="PAPER" vertAlign="TOP" horzAlign="LEFT" vertOffset="71319" horzOffset="45854"/>
       <hp:outMargin left="0" right="0" top="0" bottom="0"/>
     </hp:ellipse>"##
+}
+
+fn supported_chart_xml(chart_id_ref: &str, extra_child: &str) -> String {
+    format!(
+        r#"<hp:chart id="7" zOrder="7" numberingType="PICTURE" textWrap="SQUARE" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" chartIDRef="{chart_id_ref}">
+          <hp:sz width="32250" widthRelTo="ABSOLUTE" height="18750" heightRelTo="ABSOLUTE" protect="0"/>
+          <hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>
+          <hp:outMargin left="0" right="0" top="0" bottom="0"/>{extra_child}
+        </hp:chart>"#
+    )
+}
+
+fn self_contained_chart_part() -> &'static str {
+    concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>"#,
+        r#"<c:chartSpace xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:hnc="http://schemas.haansoft.com/office/8.0">"#,
+        r#"<c:date1904 val="0"/><c:roundedCorners val="0"/><c:chart><c:autoTitleDeleted val="1"/><c:plotArea><c:layout/></c:plotArea><c:plotVisOnly val="1"/></c:chart>"#,
+        r#"<c:extLst><c:ext uri="{9F5C66E9-2F77-46B5-87B1-8F919E15E07E}"><hnc:hncChartStyle/></c:ext></c:extLst></c:chartSpace>"#,
+    )
+}
+
+#[test]
+fn emits_verified_self_contained_chart_part_with_native_frame_geometry() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let chart_xml = self_contained_chart_part();
+    builder.extra_entry("Chart/chart1.xml", chart_xml.as_bytes().to_vec());
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:t>앞</hp:t>{}<hp:t>뒤</hp:t></hp:run></hp:p>"#,
+        supported_chart_xml("Chart/chart1.xml", "")
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let chart = items
+        .iter()
+        .find(|item| item.r#type == Some("chart"))
+        .expect("typed chart command");
+    assert_eq!(chart.parent.as_deref(), Some("/body/p[last()]"));
+    assert_eq!(chart.props["width"], "4095750");
+    assert_eq!(chart.props["height"], "2381250");
+    assert_eq!(chart.props["anchor"], "true");
+    assert_eq!(chart.props["wrap"], "square");
+    assert_eq!(chart.props["hrelative"], "column");
+    assert_eq!(chart.props["vrelative"], "paragraph");
+    assert_eq!(chart.props["hposition"], "0");
+    assert_eq!(chart.props["vposition"], "0");
+    assert_eq!(chart.props["relativeHeight"], "8");
+    assert_eq!(chart.props["wrapDist"], "0,0,0,0");
+    assert_eq!(chart.props["chartXmlProfile"], "hwpxChartOrderRepairV1");
+    assert_eq!(
+        chart.props["chartXmlBase64"],
+        base64::engine::general_purpose::STANDARD.encode(chart_xml.as_bytes())
+    );
+    let text: Vec<_> = items
+        .iter()
+        .filter_map(|item| item.props.get("text").and_then(serde_json::Value::as_str))
+        .collect();
+    assert_eq!(text, vec!["앞", "뒤"]);
+}
+
+#[test]
+fn selects_supported_ooxml_chart_switch_case_and_ignores_ole_fallback() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.extra_entry(
+        "Chart/chart1.xml",
+        self_contained_chart_part().as_bytes().to_vec(),
+    );
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:switch>"#,
+            r#"<hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/ooxmlchart">{chart}</hp:case>"#,
+            r#"<hp:default><hp:ole binaryItemIDRef="ole1"><hp:t>fallback must not leak</hp:t></hp:ole></hp:default>"#,
+            r#"</hp:switch></hp:run></hp:p>"#,
+        ),
+        para_pr = para_pr,
+        char_pr = char_pr,
+        chart = supported_chart_xml("Chart/chart1.xml", ""),
+    ));
+
+    let items = emit_document(&parse(&builder));
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.r#type == Some("chart"))
+            .count(),
+        1
+    );
+    assert!(items.iter().all(
+        |item| item.props.get("text").and_then(serde_json::Value::as_str)
+            != Some("fallback must not leak")
+    ));
+}
+
+#[test]
+fn chart_switch_uses_default_for_unknown_cases_and_rejects_orphan_branches() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}"><hp:switch>"#,
+            r#"<hp:case hp:required-namespace="urn:unsupported"><hp:t>선택하면 안 됨</hp:t></hp:case>"#,
+            r#"<hp:default><hp:t>기본 분기</hp:t></hp:default>"#,
+            r#"</hp:switch></hp:run></hp:p>"#,
+        ),
+        para_pr = para_pr,
+        char_pr = char_pr,
+    ));
+    assert_eq!(
+        parse(&builder)
+            .paragraphs()
+            .next()
+            .expect("fallback paragraph")
+            .plain_text(),
+        "기본 분기"
+    );
+
+    for orphan in [
+        r#"<hp:case hp:required-namespace="urn:unsupported"><hp:t>x</hp:t></hp:case>"#,
+        r#"<hp:default><hp:t>x</hp:t></hp:default>"#,
+    ] {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{orphan}</hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("compatibility branch outside hp:switch must be corrupt");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_chart_references_that_are_missing_or_escape_the_chart_directory() {
+    for (chart_ref, expected) in [
+        ("Chart/missing.xml", "cannot read chart part"),
+        ("../Chart/chart1.xml", "chartIDRef"),
+        ("/Chart/chart1.xml", "chartIDRef"),
+        (r"Chart\chart1.xml", "chartIDRef"),
+    ] {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{}</hp:run></hp:p>"#,
+            supported_chart_xml(chart_ref, "")
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unsafe or missing chart references must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "chart_ref={chart_ref}, error={error:?}"
+        );
+        assert!(error.message.contains(expected), "got {error:?}");
+    }
+}
+
+#[test]
+fn rejects_active_chart_content_without_a_verified_docx_mapping() {
+    let cases = [
+        (
+            "caption",
+            supported_chart_xml(
+                "Chart/chart1.xml",
+                "<hp:caption><hp:subList><hp:p/></hp:subList></hp:caption>",
+            ),
+        ),
+        (
+            "unknown child",
+            supported_chart_xml("Chart/chart1.xml", "<hp:parameterset/>"),
+        ),
+        (
+            "inline placement",
+            supported_chart_xml("Chart/chart1.xml", "")
+                .replace("treatAsChar=\"0\"", "treatAsChar=\"1\""),
+        ),
+        (
+            "non-square wrapping",
+            supported_chart_xml("Chart/chart1.xml", "")
+                .replace("textWrap=\"SQUARE\"", "textWrap=\"TOP_AND_BOTTOM\""),
+        ),
+    ];
+
+    for (label, chart) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.extra_entry(
+            "Chart/chart1.xml",
+            self_contained_chart_part().as_bytes().to_vec(),
+        );
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{chart}</hp:run></hp:p>"#
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unverified chart features must fail closed");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "case={label}, error={error:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_malformed_or_relationship_bearing_chart_parts() {
+    let deeply_nested_chart = format!(
+        r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart>{}{}</c:chart></c:chartSpace>"#,
+        "<c:ext>".repeat(256),
+        "</c:ext>".repeat(256),
+    );
+    let cases = [
+        ("malformed XML", "<c:chartSpace>".to_string()),
+        (
+            "external relationship",
+            self_contained_chart_part().replace(
+                "<c:plotVisOnly val=\"1\"/>",
+                "<c:plotVisOnly val=\"1\"/><c:externalData r:id=\"rId1\"/>",
+            ),
+        ),
+        (
+            "unknown active namespace",
+            self_contained_chart_part().replace(
+                "</c:chartSpace>",
+                "<evil:payload xmlns:evil=\"urn:unverified\"/></c:chartSpace>",
+            ),
+        ),
+        ("excessive nesting", deeply_nested_chart),
+    ];
+
+    for (label, chart_part) in cases {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.extra_entry("Chart/chart1.xml", chart_part.into_bytes());
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{}</hp:run></hp:p>"#,
+            supported_chart_xml("Chart/chart1.xml", "")
+        ));
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("unsafe chart parts must fail closed");
+        assert!(
+            matches!(
+                error.code,
+                officecli_hwpx::error::ErrorCode::CorruptInput
+                    | officecli_hwpx::error::ErrorCode::UnsupportedFeature
+            ),
+            "case={label}, error={error:?}"
+        );
+    }
+}
+
+#[test]
+fn enforces_chart_reference_and_embedded_xml_output_budgets() {
+    fn document_with_chart_count(count: usize, chart_part: &str) -> HwpxBuilder {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.extra_entry("Chart/chart1.xml", chart_part.as_bytes().to_vec());
+        let charts: String = (0..count)
+            .map(|_| supported_chart_xml("Chart/chart1.xml", ""))
+            .collect();
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"><hp:run charPrIDRef="{char_pr}">{charts}</hp:run></hp:p>"#
+        ));
+        builder
+    }
+
+    let references = document_with_chart_count(513, self_contained_chart_part());
+    let error = read_document_from(Cursor::new(references.build()))
+        .expect_err("chart reference count must reject");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("chart reference count"), "{error:?}");
+
+    let large_chart = self_contained_chart_part().replace(
+        "</c:chart>",
+        &format!(
+            "<c:tx><c:v>{}</c:v></c:tx></c:chart>",
+            "x".repeat(1024 * 1024)
+        ),
+    );
+    let output = document_with_chart_count(65, &large_chart);
+    let error = read_document_from(Cursor::new(output.build()))
+        .expect_err("embedded chart XML bytes must reject");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(
+        error.message.contains("embedded chart XML bytes"),
+        "{error:?}"
+    );
 }
 
 fn document_with_named_styles(styles: &str, active_style: &str) -> HwpxBuilder {

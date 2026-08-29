@@ -15,13 +15,14 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use super::model::{
-    Block, Cell, Equation, EquationMode, HeaderFooter, HeaderFooterPage, Image, Inline, Note,
-    NoteKind, NoteLine, NoteLineType, NoteLineWidth, NoteNumberFormat, NoteNumberRestart,
+    Block, Cell, Chart, Equation, EquationMode, HeaderFooter, HeaderFooterPage, Image, Inline,
+    Note, NoteKind, NoteLine, NoteLineType, NoteLineWidth, NoteNumberFormat, NoteNumberRestart,
     NotePosition, NoteProperties, NoteSpacing, PageNumberField, PageNumberKind, Paragraph,
     Rectangle, RectangleHorizontalPosition, RectangleLine, RectangleMargins, RectanglePlacement,
     RectangleText, RectangleWrap, RectangleWrapSide, Section, ShapeGeometry, Table, TextBoxAnchor,
     TextBoxDirection, TextField, TextRun,
 };
+use super::package::is_safe_chart_part_path;
 use super::styles::{normalize_color, SectionStyles, StyleTable};
 use super::xml::{attr, attr_i64, attr_usize, local_name, resolve_entity};
 use crate::error::{PluginError, Result};
@@ -32,6 +33,7 @@ const MAX_TABLE_ROWS: usize = 32_768;
 const MAX_TABLE_COLS: usize = 512;
 const MAX_TABLE_CELLS: usize = 100_000;
 const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
+const OOXML_CHART_SWITCH_NAMESPACE: &str = "http://www.hancom.co.kr/hwpml/2016/ooxmlchart";
 const UNSUPPORTED_SHAPE_ELEMENTS: &[&str] = &[
     "line",
     "arc",
@@ -42,8 +44,6 @@ const UNSUPPORTED_SHAPE_ELEMENTS: &[&str] = &[
     "textart",
     "ole",
     "video",
-    // T2-7 owns semantic chart conversion. Until then, fail closed.
-    "chart",
 ];
 
 pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Section> {
@@ -900,6 +900,11 @@ fn parse_paragraph(
     // 그 자리에 폼필드를 넣는다. 내용이 있었다면 그 내용이 문서 내용이므로
     // 텍스트 그대로 둔다.
     let mut open_field: Option<(TextField, usize, Option<String>)> = None;
+    // hp:switch is Hancom's compatibility-branch wrapper. Track whether the
+    // first branch whose namespace we implement has been selected; otherwise
+    // consume hp:default. Processing every branch leaks OLE fallbacks beside
+    // their OOXML chart choice and duplicates the authored object.
+    let mut switch_selected: Vec<bool> = Vec::new();
     let mut buf = Vec::new();
 
     loop {
@@ -908,6 +913,28 @@ fn parse_paragraph(
             Event::Start(e) => {
                 let name_owned = e.name();
                 match local_name(name_owned.as_ref()).as_str() {
+                    "switch" => switch_selected.push(false),
+                    "case" => {
+                        let selected = switch_selected.last_mut().ok_or_else(|| {
+                            PluginError::corrupt("hp:case appears outside hp:switch")
+                        })?;
+                        let required = attr(&e, "required-namespace");
+                        if !*selected && required.as_deref() == Some(OOXML_CHART_SWITCH_NAMESPACE) {
+                            *selected = true;
+                        } else {
+                            skip_element(reader, "case")?;
+                        }
+                    }
+                    "default" => {
+                        let selected = switch_selected.last_mut().ok_or_else(|| {
+                            PluginError::corrupt("hp:default appears outside hp:switch")
+                        })?;
+                        if *selected {
+                            skip_element(reader, "default")?;
+                        } else {
+                            *selected = true;
+                        }
+                    }
                     // 구역 메타데이터와 반복 story는 별도 1차 순회에서 읽는다.
                     // 여기서 소비하지 않으면 그 안의 `p` 종료를 바깥 본문 문단
                     // 종료로 오인하고 텍스트도 본문으로 유출한다.
@@ -975,6 +1002,17 @@ fn parse_paragraph(
                         return Err(PluginError::corrupt(format!(
                             "ellipse nesting exceeds the maximum depth of {MAX_DEPTH}"
                         )));
+                    }
+                    "chart" if note_context.is_some() => {
+                        return Err(PluginError::unsupported_feature(
+                            "chart inside a footnote or endnote cannot be hosted by the current DOCX drawing surface",
+                        ));
+                    }
+                    "chart" => {
+                        let owned = e.into_owned();
+                        current
+                            .inlines
+                            .push(Inline::Chart(parse_chart(reader, &owned)?));
                     }
                     name if UNSUPPORTED_SHAPE_ELEMENTS
                         .iter()
@@ -1077,7 +1115,19 @@ fn parse_paragraph(
                 let name_owned = e.name();
                 match local_name(name_owned.as_ref()).as_str() {
                     "run" => run_style = None,
+                    "switch" => {
+                        if switch_selected.pop().is_none() {
+                            return Err(PluginError::corrupt(
+                                "hp:switch closing element has no matching start",
+                            ));
+                        }
+                    }
                     "p" => {
+                        if !switch_selected.is_empty() {
+                            return Err(PluginError::corrupt(
+                                "paragraph ended before hp:switch was closed",
+                            ));
+                        }
                         // fieldEnd 없이 문단이 끝난 경우. 내용이 없었다면 슬롯으로 본다.
                         if let Some((field, start, _)) = open_field.take() {
                             if current.inlines.len() == start {
@@ -1116,6 +1166,205 @@ const EMU_PER_HWPUNIT: u64 = 127;
 const DOCX_MAX_COORDINATE_EMU: u64 = i32::MAX as u64;
 const DOCX_MAX_WRAP_DISTANCE_EMU: u64 = u32::MAX as u64;
 const DOCX_MAX_LINE_WIDTH_EMU: u64 = 20_116_800;
+
+fn parse_chart(
+    reader: &mut Reader<&[u8]>,
+    start: &quick_xml::events::BytesStart<'static>,
+) -> Result<Chart> {
+    validate_shape_attributes(
+        start,
+        "chart",
+        &[
+            "id",
+            "zOrder",
+            "numberingType",
+            "textWrap",
+            "textFlow",
+            "lock",
+            "dropcapstyle",
+            "chartIDRef",
+        ],
+    )?;
+
+    let chart_id_ref = required_shape_attr(start, "chart", "chartIDRef")?;
+    if !is_safe_chart_part_path(&chart_id_ref) {
+        return Err(PluginError::corrupt(format!(
+            "chartIDRef must be a relative Chart/*.xml path, got {chart_id_ref:?}"
+        )));
+    }
+    let z_order = parse_required_u32(start, "chart", "zOrder")?;
+    if z_order.checked_add(1).is_none() {
+        return Err(PluginError::unsupported_feature(
+            "chart zOrder cannot be represented by DOCX relativeHeight",
+        ));
+    }
+    let numbering = required_shape_attr(start, "chart", "numberingType")?;
+    if !numbering.eq_ignore_ascii_case("picture") {
+        return Err(PluginError::unsupported_feature(format!(
+            "chart numberingType {numbering} requires an unsupported caption/numbering mapping"
+        )));
+    }
+    let wrap = required_shape_attr(start, "chart", "textWrap")?;
+    if !wrap.eq_ignore_ascii_case("square") {
+        return Err(PluginError::unsupported_feature(format!(
+            "chart textWrap={wrap} is outside the native-verified SQUARE profile"
+        )));
+    }
+    let flow = required_shape_attr(start, "chart", "textFlow")?;
+    if !flow.eq_ignore_ascii_case("both_sides") {
+        return Err(PluginError::unsupported_feature(format!(
+            "chart textFlow={flow} is outside the native-verified BOTH_SIDES profile"
+        )));
+    }
+    if parse_required_shape_bool(start, "chart", "lock")? {
+        return Err(PluginError::unsupported_feature(
+            "locked chart cannot be preserved by the editable DOCX chart surface",
+        ));
+    }
+    let dropcap = required_shape_attr(start, "chart", "dropcapstyle")?;
+    if !dropcap.eq_ignore_ascii_case("none") {
+        return Err(PluginError::unsupported_feature(
+            "chart drop-cap layout is not representable as a DOCX drawing",
+        ));
+    }
+
+    let mut size = None;
+    let mut position = None;
+    let mut margins = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => {
+                return Err(PluginError::corrupt("unexpected end of XML inside chart"));
+            }
+            Event::Start(event) => {
+                let child = local_name(event.name().as_ref());
+                let owned = event.into_owned();
+                match child.as_str() {
+                    "sz" => {
+                        if size.is_some() {
+                            return Err(PluginError::corrupt("chart contains more than one sz"));
+                        }
+                        size = Some(parse_rectangle_size(&owned, "chart")?);
+                        skip_element(reader, "sz")?;
+                    }
+                    "pos" => {
+                        if position.is_some() {
+                            return Err(PluginError::corrupt("chart contains more than one pos"));
+                        }
+                        position = Some(parse_chart_position(&owned)?);
+                        skip_element(reader, "pos")?;
+                    }
+                    "outMargin" => {
+                        if margins.is_some() {
+                            return Err(PluginError::corrupt(
+                                "chart contains more than one outMargin",
+                            ));
+                        }
+                        margins = Some(parse_rectangle_margins(
+                            &owned,
+                            "chart/outMargin",
+                            DOCX_MAX_WRAP_DISTANCE_EMU,
+                            "wp:anchor wrap distance",
+                        )?);
+                        skip_element(reader, "outMargin")?;
+                    }
+                    "caption" => {
+                        return Err(PluginError::unsupported_feature(
+                            "chart caption cannot be preserved by the verified DOCX chart carrier",
+                        ));
+                    }
+                    "shapeComment" | "parameterset" | "metaTag" => {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "chart contains unsupported active child {child}"
+                        )));
+                    }
+                    other => {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "chart contains unsupported active child {other}"
+                        )));
+                    }
+                }
+            }
+            Event::Text(value) if !value.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt("chart contains direct text"));
+            }
+            Event::CData(value) if !String::from_utf8_lossy(value.as_ref()).trim().is_empty() => {
+                return Err(PluginError::corrupt("chart contains direct CDATA"));
+            }
+            Event::GeneralRef(_) => {
+                return Err(PluginError::corrupt(
+                    "chart contains an unexpected entity reference",
+                ));
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == "chart" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let (width_hwpunit, height_hwpunit) =
+        size.ok_or_else(|| PluginError::corrupt("chart is missing required sz"))?;
+    let (horizontal_offset_hwpunit, vertical_offset_hwpunit) =
+        position.ok_or_else(|| PluginError::corrupt("chart is missing required pos"))?;
+    Ok(Chart {
+        chart_id_ref,
+        width_hwpunit,
+        height_hwpunit,
+        horizontal_offset_hwpunit,
+        vertical_offset_hwpunit,
+        outer_margins: margins
+            .ok_or_else(|| PluginError::corrupt("chart is missing required outMargin"))?,
+        z_order,
+        xml: None,
+    })
+}
+
+fn parse_chart_position(event: &quick_xml::events::BytesStart<'_>) -> Result<(i64, i64)> {
+    let label = "chart/pos";
+    validate_shape_attributes(
+        event,
+        label,
+        &[
+            "treatAsChar",
+            "affectLSpacing",
+            "flowWithText",
+            "allowOverlap",
+            "holdAnchorAndSO",
+            "vertRelTo",
+            "horzRelTo",
+            "vertAlign",
+            "horzAlign",
+            "vertOffset",
+            "horzOffset",
+        ],
+    )?;
+    let verified_flags = !parse_required_shape_bool(event, label, "treatAsChar")?
+        && !parse_required_shape_bool(event, label, "affectLSpacing")?
+        && parse_required_shape_bool(event, label, "flowWithText")?
+        && !parse_required_shape_bool(event, label, "allowOverlap")?
+        && !parse_required_shape_bool(event, label, "holdAnchorAndSO")?;
+    let verified_frame = required_shape_attr(event, label, "vertRelTo")?
+        .eq_ignore_ascii_case("para")
+        && required_shape_attr(event, label, "horzRelTo")?.eq_ignore_ascii_case("column")
+        && required_shape_attr(event, label, "vertAlign")?.eq_ignore_ascii_case("top")
+        && required_shape_attr(event, label, "horzAlign")?.eq_ignore_ascii_case("left");
+    if !verified_flags || !verified_frame {
+        return Err(PluginError::unsupported_feature(
+            "chart placement is outside the native-verified floating COLUMN/PARA TOP/LEFT profile",
+        ));
+    }
+    let x = parse_required_i64(event, label, "horzOffset")?;
+    let y = parse_required_i64(event, label, "vertOffset")?;
+    ensure_hwpunit_fits_docx_position(x, "chart")?;
+    ensure_hwpunit_fits_docx_position(y, "chart")?;
+    if x != 0 || y != 0 {
+        return Err(PluginError::unsupported_feature(
+            "non-zero chart offsets do not yet have native round-trip evidence",
+        ));
+    }
+    Ok((x, y))
+}
 
 impl SimpleShapeKind {
     fn element_name(self) -> &'static str {
@@ -1927,6 +2176,11 @@ fn parse_rectangle_text(
             "nested rect inside drawText would create an invalid nested DOCX textbox",
         ));
     }
+    if blocks_contain_chart(&blocks) {
+        return Err(PluginError::unsupported_feature(
+            "chart inside drawText would create an invalid nested DOCX drawing",
+        ));
+    }
     Ok(RectangleText {
         name,
         direction,
@@ -2061,6 +2315,24 @@ fn blocks_contain_rectangle(blocks: &[Block]) -> bool {
             .cells
             .iter()
             .any(|cell| blocks_contain_rectangle(&cell.blocks)),
+    })
+}
+
+fn blocks_contain_chart(blocks: &[Block]) -> bool {
+    blocks.iter().any(|block| match block {
+        Block::Paragraph(paragraph) => paragraph.inlines.iter().any(|inline| match inline {
+            Inline::Chart(_) => true,
+            Inline::Note(note) => blocks_contain_chart(&note.blocks),
+            Inline::Rectangle(rectangle) => rectangle
+                .text
+                .as_ref()
+                .is_some_and(|text| blocks_contain_chart(&text.blocks)),
+            _ => false,
+        }),
+        Block::Table(table) => table
+            .cells
+            .iter()
+            .any(|cell| blocks_contain_chart(&cell.blocks)),
     })
 }
 

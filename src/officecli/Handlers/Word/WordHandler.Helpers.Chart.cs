@@ -224,7 +224,14 @@ public partial class WordHandler
                     RightEdge = (effectExtent ?? (0, 0, 0, 0)).R,
                     BottomEdge = (effectExtent ?? (0, 0, 0, 0)).B
                 },
-                new DW.DocProperties { Id = docPropId, Name = chartName },
+                new DW.DocProperties
+                {
+                    Id = docPropId,
+                    Name = chartName,
+                    Description = properties.TryGetValue("description", out var inlineDescription)
+                        ? inlineDescription
+                        : null
+                },
                 new DW.NonVisualGraphicFrameDrawingProperties(),
                 graphic)
             {
@@ -291,7 +298,14 @@ public partial class WordHandler
                 BottomEdge = (effectExtent ?? (0, 0, 0, 0)).B
             },
             wrapElement,
-            new DW.DocProperties { Id = docPropId, Name = chartName },
+            new DW.DocProperties
+            {
+                Id = docPropId,
+                Name = chartName,
+                Description = properties.TryGetValue("description", out var anchorDescription)
+                    ? anchorDescription
+                    : null
+            },
             new DW.NonVisualGraphicFrameDrawingProperties(),
             graphic)
         {

@@ -286,6 +286,7 @@ name = "officecli-hwpx"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "base64",
  "cfb",
  "libc",
  "officecli-hancom-core",

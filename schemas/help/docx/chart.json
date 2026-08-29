@@ -22,6 +22,125 @@
     "_shared/chart.docx-xlsx"
   ],
   "properties": {
+    "chartXmlBase64": {
+      "type": "string",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "guarded add-only carrier for one self-contained c:chartSpace XML document encoded as base64. The host rejects DTDs, processing instructions, excessive nesting, external relationships/resources, unsupported namespaces, invalid UTF-8, schema-invalid content, and payloads above 16 MiB. Cannot be combined with semantic chart/data properties."
+    },
+    "chartXmlProfile": {
+      "type": "enum",
+      "values": ["strict", "hwpxChartOrderRepairV1"],
+      "default": "strict",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "raw chart compatibility profile. strict preserves schema-valid XML without producer-specific rewrites; hwpxChartOrderRepairV1 repairs only the reviewed CT_CatAx/CT_ValAx/CT_View3D child-order fingerprint without changing values, then runs the same zero-error schema validation."
+    },
+    "anchor": {
+      "type": "bool",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "if true, create a floating wp:anchor chart frame; otherwise create wp:inline."
+    },
+    "wrap": {
+      "type": "enum",
+      "values": ["none", "square", "tight", "through", "topAndBottom", "inline"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "WordprocessingDrawing wrap mode. Any non-inline/non-none value also implies a floating anchor."
+    },
+    "hrelative": {
+      "type": "enum",
+      "values": ["margin", "page", "column", "character", "leftMargin", "rightMargin", "insideMargin", "outsideMargin"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "horizontal reference frame for a floating chart."
+    },
+    "vrelative": {
+      "type": "enum",
+      "values": ["margin", "page", "paragraph", "line", "topMargin", "bottomMargin", "insideMargin", "outsideMargin"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "vertical reference frame for a floating chart."
+    },
+    "hposition": {
+      "type": "length",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "horizontal floating-frame offset; accepts cm/in/pt/EMU."
+    },
+    "vposition": {
+      "type": "length",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "vertical floating-frame offset; accepts cm/in/pt/EMU."
+    },
+    "halign": {
+      "type": "enum",
+      "values": ["left", "center", "right", "inside", "outside"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "optional wp:align token used instead of hposition."
+    },
+    "valign": {
+      "type": "enum",
+      "values": ["top", "center", "bottom", "inside", "outside"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "optional wp:align token used instead of vposition."
+    },
+    "relativeHeight": {
+      "type": "integer",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "wp:anchor relativeHeight stacking value."
+    },
+    "wrapDist": {
+      "type": "string",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "floating-frame wrap distances as top,bottom,left,right raw EMU integers."
+    },
+    "effectExtent": {
+      "type": "string",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "effect extents as left,top,right,bottom raw EMU integers."
+    },
+    "behindtext": {
+      "type": "bool",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "place a floating chart behind document text."
+    },
+    "name": {
+      "type": "string",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "drawing object name stored in wp:docPr."
+    },
+    "description": {
+      "type": "string",
+      "add": true,
+      "set": false,
+      "get": false,
+      "description": "drawing accessibility description stored in wp:docPr."
+    },
     "dispUnits": {
       "type": "string",
       "add": true,

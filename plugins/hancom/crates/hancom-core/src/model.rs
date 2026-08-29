@@ -270,6 +270,25 @@ pub struct Image {
     pub content_type: Option<String>,
 }
 
+/// HWPX `hp:chart` backed by its self-contained OOXML `c:chartSpace` part.
+///
+/// Hancom's native DOCX exporter carries this part across without rebuilding
+/// the series model. Keeping the verified relationship-free XML intact avoids
+/// losing chart subtypes, cached values, and producer-specific style extensions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chart {
+    /// Package-relative `hp:chart/@chartIDRef` (`Chart/chartN.xml`).
+    pub chart_id_ref: String,
+    pub width_hwpunit: u32,
+    pub height_hwpunit: u32,
+    pub horizontal_offset_hwpunit: i64,
+    pub vertical_offset_hwpunit: i64,
+    pub outer_margins: RectangleMargins,
+    pub z_order: u32,
+    /// Validated, relationship-free `c:chartSpace` XML loaded from the package.
+    pub xml: Option<Arc<str>>,
+}
+
 /// HWPX 폼 컨트롤 체크박스 (`hp:checkBtn`).
 ///
 /// 실측(2026 대구문학관 참가신청서): 양식 문서는 체크박스를 문자(`☑`)가 아니라
@@ -538,6 +557,7 @@ impl Note {
 pub enum Inline {
     Text(TextRun),
     Image(Image),
+    Chart(Chart),
     CheckBox(CheckBox),
     TextField(TextField),
     PageNumber(PageNumberField),
@@ -566,6 +586,7 @@ impl Paragraph {
                 Inline::Tab => out.push('\t'),
                 Inline::LineBreak => out.push('\n'),
                 Inline::Image(_)
+                | Inline::Chart(_)
                 | Inline::CheckBox(_)
                 | Inline::TextField(_)
                 | Inline::PageNumber(_)
@@ -592,8 +613,9 @@ impl Paragraph {
                 },
                 // 탭/줄바꿈은 text prop 안에서 문자로 표현할 수 있으므로 허용한다.
                 Inline::Tab | Inline::LineBreak => {}
-                // 이미지와 체크박스는 별도 자식 명령이 필요하므로 병합 불가.
+                // 미디어·폼·필드·수식·도형은 별도 자식 명령이 필요하므로 병합 불가.
                 Inline::Image(_)
+                | Inline::Chart(_)
                 | Inline::CheckBox(_)
                 | Inline::TextField(_)
                 | Inline::PageNumber(_)
@@ -617,6 +639,7 @@ impl Paragraph {
             matches!(
                 i,
                 Inline::Image(_)
+                    | Inline::Chart(_)
                     | Inline::CheckBox(_)
                     | Inline::TextField(_)
                     | Inline::PageNumber(_)

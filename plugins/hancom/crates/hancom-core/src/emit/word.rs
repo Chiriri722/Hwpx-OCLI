@@ -24,7 +24,7 @@ use base64::Engine;
 
 use super::batch::BatchItem;
 use crate::model::{
-    hwpunit_to_emu, Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter,
+    hwpunit_to_emu, Block, Cell, CharStyle, Chart, CheckBox, Document, Equation, HeaderFooter,
     HeaderFooterPage, Image, Inline, NamedStyle, Note, NoteKind, NoteProperties,
     NumberingDefinition, PageNumberField, ParaStyle, Paragraph, Rectangle,
     RectangleHorizontalPosition, RectangleMargins, RectanglePlacement, Section, ShapeGeometry,
@@ -62,6 +62,7 @@ const TYPE_PARAGRAPH: &str = "paragraph";
 const TYPE_RUN: &str = "run";
 const TYPE_TABLE: &str = "table";
 const TYPE_PICTURE: &str = "picture";
+const TYPE_CHART: &str = "chart";
 const TYPE_FORMFIELD: &str = "formfield";
 const TYPE_FIELD: &str = "field";
 const TYPE_EQUATION: &str = "equation";
@@ -670,6 +671,12 @@ fn emit_inline_children(
                     out.push(item);
                 }
             }
+            Inline::Chart(chart) => {
+                flush_pending(&mut pending, parent, out);
+                if let Some(item) = chart_item(parent, chart) {
+                    out.push(item);
+                }
+            }
             Inline::CheckBox(cb) => {
                 flush_pending(&mut pending, parent, out);
                 out.push(checkbox_item(parent, cb));
@@ -1109,6 +1116,7 @@ fn flatten_inlines(p: &Paragraph, brk: char) -> String {
             Inline::LineBreak => out.push(brk),
             // 별도 자식 명령으로 나가므로 텍스트에는 넣지 않는다.
             Inline::Image(_)
+            | Inline::Chart(_)
             | Inline::CheckBox(_)
             | Inline::TextField(_)
             | Inline::PageNumber(_)
@@ -1321,6 +1329,46 @@ fn image_item(para_path: &str, img: &Image) -> Option<BatchItem> {
         item = item.prop("height", twip_to_pt_string(h));
     }
     Some(item)
+}
+
+fn chart_item(para_path: &str, chart: &Chart) -> Option<BatchItem> {
+    let xml = chart.xml.as_deref()?;
+    if xml.is_empty() {
+        return None;
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+    let relative_height = chart
+        .z_order
+        .checked_add(1)
+        .expect("chart z-order is validated before emission");
+
+    Some(
+        BatchItem::add(para_path, TYPE_CHART)
+            .prop("chartXmlBase64", b64)
+            .prop("chartXmlProfile", "hwpxChartOrderRepairV1")
+            .prop(
+                "width",
+                hwpunit_to_emu(i64::from(chart.width_hwpunit)).to_string(),
+            )
+            .prop(
+                "height",
+                hwpunit_to_emu(i64::from(chart.height_hwpunit)).to_string(),
+            )
+            .prop("anchor", "true")
+            .prop("wrap", "square")
+            .prop("hrelative", "column")
+            .prop("vrelative", "paragraph")
+            .prop(
+                "hposition",
+                hwpunit_to_emu(chart.horizontal_offset_hwpunit).to_string(),
+            )
+            .prop(
+                "vposition",
+                hwpunit_to_emu(chart.vertical_offset_hwpunit).to_string(),
+            )
+            .prop("relativeHeight", relative_height.to_string())
+            .prop("wrapDist", rectangle_wrap_distances(chart.outer_margins)),
+    )
 }
 
 /// twip → `"36pt"`. 그림 크기 전용.

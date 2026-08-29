@@ -1447,6 +1447,7 @@ fn paragraph_has_content(paragraph: &Paragraph) -> bool {
         Inline::Tab
         | Inline::LineBreak
         | Inline::Image(_)
+        | Inline::Chart(_)
         | Inline::CheckBox(_)
         | Inline::TextField(_)
         | Inline::PageNumber(_)

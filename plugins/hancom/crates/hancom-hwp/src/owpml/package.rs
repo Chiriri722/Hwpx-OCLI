@@ -13,6 +13,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
 use std::sync::Arc;
 
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::ResolveResult;
+use quick_xml::reader::NsReader;
+
 use crate::error::{PluginError, Result};
 
 pub use officecli_hancom_core::container::{
@@ -22,9 +26,11 @@ pub use officecli_hancom_core::container::{
 pub const HPF_ENTRY: &str = "Contents/content.hpf";
 pub const HEADER_ENTRY: &str = "Contents/header.xml";
 pub const BINDATA_PREFIX: &str = "BinData/";
+pub const CHART_PREFIX: &str = "Chart/";
 
 const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_CHART_XML_DEPTH: usize = 256;
 const MAX_BINARY_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TOTAL_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
@@ -44,6 +50,8 @@ pub struct Package<R: Read + Seek> {
     bin_items_by_stem: HashMap<String, Vec<String>>,
     /// 이미 압축 해제한 BinData. 같은 그림을 반복 참조할 때 다시 읽지 않는다.
     bin_cache: HashMap<String, (Arc<[u8]>, String)>,
+    /// 검증을 마친 관계 없는 OOXML 차트 파트.
+    chart_cache: HashMap<String, Arc<str>>,
     /// 실제로 읽은 압축 해제 바이트의 문서 전체 잔여 예산.
     remaining_expanded_bytes: u64,
 }
@@ -105,6 +113,7 @@ impl<R: Read + Seek> Package<R> {
             section_paths,
             bin_items_by_stem,
             bin_cache: HashMap::new(),
+            chart_cache: HashMap::new(),
             remaining_expanded_bytes,
         })
     }
@@ -175,6 +184,265 @@ impl<R: Read + Seek> Package<R> {
         }
         Ok(None)
     }
+
+    pub fn read_chart_part(&mut self, path: &str) -> Result<Arc<str>> {
+        if !is_safe_chart_part_path(path) {
+            return Err(PluginError::corrupt(format!(
+                "chartIDRef must be a relative Chart/*.xml path, got {path:?}"
+            )));
+        }
+        if let Some(xml) = self.chart_cache.get(path) {
+            return Ok(Arc::clone(xml));
+        }
+        let bytes = read_entry_bytes_limited(
+            &mut self.archive,
+            path,
+            MAX_XML_ENTRY_BYTES,
+            &mut self.remaining_expanded_bytes,
+        )?
+        .ok_or_else(|| PluginError::corrupt(format!("cannot read chart part: {path}")))?;
+        let xml = String::from_utf8(bytes).map_err(|error| {
+            PluginError::corrupt(format!("chart part {path:?} is not valid UTF-8: {error}"))
+        })?;
+        let xml = xml.trim_start_matches('\u{feff}').to_string();
+        if xml.trim().is_empty() {
+            return Err(PluginError::corrupt(format!(
+                "chart part {path:?} is empty"
+            )));
+        }
+        validate_chart_part_xml(&xml, path)?;
+        let xml: Arc<str> = xml.into();
+        self.chart_cache.insert(path.to_string(), Arc::clone(&xml));
+        Ok(xml)
+    }
+}
+
+pub(super) fn is_safe_chart_part_path(path: &str) -> bool {
+    let Some(file_name) = path.strip_prefix(CHART_PREFIX) else {
+        return false;
+    };
+    !file_name.is_empty()
+        && file_name != ".xml"
+        && !file_name.contains('/')
+        && !file_name.contains("..")
+        && file_name.ends_with(".xml")
+        && file_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+const CHART_NS: &[u8] = b"http://schemas.openxmlformats.org/drawingml/2006/chart";
+const DRAWING_NS: &[u8] = b"http://schemas.openxmlformats.org/drawingml/2006/main";
+const MC_NS: &[u8] = b"http://schemas.openxmlformats.org/markup-compatibility/2006";
+const C14_NS: &[u8] = b"http://schemas.microsoft.com/office/drawing/2007/8/2/chart";
+const HANCOM_OFFICE_NS: &[u8] = b"http://schemas.haansoft.com/office/8.0";
+const RELATIONSHIPS_NS: &[u8] =
+    b"http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const XML_NS: &[u8] = b"http://www.w3.org/XML/1998/namespace";
+
+fn validate_chart_part_xml(xml: &str, path: &str) -> Result<()> {
+    let mut reader = NsReader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut root_seen = false;
+    let mut root_closed = false;
+    let mut saw_chart = false;
+    let mut depth = 0usize;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(event) => {
+                if depth == 0 {
+                    if root_seen || root_closed {
+                        return Err(PluginError::corrupt(format!(
+                            "chart part {path:?} contains more than one root element"
+                        )));
+                    }
+                    root_seen = true;
+                    validate_chart_part_element(&reader, &event, true, &mut saw_chart, path)?;
+                } else {
+                    validate_chart_part_element(&reader, &event, false, &mut saw_chart, path)?;
+                }
+                depth = depth.checked_add(1).ok_or_else(|| {
+                    PluginError::corrupt(format!("chart part {path:?} XML depth overflowed"))
+                })?;
+                if depth > MAX_CHART_XML_DEPTH {
+                    return Err(PluginError::corrupt(format!(
+                        "chart part {path:?} nesting exceeds {MAX_CHART_XML_DEPTH} elements"
+                    )));
+                }
+            }
+            Event::Empty(event) => {
+                if depth == 0 {
+                    if root_seen || root_closed {
+                        return Err(PluginError::corrupt(format!(
+                            "chart part {path:?} contains more than one root element"
+                        )));
+                    }
+                    root_seen = true;
+                    root_closed = true;
+                    validate_chart_part_element(&reader, &event, true, &mut saw_chart, path)?;
+                } else {
+                    validate_chart_part_element(&reader, &event, false, &mut saw_chart, path)?;
+                }
+            }
+            Event::End(_) => {
+                depth = depth.checked_sub(1).ok_or_else(|| {
+                    PluginError::corrupt(format!(
+                        "chart part {path:?} has an unmatched closing element"
+                    ))
+                })?;
+                if depth == 0 {
+                    root_closed = true;
+                }
+            }
+            Event::Text(text) if depth == 0 && !text.decode()?.trim().is_empty() => {
+                return Err(PluginError::corrupt(format!(
+                    "chart part {path:?} contains text outside its root element"
+                )));
+            }
+            Event::CData(text)
+                if depth == 0 && !String::from_utf8_lossy(text.as_ref()).trim().is_empty() =>
+            {
+                return Err(PluginError::corrupt(format!(
+                    "chart part {path:?} contains CDATA outside its root element"
+                )));
+            }
+            Event::GeneralRef(reference) => {
+                let reference = reference.decode()?;
+                let predefined =
+                    matches!(reference.as_ref(), "amp" | "lt" | "gt" | "apos" | "quot")
+                        || reference.starts_with('#');
+                if depth == 0 || !predefined {
+                    return Err(PluginError::corrupt(format!(
+                        "chart part {path:?} contains unsupported entity reference &{reference};"
+                    )));
+                }
+            }
+            Event::DocType(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "chart part {path:?} must not contain a DTD"
+                )));
+            }
+            Event::PI(_) => {
+                return Err(PluginError::corrupt(format!(
+                    "chart part {path:?} must not contain processing instructions"
+                )));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if !root_seen || !root_closed || depth != 0 {
+        return Err(PluginError::corrupt(format!(
+            "chart part {path:?} does not contain one complete chartSpace root"
+        )));
+    }
+    if !saw_chart {
+        return Err(PluginError::corrupt(format!(
+            "chart part {path:?} is missing c:chart"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_chart_part_element(
+    reader: &NsReader<&[u8]>,
+    event: &BytesStart<'_>,
+    root: bool,
+    saw_chart: &mut bool,
+    path: &str,
+) -> Result<()> {
+    let (resolved, local) = reader.resolver().resolve_element(event.name());
+    let namespace = match resolved {
+        ResolveResult::Bound(namespace) => namespace,
+        ResolveResult::Unbound => {
+            return Err(PluginError::corrupt(format!(
+                "chart part {path:?} contains an unqualified element {:?}",
+                String::from_utf8_lossy(local.as_ref())
+            )));
+        }
+        ResolveResult::Unknown(prefix) => {
+            return Err(PluginError::corrupt(format!(
+                "chart part {path:?} uses undeclared namespace prefix {:?}",
+                String::from_utf8_lossy(&prefix)
+            )));
+        }
+    };
+    let namespace = namespace.as_ref();
+    let local = local.as_ref();
+    if root && (namespace != CHART_NS || local != b"chartSpace") {
+        return Err(PluginError::corrupt(format!(
+            "chart part {path:?} root must be c:chartSpace"
+        )));
+    }
+    if !is_allowed_chart_namespace(namespace) {
+        return Err(PluginError::unsupported_feature(format!(
+            "chart part {path:?} contains active namespace {:?}",
+            String::from_utf8_lossy(namespace)
+        )));
+    }
+    if namespace == CHART_NS && local == b"chart" {
+        *saw_chart = true;
+    }
+    if [
+        b"externalData".as_slice(),
+        b"userShapes".as_slice(),
+        b"pivotSource".as_slice(),
+        b"oleObject".as_slice(),
+        b"blip".as_slice(),
+        b"hlinkClick".as_slice(),
+        b"hlinkHover".as_slice(),
+    ]
+    .contains(&local)
+    {
+        return Err(PluginError::unsupported_feature(format!(
+            "chart part {path:?} contains external-resource element {}",
+            String::from_utf8_lossy(local)
+        )));
+    }
+
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| {
+            PluginError::corrupt(format!(
+                "chart part {path:?} has an invalid attribute: {error}"
+            ))
+        })?;
+        let raw_name = attribute.key.as_ref();
+        if raw_name == b"xmlns" || raw_name.starts_with(b"xmlns:") {
+            continue;
+        }
+        match reader.resolver().resolve_attribute(attribute.key).0 {
+            ResolveResult::Unbound => {}
+            ResolveResult::Bound(namespace) if namespace.as_ref() == RELATIONSHIPS_NS => {
+                return Err(PluginError::unsupported_feature(format!(
+                    "chart part {path:?} contains an external relationship attribute"
+                )));
+            }
+            ResolveResult::Bound(namespace)
+                if namespace.as_ref() == XML_NS
+                    || is_allowed_chart_namespace(namespace.as_ref()) => {}
+            ResolveResult::Bound(namespace) => {
+                return Err(PluginError::unsupported_feature(format!(
+                    "chart part {path:?} contains an active attribute namespace {:?}",
+                    String::from_utf8_lossy(namespace.as_ref())
+                )));
+            }
+            ResolveResult::Unknown(prefix) => {
+                return Err(PluginError::corrupt(format!(
+                    "chart part {path:?} uses undeclared attribute prefix {:?}",
+                    String::from_utf8_lossy(&prefix)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_allowed_chart_namespace(namespace: &[u8]) -> bool {
+    [CHART_NS, DRAWING_NS, MC_NS, C14_NS, HANCOM_OFFICE_NS].contains(&namespace)
 }
 
 fn read_entry_to_string_limited<R: Read + Seek>(

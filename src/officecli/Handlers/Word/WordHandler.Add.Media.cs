@@ -4,7 +4,11 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.Text;
+using System.Xml;
+using System.Xml.Linq;
 using A = DocumentFormat.OpenXml.Drawing;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 using OfficeCli.Core;
@@ -13,6 +17,29 @@ namespace OfficeCli.Handlers;
 
 public partial class WordHandler
 {
+    private const int MaxRawChartXmlBytes = 16 * 1024 * 1024;
+    private const int MaxRawChartBase64Chars = ((MaxRawChartXmlBytes + 2) / 3 * 4) + 1024;
+    private const int MaxRawChartXmlDepth = 256;
+    private const string ChartNamespace = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+    private const string DrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    private const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    private static readonly HashSet<string> RawChartCarrierProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chartXmlBase64", "chartXmlProfile", "width", "height", "anchor", "wrap",
+        "hrelative", "vrelative", "hposition", "vposition", "halign", "valign",
+        "relativeHeight", "wrapDist", "effectExtent", "behindtext", "name", "description",
+    };
+
+    private static readonly HashSet<string> RawChartElementNamespaces = new(StringComparer.Ordinal)
+    {
+        ChartNamespace,
+        DrawingNamespace,
+        "http://schemas.openxmlformats.org/markup-compatibility/2006",
+        "http://schemas.microsoft.com/office/drawing/2007/8/2/chart",
+        "http://schemas.haansoft.com/office/8.0",
+    };
+
     private string AddChart(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
         // CONSISTENCY(host-part-rel): same routing as AddPicture (round23 E) and
@@ -24,6 +51,14 @@ public partial class WordHandler
         // actually lives. Mirrors AddPicture/AddHyperlink. Without this,
         // footnote/endnote charts landed under document.xml.rels and Word 422'd.
         OpenXmlPart chartMainPart = ResolveHostPart(parent);
+
+        // Hancom HWPX stores a complete, relationship-free c:chartSpace part.
+        // Its native DOCX exporter carries that XML across instead of rebuilding
+        // series through the public chart vocabulary. Handle the guarded carrier
+        // before semantic data parsing so exact chart subtypes and style extensions
+        // survive without inventing an embedded workbook.
+        if (properties.TryGetValue("chartXmlBase64", out var chartXmlBase64))
+            return AddRawChartPart(parent, index, properties, chartMainPart, chartXmlBase64);
 
         // Parse chart data. Use TryGetValue(case-insensitive) so reads
         // are recorded by TrackingPropertyDictionary.
@@ -185,6 +220,345 @@ public partial class WordHandler
         var allCharts = GetAllWordCharts();
         var docOrderIdx = allCharts.FindIndex(c => ReferenceEquals(c.Container, frame));
         return $"/chart[{(docOrderIdx >= 0 ? docOrderIdx + 1 : allCharts.Count)}]";
+    }
+
+    private string AddRawChartPart(
+        OpenXmlElement parent,
+        int? index,
+        Dictionary<string, string> properties,
+        OpenXmlPart chartMainPart,
+        string chartXmlBase64)
+    {
+        foreach (var key in properties.Keys)
+        {
+            if (!RawChartCarrierProperties.Contains(key))
+            {
+                throw new ArgumentException(
+                    $"chartXmlBase64 cannot be combined with semantic chart property '{key}'.");
+            }
+            // Keys enumeration alone does not mark a TrackingPropertyDictionary
+            // entry consumed. Raw-carrier keys are accepted as one closed profile,
+            // including layout keys that are dormant for an inline frame.
+            properties.TryGetValue(key, out _);
+        }
+
+        // Every fallible parse and frame conversion happens before AddNewPart so
+        // rejected input cannot leave an orphan /word/charts/chartN.xml behind.
+        var chartXmlProfile = properties.TryGetValue("chartXmlProfile", out var explicitProfile)
+            ? explicitProfile
+            : "strict";
+        var normalizeHancomOrder = chartXmlProfile.Equals(
+            "hwpxChartOrderRepairV1",
+            StringComparison.OrdinalIgnoreCase);
+        if (!normalizeHancomOrder
+            && !chartXmlProfile.Equals("strict", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Unknown chartXmlProfile '{chartXmlProfile}'. Valid values: strict, hwpxChartOrderRepairV1.");
+        }
+        var chartSpace = ParseRawChartSpace(chartXmlBase64, normalizeHancomOrder);
+        long chartCx = properties.TryGetValue("width", out var width) ? ParseEmu(width) : 5400000;
+        long chartCy = properties.TryGetValue("height", out var height) ? ParseEmu(height) : 3600000;
+        if (chartCx <= 0 || chartCy <= 0)
+            throw new ArgumentException("Raw chart width and height must both be positive.");
+        var docPropId = NextDocPropId();
+        var chartName = properties.TryGetValue("name", out var explicitName)
+            && !string.IsNullOrEmpty(explicitName)
+                ? explicitName
+                : $"Chart {docPropId}";
+        var chartReference = new C.ChartReference { Id = "rIdRawChartPreflight" };
+        var graphic = new A.Graphic(
+            new A.GraphicData(chartReference) { Uri = ChartNamespace });
+        var frame = BuildChartFrame(graphic, chartCx, chartCy, docPropId, chartName, properties);
+
+        ChartPart? chartPart = null;
+        OpenXmlElement? insertedNode = null;
+        try
+        {
+            chartPart = chartMainPart.AddNewPart<ChartPart>();
+            chartPart.ChartSpace = chartSpace;
+            chartPart.ChartSpace.Save();
+            chartReference.Id = chartMainPart.GetIdOfPart(chartPart);
+
+            var chartRun = new Run(new Drawing(frame));
+            if (parent is Paragraph existingParagraph)
+            {
+                var children = existingParagraph.ChildElements.ToList();
+                if (index.HasValue && index.Value < children.Count)
+                    existingParagraph.InsertBefore(chartRun, children[index.Value]);
+                else
+                    existingParagraph.AppendChild(chartRun);
+                insertedNode = chartRun;
+            }
+            else
+            {
+                var chartParagraph = new Paragraph(chartRun);
+                AssignParaId(chartParagraph);
+                InsertAtIndexOrAppend(parent, chartParagraph, index);
+                insertedNode = chartParagraph;
+            }
+
+            var charts = GetAllWordCharts();
+            var documentOrderIndex = charts.FindIndex(chart => ReferenceEquals(chart.Container, frame));
+            return $"/chart[{(documentOrderIndex >= 0 ? documentOrderIndex + 1 : charts.Count)}]";
+        }
+        catch
+        {
+            insertedNode?.Remove();
+            if (chartPart != null)
+                chartMainPart.DeletePart(chartPart);
+            throw;
+        }
+    }
+
+    private static C.ChartSpace ParseRawChartSpace(string encoded, bool normalizeHancomOrder)
+    {
+        if (string.IsNullOrWhiteSpace(encoded))
+            throw new ArgumentException("chartXmlBase64 must not be empty.");
+        if (encoded.Length > MaxRawChartBase64Chars)
+            throw new ArgumentException($"chartXmlBase64 exceeds the {MaxRawChartXmlBytes}-byte limit.");
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(encoded);
+        }
+        catch (FormatException error)
+        {
+            throw new ArgumentException("chartXmlBase64 is not valid base64.", error);
+        }
+        if (bytes.Length == 0 || bytes.Length > MaxRawChartXmlBytes)
+            throw new ArgumentException($"Decoded chart XML must be 1..{MaxRawChartXmlBytes} bytes.");
+
+        string xml;
+        try
+        {
+            xml = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                .GetString(bytes);
+        }
+        catch (DecoderFallbackException error)
+        {
+            throw new ArgumentException("Decoded chart XML is not valid UTF-8.", error);
+        }
+
+        XDocument document;
+        try
+        {
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = MaxRawChartXmlBytes,
+            };
+            using (var depthTextReader = new StringReader(xml))
+            using (var depthReader = XmlReader.Create(depthTextReader, settings))
+            {
+                while (depthReader.Read())
+                {
+                    if (depthReader.NodeType == XmlNodeType.ProcessingInstruction)
+                        throw new ArgumentException("Decoded chart XML must not contain processing instructions.");
+                    if (depthReader.NodeType == XmlNodeType.Element
+                        && depthReader.Depth + 1 > MaxRawChartXmlDepth)
+                    {
+                        throw new ArgumentException(
+                            $"Decoded chart XML nesting exceeds {MaxRawChartXmlDepth} elements.");
+                    }
+                }
+            }
+            using var documentTextReader = new StringReader(xml);
+            using var documentReader = XmlReader.Create(documentTextReader, settings);
+            document = XDocument.Load(
+                documentReader,
+                LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
+        }
+        catch (XmlException error)
+        {
+            throw new ArgumentException($"Decoded chart XML is malformed or unsafe: {error.Message}", error);
+        }
+
+        var chartNs = XNamespace.Get(ChartNamespace);
+        var root = document.Root;
+        if (root?.Name != chartNs + "chartSpace")
+            throw new ArgumentException("Decoded chart XML root must be c:chartSpace.");
+        if (!root.Descendants(chartNs + "chart").Any())
+            throw new ArgumentException("Decoded chart XML is missing c:chart.");
+
+        foreach (var element in root.DescendantsAndSelf())
+        {
+            if (!RawChartElementNamespaces.Contains(element.Name.NamespaceName))
+            {
+                throw new ArgumentException(
+                    $"Decoded chart XML contains unsupported active namespace '{element.Name.NamespaceName}'.");
+            }
+            var localName = element.Name.LocalName;
+            bool externalElement =
+                element.Name.NamespaceName == ChartNamespace
+                    && localName is "externalData" or "userShapes" or "pivotSource" or "oleObject"
+                || element.Name.NamespaceName == DrawingNamespace
+                    && localName is "blip" or "hlinkClick" or "hlinkHover";
+            if (externalElement)
+                throw new ArgumentException($"Decoded chart XML contains external-resource element {localName}.");
+
+            foreach (var attribute in element.Attributes())
+            {
+                if (attribute.IsNamespaceDeclaration) continue;
+                var namespaceName = attribute.Name.NamespaceName;
+                if (namespaceName == RelationshipsNamespace)
+                    throw new ArgumentException("Decoded chart XML contains an external relationship attribute.");
+                if (namespaceName.Length > 0
+                    && namespaceName != XNamespace.Xml.NamespaceName
+                    && !RawChartElementNamespaces.Contains(namespaceName))
+                {
+                    throw new ArgumentException(
+                        $"Decoded chart XML contains unsupported active attribute namespace '{namespaceName}'.");
+                }
+            }
+        }
+
+        C.ChartSpace chartSpace;
+        try
+        {
+            // The SDK constructor requires one outer element (no XML declaration).
+            chartSpace = new C.ChartSpace(root.ToString(SaveOptions.DisableFormatting));
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        {
+            throw new ArgumentException("Decoded chart XML cannot be loaded as c:chartSpace.", error);
+        }
+
+        var validator = new DocumentFormat.OpenXml.Validation.OpenXmlValidator(
+            FileFormatVersions.Microsoft365);
+        var schemaErrors = validator.Validate(chartSpace).ToList();
+        if (schemaErrors.Count > 0 && !normalizeHancomOrder)
+        {
+            throw new ArgumentException(
+                $"Decoded chart XML is not schema-valid: {schemaErrors[0].Description}");
+        }
+        if (schemaErrors.Count > 0)
+        {
+            if (schemaErrors.Any(error => !IsKnownHancomChartOrderError(error)))
+            {
+                throw new ArgumentException(
+                    $"Decoded chart XML has an error outside chartXmlProfile=hwpxChartOrderRepairV1: {schemaErrors[0].Description}");
+            }
+            NormalizeHancomChartSchemaOrder(schemaErrors);
+            var postRepairError = validator.Validate(chartSpace).FirstOrDefault();
+            if (postRepairError != null)
+            {
+                throw new ArgumentException(
+                    $"Decoded chart XML is not schema-valid after Hancom order repair: {postRepairError.Description}");
+            }
+        }
+        return chartSpace;
+    }
+
+    private static bool IsKnownHancomChartOrderError(
+        DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
+    {
+        if (error.ErrorType != DocumentFormat.OpenXml.Validation.ValidationErrorType.Schema
+            || error.Id != "Sch_UnexpectedElementContentExpectingComplex"
+            || error.Node?.NamespaceUri != ChartNamespace
+            || error.RelatedNode?.NamespaceUri != ChartNamespace)
+        {
+            return false;
+        }
+        return (error.Node.LocalName is "catAx" or "valAx"
+                && error.RelatedNode.LocalName == "delete")
+            || (error.Node.LocalName == "view3D"
+                && error.RelatedNode.LocalName == "rotX");
+    }
+
+    private static void NormalizeHancomChartSchemaOrder(
+        IReadOnlyList<DocumentFormat.OpenXml.Validation.ValidationErrorInfo> errors)
+    {
+        // Hancom writes the values of CT_CatAx / CT_ValAx / CT_View3D correctly,
+        // but some releases serialize those children in producer order rather
+        // than the sequence required by ISO/IEC 29500. Only parents named by the
+        // structured pre-validation findings are eligible. The SDK particle
+        // metadata computes their canonical order; the original nodes themselves
+        // are moved, so attributes, values, and extension subtrees are not rebuilt.
+        var candidates = new List<OpenXmlCompositeElement>();
+        foreach (var error in errors)
+        {
+            if (error.Node is not OpenXmlCompositeElement candidate
+                || candidates.Any(existing => ReferenceEquals(existing, candidate)))
+            {
+                continue;
+            }
+            candidates.Add(candidate);
+        }
+
+        foreach (var candidate in candidates)
+        {
+            var children = candidate.ChildElements.ToList();
+            if (children.Count < 2
+                || children.Any(child => child is OpenXmlUnknownElement
+                    || child.NamespaceUri != ChartNamespace)
+                || children.Select(child => (child.NamespaceUri, child.LocalName)).Distinct().Count()
+                    != children.Count)
+            {
+                throw new ArgumentException(
+                    $"chartXmlProfile=hwpxChartOrderRepairV1 cannot safely reorder {candidate.LocalName} with unknown or duplicate direct children.");
+            }
+
+            var extensionIndex = children.FindIndex(child => child.LocalName == "extLst");
+            if (extensionIndex >= 0 && extensionIndex != children.Count - 1)
+            {
+                throw new ArgumentException(
+                    $"chartXmlProfile=hwpxChartOrderRepairV1 will not move content across {candidate.LocalName}/extLst.");
+            }
+            if (candidate is C.CategoryAxis or C.ValueAxis)
+            {
+                foreach (var required in new[] { "axId", "scaling", "delete", "axPos", "crossAx" })
+                {
+                    if (children.Count(child => child.LocalName == required) != 1)
+                    {
+                        throw new ArgumentException(
+                            $"chartXmlProfile=hwpxChartOrderRepairV1 requires one {candidate.LocalName}/{required} element.");
+                    }
+                }
+            }
+            else if (candidate is C.View3D)
+            {
+                var allowed = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "rotX", "hPercent", "rotY", "depthPercent", "rAngAx", "perspective", "extLst",
+                };
+                if (children.Any(child => !allowed.Contains(child.LocalName)))
+                {
+                    throw new ArgumentException(
+                        "chartXmlProfile=hwpxChartOrderRepairV1 found an unprofiled direct child in view3D.");
+                }
+            }
+            else
+            {
+                throw new ArgumentException(
+                    $"chartXmlProfile=hwpxChartOrderRepairV1 does not repair {candidate.LocalName}.");
+            }
+
+            var orderingProbe = (OpenXmlCompositeElement)candidate.CloneNode(false);
+            foreach (var child in children)
+            {
+                if (!orderingProbe.AddChild(child.CloneNode(true), throwOnError: false))
+                {
+                    throw new ArgumentException(
+                        $"chartXmlProfile=hwpxChartOrderRepairV1 cannot place {candidate.LocalName}/{child.LocalName} in the SDK schema particle.");
+                }
+            }
+
+            var originals = children.ToDictionary(
+                child => (child.NamespaceUri, child.LocalName),
+                child => child);
+            var ordered = orderingProbe.ChildElements
+                .Select(child => originals[(child.NamespaceUri, child.LocalName)])
+                .ToList();
+            if (ordered.Count != children.Count)
+                throw new ArgumentException("chartXmlProfile=hwpxChartOrderRepairV1 produced an incomplete order plan.");
+
+            candidate.RemoveAllChildren();
+            foreach (var child in ordered)
+                candidate.AppendChild(child);
+        }
     }
 
     /// <summary>

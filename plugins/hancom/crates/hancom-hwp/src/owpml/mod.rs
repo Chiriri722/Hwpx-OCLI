@@ -20,10 +20,43 @@ use styles::StyleTable;
 
 const MAX_IMAGE_REFERENCES: usize = 512;
 const MAX_EMBEDDED_IMAGE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CHART_REFERENCES: usize = 512;
+const MAX_EMBEDDED_CHART_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
 struct ImageBudget {
     references: ResourceBudget,
     output_bytes: ResourceBudget,
+}
+
+struct ChartBudget {
+    references: ResourceBudget,
+    output_bytes: ResourceBudget,
+}
+
+impl Default for ChartBudget {
+    fn default() -> Self {
+        Self {
+            references: ResourceBudget::new(
+                "chart reference count",
+                u64::try_from(MAX_CHART_REFERENCES).expect("constant fits in u64"),
+            ),
+            output_bytes: ResourceBudget::new(
+                "embedded chart XML bytes",
+                MAX_EMBEDDED_CHART_OUTPUT_BYTES,
+            ),
+        }
+    }
+}
+
+impl ChartBudget {
+    fn record_reference(&mut self) -> Result<()> {
+        self.references.consume(1)
+    }
+
+    fn record_output_bytes(&mut self, bytes: usize) -> Result<()> {
+        self.output_bytes
+            .consume(u64::try_from(bytes).unwrap_or(u64::MAX))
+    }
 }
 
 impl Default for ImageBudget {
@@ -85,19 +118,29 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
         numberings,
         styles: named_styles,
     };
-    resolve_images(&mut pkg, &mut doc)?;
+    resolve_embedded_resources(&mut pkg, &mut doc)?;
     Ok(doc)
 }
 
-/// 문서 안의 이미지 참조를 BinData 실제 바이트로 채운다.
+/// 문서 안의 BinData 이미지와 자가 완결형 차트 참조를 실제 payload로 채운다.
 ///
-/// 찾지 못한 참조는 `data`가 `None`으로 남고, emitter가 그 이미지를 건너뛴다.
-fn resolve_images<R: Read + Seek>(pkg: &mut Package<R>, doc: &mut Document) -> Result<()> {
-    let mut budget = ImageBudget::default();
+/// 찾지 못한 이미지는 `data`가 `None`으로 남고 emitter가 건너뛴다. 차트 참조는
+/// 편집 가능한 DOCX 개체를 보존하는 데 필수이므로 누락되면 즉시 실패한다.
+fn resolve_embedded_resources<R: Read + Seek>(
+    pkg: &mut Package<R>,
+    doc: &mut Document,
+) -> Result<()> {
+    let mut image_budget = ImageBudget::default();
+    let mut chart_budget = ChartBudget::default();
     for section in &mut doc.sections {
-        resolve_in_blocks(pkg, &mut section.blocks, &mut budget)?;
+        resolve_in_blocks(
+            pkg,
+            &mut section.blocks,
+            &mut image_budget,
+            &mut chart_budget,
+        )?;
         for story in section.headers.iter_mut().chain(&mut section.footers) {
-            resolve_in_blocks(pkg, &mut story.blocks, &mut budget)?;
+            resolve_in_blocks(pkg, &mut story.blocks, &mut image_budget, &mut chart_budget)?;
         }
     }
     Ok(())
@@ -107,14 +150,17 @@ fn resolve_images<R: Read + Seek>(pkg: &mut Package<R>, doc: &mut Document) -> R
 fn resolve_in_blocks<R: Read + Seek>(
     pkg: &mut Package<R>,
     blocks: &mut [Block],
-    budget: &mut ImageBudget,
+    image_budget: &mut ImageBudget,
+    chart_budget: &mut ChartBudget,
 ) -> Result<()> {
     for block in blocks {
         match block {
-            Block::Paragraph(p) => resolve_in_inlines(pkg, &mut p.inlines, budget)?,
+            Block::Paragraph(p) => {
+                resolve_in_inlines(pkg, &mut p.inlines, image_budget, chart_budget)?
+            }
             Block::Table(t) => {
                 for cell in &mut t.cells {
-                    resolve_in_blocks(pkg, &mut cell.blocks, budget)?;
+                    resolve_in_blocks(pkg, &mut cell.blocks, image_budget, chart_budget)?;
                 }
             }
         }
@@ -125,26 +171,39 @@ fn resolve_in_blocks<R: Read + Seek>(
 fn resolve_in_inlines<R: Read + Seek>(
     pkg: &mut Package<R>,
     inlines: &mut [Inline],
-    budget: &mut ImageBudget,
+    image_budget: &mut ImageBudget,
+    chart_budget: &mut ChartBudget,
 ) -> Result<()> {
     for inline in inlines {
         match inline {
             Inline::Image(img) => {
-                budget.record_reference()?;
+                image_budget.record_reference()?;
                 if let Some(bytes) = img.data.as_ref() {
-                    budget.record_output_bytes(bytes.len())?;
+                    image_budget.record_output_bytes(bytes.len())?;
                     continue;
                 }
                 if let Some((bytes, ctype)) = pkg.read_bin_item(&img.bin_item_id)? {
-                    budget.record_output_bytes(bytes.len())?;
+                    image_budget.record_output_bytes(bytes.len())?;
                     img.data = Some(bytes);
                     img.content_type = Some(ctype);
                 }
             }
-            Inline::Note(note) => resolve_in_blocks(pkg, &mut note.blocks, budget)?,
+            Inline::Chart(chart) => {
+                chart_budget.record_reference()?;
+                if let Some(xml) = chart.xml.as_ref() {
+                    chart_budget.record_output_bytes(xml.len())?;
+                    continue;
+                }
+                let xml = pkg.read_chart_part(&chart.chart_id_ref)?;
+                chart_budget.record_output_bytes(xml.len())?;
+                chart.xml = Some(xml);
+            }
+            Inline::Note(note) => {
+                resolve_in_blocks(pkg, &mut note.blocks, image_budget, chart_budget)?
+            }
             Inline::Rectangle(rectangle) => {
                 if let Some(text) = &mut rectangle.text {
-                    resolve_in_blocks(pkg, &mut text.blocks, budget)?;
+                    resolve_in_blocks(pkg, &mut text.blocks, image_budget, chart_budget)?;
                 }
             }
             _ => {}

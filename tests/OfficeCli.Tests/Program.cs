@@ -3,7 +3,9 @@
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core;
@@ -152,6 +154,8 @@ var tests = new (string Name, Action Run)[]
     ("style schema accepts emitted paragraph indents", StyleSchemaAcceptsEmittedParagraphIndents),
     ("style add preserves numeric ids and forward next references", StyleAddPreservesNumericIdsAndForwardNextReferences),
     ("note reference decorations preserve prefix suffix and baseline", NoteReferenceDecorationsArePreserved),
+    ("raw chart parts preserve values and normalize schema order", RawChartPartsPreserveValuesAndNormalizeSchemaOrder),
+    ("raw chart carrier rejects unsafe payloads atomically", RawChartCarrierRejectsUnsafePayloadsAtomically),
     ("textbox and shape preserve inline anchor layout contracts", TextboxAndShapePreserveInlineAnchorLayoutContracts),
     ("textbox ordinals include nested cell drawings", TextboxOrdinalsIncludeNestedCellDrawings),
 };
@@ -529,6 +533,342 @@ static void TextboxAndShapePreserveInlineAnchorLayoutContracts()
         Assert(legacyBehindShapeXml.Contains("<wp:wrapNone", StringComparison.Ordinal)
             && legacyBehindShapeXml.Contains("behindDoc=\"1\"", StringComparison.Ordinal),
             "legacy wrap=behind did not place the shape behind document text");
+    }
+    finally
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+}
+
+static void RawChartPartsPreserveValuesAndNormalizeSchemaOrder()
+{
+    var sourcePath = Path.Combine(Path.GetTempPath(), $"officecli-chart-carrier-source-{Guid.NewGuid():N}.docx");
+    var targetPath = Path.Combine(Path.GetTempPath(), $"officecli-chart-carrier-target-{Guid.NewGuid():N}.docx");
+    var normalizedPath = Path.Combine(Path.GetTempPath(), $"officecli-chart-carrier-normalized-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(sourcePath);
+        using (var handler = new OfficeCli.Handlers.WordHandler(sourcePath, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "source",
+            });
+            handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+            {
+                ["type"] = "column3d",
+                ["data"] = "Series 1:1,2,3",
+                ["categories"] = "A,B,C",
+                ["title"] = "Carrier source",
+            });
+            handler.Save();
+        }
+
+        string sourceChartXml;
+        using (var source = WordprocessingDocument.Open(sourcePath, false))
+        {
+            sourceChartXml = source.MainDocumentPart!.ChartParts.Single().ChartSpace!.OuterXml;
+        }
+
+        OfficeCli.BlankDocCreator.Create(targetPath);
+        using (var handler = new OfficeCli.Handlers.WordHandler(targetPath, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "target",
+            });
+            var result = handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+            {
+                ["chartXmlBase64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(sourceChartXml)),
+                ["width"] = "4095750emu",
+                ["height"] = "2381250emu",
+                ["anchor"] = "true",
+                ["wrap"] = "square",
+                ["hrelative"] = "column",
+                ["vrelative"] = "paragraph",
+                ["hposition"] = "0emu",
+                ["vposition"] = "0emu",
+                ["relativeHeight"] = "8",
+                ["wrapDist"] = "0,0,0,0",
+                ["name"] = "한컴 차트 1",
+                ["description"] = "한컴 차트 설명",
+            });
+            Assert(result == "/chart[1]", $"unexpected raw chart path: {result}");
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"raw chart props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+            handler.Save();
+        }
+
+        using (var target = WordprocessingDocument.Open(targetPath, false))
+        {
+            var main = target.MainDocumentPart!;
+            var targetChartPart = main.ChartParts.Single();
+            var targetChartXml = targetChartPart.ChartSpace!.OuterXml;
+            Assert(XNode.DeepEquals(XElement.Parse(sourceChartXml), XElement.Parse(targetChartXml)),
+                "raw chart XML changed during carrier insertion");
+            var chartReference = main.Document!
+                .Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>()
+                .Single();
+            Assert(ReferenceEquals(main.GetPartById(chartReference.Id!), targetChartPart),
+                "document chart reference does not resolve to the inserted ChartPart");
+            Assert(main.Parts.Count(pair => ReferenceEquals(pair.OpenXmlPart, targetChartPart)) == 1,
+                "raw chart carrier created an ambiguous host-to-chart topology");
+            Assert(!targetChartPart.Parts.Any()
+                   && !targetChartPart.ExternalRelationships.Any()
+                   && !targetChartPart.HyperlinkRelationships.Any()
+                   && !targetChartPart.DataPartReferenceRelationships.Any(),
+                "self-contained raw chart unexpectedly gained outbound relationships");
+
+            var anchor = main.Document!.Descendants<DocumentFormat.OpenXml.Drawing.Wordprocessing.Anchor>().Single();
+            Assert(anchor.Extent?.Cx?.Value == 4095750L && anchor.Extent?.Cy?.Value == 2381250L,
+                "raw chart extent did not preserve HWPUNIT-to-EMU geometry");
+            Assert(anchor.HorizontalPosition?.RelativeFrom?.Value
+                    == DocumentFormat.OpenXml.Drawing.Wordprocessing.HorizontalRelativePositionValues.Column,
+                "raw chart horizontal reference is not column-relative");
+            Assert(anchor.VerticalPosition?.RelativeFrom?.Value
+                    == DocumentFormat.OpenXml.Drawing.Wordprocessing.VerticalRelativePositionValues.Paragraph,
+                "raw chart vertical reference is not paragraph-relative");
+            Assert(anchor.HorizontalPosition?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Wordprocessing.PositionOffset>()?.Text == "0",
+                "raw chart horizontal offset changed");
+            Assert(anchor.VerticalPosition?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Wordprocessing.PositionOffset>()?.Text == "0",
+                "raw chart vertical offset changed");
+            Assert(anchor.RelativeHeight?.Value == 8U,
+                "raw chart relative height changed");
+            Assert(anchor.AllowOverlap?.Value == true && anchor.LayoutInCell?.Value == true,
+                "raw chart native overlap/layout flags changed");
+            Assert(anchor.DistanceFromTop?.Value == 0U && anchor.DistanceFromBottom?.Value == 0U
+                && anchor.DistanceFromLeft?.Value == 0U && anchor.DistanceFromRight?.Value == 0U,
+                "raw chart wrap distances changed");
+            Assert(anchor.GetFirstChild<DocumentFormat.OpenXml.Drawing.Wordprocessing.WrapSquare>()?.WrapText?.Value
+                    == DocumentFormat.OpenXml.Drawing.Wordprocessing.WrapTextValues.BothSides,
+                "raw chart wrap mode changed");
+            Assert(anchor.GetFirstChild<DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties>()?.Name?.Value == "한컴 차트 1",
+                "raw chart object name changed");
+            Assert(anchor.GetFirstChild<DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties>()?.Description?.Value == "한컴 차트 설명",
+                "raw chart accessibility description changed");
+        }
+
+        var chartNs = XNamespace.Get("http://schemas.openxmlformats.org/drawingml/2006/chart");
+        var noncanonicalChart = XDocument.Parse(sourceChartXml);
+        foreach (var axis in noncanonicalChart.Descendants()
+                     .Where(element => element.Name == chartNs + "catAx" || element.Name == chartNs + "valAx"))
+        {
+            var delete = axis.Element(chartNs + "delete")
+                ?? new XElement(chartNs + "delete", new XAttribute("val", "0"));
+            delete.Remove();
+            var crossAxis = axis.Element(chartNs + "crossAx")
+                ?? throw new InvalidOperationException("source chart is missing c:crossAx");
+            crossAxis.AddAfterSelf(delete);
+        }
+        var chart = noncanonicalChart.Root?.Element(chartNs + "chart")
+            ?? throw new InvalidOperationException("source chart is missing c:chart");
+        var plotArea = chart.Element(chartNs + "plotArea")
+            ?? throw new InvalidOperationException("source chart is missing c:plotArea");
+        var view3D = chart.Element(chartNs + "view3D");
+        view3D?.Remove();
+        plotArea.AddBeforeSelf(new XElement(chartNs + "view3D",
+            new XElement(chartNs + "rAngAx", new XAttribute("val", "1")),
+            new XElement(chartNs + "rotX", new XAttribute("val", "15")),
+            new XElement(chartNs + "rotY", new XAttribute("val", "20")),
+            new XElement(chartNs + "perspective", new XAttribute("val", "30")),
+            new XElement(chartNs + "hPercent", new XAttribute("val", "100")),
+            new XElement(chartNs + "depthPercent", new XAttribute("val", "100"))));
+
+        OfficeCli.BlankDocCreator.Create(normalizedPath);
+        using (var handler = new OfficeCli.Handlers.WordHandler(normalizedPath, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "normalized",
+            });
+            var encodedNoncanonicalChart = Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(noncanonicalChart.ToString(SaveOptions.DisableFormatting)));
+            var strictRejected = false;
+            try
+            {
+                handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+                {
+                    ["chartXmlBase64"] = encodedNoncanonicalChart,
+                    ["width"] = "4095750emu",
+                    ["height"] = "2381250emu",
+                });
+            }
+            catch (ArgumentException)
+            {
+                strictRejected = true;
+            }
+            Assert(strictRejected,
+                "the generic raw carrier silently applied Hancom compatibility normalization");
+
+            var unprofiledAxisChart = new XDocument(noncanonicalChart);
+            var unprofiledCategoryAxis = unprofiledAxisChart
+                .Descendants(chartNs + "catAx")
+                .First();
+            unprofiledCategoryAxis.Name = chartNs + "dateAx";
+            var unprofiledRejected = false;
+            try
+            {
+                handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+                {
+                    ["chartXmlBase64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                        unprofiledAxisChart.ToString(SaveOptions.DisableFormatting))),
+                    ["chartXmlProfile"] = "hwpxChartOrderRepairV1",
+                    ["width"] = "4095750emu",
+                    ["height"] = "2381250emu",
+                });
+            }
+            catch (ArgumentException)
+            {
+                unprofiledRejected = true;
+            }
+            Assert(unprofiledRejected, "Hancom v1 profile repaired an unprofiled dateAx error");
+
+            var duplicateChart = new XDocument(noncanonicalChart);
+            var duplicateAxis = duplicateChart.Descendants(chartNs + "catAx").First();
+            duplicateAxis.Element(chartNs + "delete")!.AddAfterSelf(
+                new XElement(chartNs + "delete", new XAttribute("val", "1")));
+            var duplicateRejected = false;
+            try
+            {
+                handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+                {
+                    ["chartXmlBase64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                        duplicateChart.ToString(SaveOptions.DisableFormatting))),
+                    ["chartXmlProfile"] = "hwpxChartOrderRepairV1",
+                    ["width"] = "4095750emu",
+                    ["height"] = "2381250emu",
+                });
+            }
+            catch (ArgumentException)
+            {
+                duplicateRejected = true;
+            }
+            Assert(duplicateRejected, "Hancom v1 profile guessed between duplicate singleton children");
+
+            handler.Add("/body/p[1]", "chart", null, new Dictionary<string, string>
+            {
+                ["chartXmlBase64"] = encodedNoncanonicalChart,
+                ["chartXmlProfile"] = "hwpxChartOrderRepairV1",
+                ["width"] = "4095750emu",
+                ["height"] = "2381250emu",
+            });
+            handler.Save();
+        }
+        using (var normalized = WordprocessingDocument.Open(normalizedPath, false))
+        {
+            var errors = new DocumentFormat.OpenXml.Validation.OpenXmlValidator(
+                    DocumentFormat.OpenXml.FileFormatVersions.Microsoft365)
+                .Validate(normalized)
+                .ToList();
+            Assert(errors.Count == 0,
+                $"schema-order normalization left validation errors: {string.Join(" | ", errors.Select(error => error.Description))}");
+            var normalizedChart = XElement.Parse(
+                normalized.MainDocumentPart!.ChartParts.Single().ChartSpace!.OuterXml);
+            static string InfosetFingerprint(XElement root)
+            {
+                return string.Join("\n", root.DescendantsAndSelf().Select(element =>
+                {
+                    var path = string.Join("/", element.AncestorsAndSelf().Reverse()
+                        .Select(ancestor => $"{{{ancestor.Name.NamespaceName}}}{ancestor.Name.LocalName}"));
+                    var attributes = string.Join(";", element.Attributes()
+                        .Where(attribute => !attribute.IsNamespaceDeclaration)
+                        .Select(attribute => $"{{{attribute.Name.NamespaceName}}}{attribute.Name.LocalName}={attribute.Value}")
+                        .OrderBy(value => value, StringComparer.Ordinal));
+                    var leafText = element.HasElements ? "" : element.Value;
+                    return $"{path}|{attributes}|{leafText}";
+                }).OrderBy(value => value, StringComparer.Ordinal));
+            }
+            Assert(InfosetFingerprint(noncanonicalChart.Root!) == InfosetFingerprint(normalizedChart),
+                "Hancom order repair changed chart elements, attributes, text, or parentage");
+            var normalizedView3D = normalizedChart.Descendants(chartNs + "view3D").Single();
+            Assert(string.Join(",", normalizedView3D.Elements().Select(element => element.Name.LocalName))
+                    == "rotX,hPercent,rotY,depthPercent,rAngAx,perspective",
+                "view3D children were not normalized to CT_View3D order");
+            foreach (var axis in normalizedChart.Descendants()
+                         .Where(element => element.Name == chartNs + "catAx" || element.Name == chartNs + "valAx"))
+            {
+                var children = axis.Elements().Select(element => element.Name.LocalName).ToList();
+                Assert(children.IndexOf("delete") < children.IndexOf("axPos")
+                       && children.IndexOf("crossAx") > children.IndexOf("tickLblPos"),
+                    $"axis children were not normalized: {string.Join(",", children)}");
+            }
+        }
+
+    }
+    finally
+    {
+        if (File.Exists(sourcePath)) File.Delete(sourcePath);
+        if (File.Exists(targetPath)) File.Delete(targetPath);
+        if (File.Exists(normalizedPath)) File.Delete(normalizedPath);
+    }
+}
+
+static void RawChartCarrierRejectsUnsafePayloadsAtomically()
+{
+    const string chartNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+    const string relationshipsNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    var validChart = $"<c:chartSpace xmlns:c=\"{chartNs}\"><c:chart><c:plotArea><c:layout/></c:plotArea></c:chart></c:chartSpace>";
+    var deepChart = validChart
+        .Replace("<c:chart>", "<c:chart>" + string.Concat(Enumerable.Repeat("<c:ext>", 256)), StringComparison.Ordinal)
+        .Replace("</c:chart>", string.Concat(Enumerable.Repeat("</c:ext>", 256)) + "</c:chart>", StringComparison.Ordinal);
+    var cases = new (string Label, string Encoded, KeyValuePair<string, string>? ExtraProperty)[]
+    {
+        ("invalid base64", "not-base64", null),
+        ("invalid UTF-8", Convert.ToBase64String(new byte[] { 0xc3, 0x28 }), null),
+        ("DTD", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $"<!DOCTYPE c:chartSpace [<!ENTITY injected 'x'>]>{validChart}")), null),
+        ("processing instruction", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            validChart.Replace("<c:chart>", "<c:chart><?unsafe value?>", StringComparison.Ordinal))), null),
+        ("unknown namespace", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            validChart.Replace("</c:chartSpace>", "<evil:payload xmlns:evil=\"urn:unverified\"/></c:chartSpace>", StringComparison.Ordinal))), null),
+        ("external relationship", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            validChart.Replace("</c:chartSpace>", $"<c:externalData xmlns:r=\"{relationshipsNs}\" r:id=\"rId1\"/></c:chartSpace>", StringComparison.Ordinal))), null),
+        ("excessive nesting", Convert.ToBase64String(Encoding.UTF8.GetBytes(deepChart)), null),
+        ("duplicate chart", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            validChart.Replace("</c:chartSpace>", "<c:chart><c:plotArea/></c:chart></c:chartSpace>", StringComparison.Ordinal))), null),
+        ("unknown compatibility profile", Convert.ToBase64String(Encoding.UTF8.GetBytes(validChart)),
+            new KeyValuePair<string, string>("chartXmlProfile", "other")),
+        ("semantic property mixing", Convert.ToBase64String(Encoding.UTF8.GetBytes(validChart)),
+            new KeyValuePair<string, string>("data", "Series 1:1")),
+    };
+
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-chart-carrier-rejected-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(path);
+        using (var handler = new OfficeCli.Handlers.WordHandler(path, editable: true))
+        {
+            handler.Add("/body", "paragraph", null, new Dictionary<string, string>
+            {
+                ["text"] = "unchanged",
+            });
+            foreach (var (label, encoded, extraProperty) in cases)
+            {
+                var properties = new Dictionary<string, string>
+                {
+                    ["chartXmlBase64"] = encoded,
+                    ["width"] = "1cm",
+                    ["height"] = "1cm",
+                };
+                if (extraProperty is { } extra)
+                    properties[extra.Key] = extra.Value;
+
+                var rejected = false;
+                try
+                {
+                    handler.Add("/body/p[1]", "chart", null, properties);
+                }
+                catch (ArgumentException)
+                {
+                    rejected = true;
+                }
+                Assert(rejected, $"unsafe raw chart case was accepted: {label}");
+            }
+            handler.Save();
+        }
+        using var rejectedDocument = WordprocessingDocument.Open(path, false);
+        Assert(!rejectedDocument.MainDocumentPart!.ChartParts.Any(),
+            "rejected raw chart payload left an orphan ChartPart behind");
     }
     finally
     {

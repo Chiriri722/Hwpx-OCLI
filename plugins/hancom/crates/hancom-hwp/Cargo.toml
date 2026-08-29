@@ -48,6 +48,7 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
+base64 = "0.23.0"
 # HWP 5.x protocol fixtures use a synthetic CFB container.
 cfb = "0.14.0"
 predicates = "3.1.4"
