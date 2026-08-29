@@ -54,7 +54,7 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 호스트 예약 코드 6을 절대 내지 않음 | `never_exits_with_host_reserved_code_six` |
 | stdout 오염 없음 (도움말·진단·에러) | `help_does_not_pollute_stdout`, `dump_keeps_diagnostics_off_stdout` |
 | `--quiet` / `--log-file` / `--media-dir` | 각 동명 테스트 |
-| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·다중섹션·자원 경계) | `parse_owpml.rs` 44개 |
+| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·구역 story·자원 경계) | `parse_owpml.rs` 64개 |
 | 병합 격자 인덱싱 (가로/세로/복합/빈칸) | `word.rs::horizontal_merge_mid_row_*` 외 4개 |
 | 단위 변환 (HWPUNIT→twip/pt, twip→pt) | `model.rs`, `word.rs::twip_to_pt_divides_by_twenty` |
 | 엔티티 해제 (텍스트·속성 양쪽) | `preserves_korean_and_special_characters`, `unescapes_entities_in_attribute_values` |
@@ -65,17 +65,21 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 항목 | 위험 | 비고 |
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 실제 문서 **5건**으로 검증(버그 7건 발견). 구청 공고·양식에 치우쳤다. 보고서·논문·통계자료 계열은 미검증 |
-| 이미지·각주/미주·수식·도형·머리말 | 낮음~미상 | 기존 코퍼스 5건에는 **하나도 없었다**. 이미지·각주/미주는 합성 픽스처와 실제 OfficeCLI DOCX 구조로 검증했다. 수식은 공개 `SimpleEquation.hwpx`와 합성 r1.3 구문을 네이티브 OMML까지 검증했지만 다양한 실제 한컴 수식, 실제 각주, 도형·머리말은 미검증 |
+| 이미지·각주/미주·수식·도형·머리말 | 낮음~미상 | 이미지와 representable 주석은 합성 픽스처/실제 OfficeCLI 구조로 검증했다. 한컴 2020에서 직접 만든 실제 각주·미주는 `noteLine`/`noteSpacing` 손실 때문에 exit 3·stdout 0을 확인했다. 공개 `HeaderFooter.hwpx`는 실제 DOCX replay와 lint를 통과했다. 다양한 수식·구역 story와 도형 실문서는 더 필요하다 |
 | Windows / Linux 동작 | 부분 검증 | run `31700156231`의 양 OS H3 브리지·MSRV 1.88와 기존 HWPX discovery는 성공. H1 run `31890284597`, `32793306250`는 OfficeCLI 1.0.143 오류 처리에 가려 실패했다. 1.0.145 고정 자산은 로컬 양 OS smoke를 통과했으며 workflow 재실행이 필요 |
 | 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. 별도 host 계약에서 1초 idle budget보다 긴 프로세스가 반복 heartbeat로 완료되는 종단간 타이머 reset을 확인. 대형 binary HWP 자체는 미실측 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-T2-2 수식은 커밋 `d62155df`에서 끝났고 HWPX plugin run `33236634179`와 action pin
-run `33236634150`이 성공했다. 다음 작업은 T2-3 머리말/꼬리말과 구역별 각주/미주
-번호 정책이다. 공식 OWPML 구역·머리말 참조 구조와 OfficeCLI header/footer 쓰기 순서를
-먼저 실측한 뒤 파서→공용 모델→docx JSONL→`plugins lint`→실제 DOCX 순으로 닫는다.
+T2-3은 커밋 `393785ab`에서
+`docs/adr/0007-hancom-section-stories-and-note-policy.md`의 경계로 구현했고 HWPX plugin
+run `33241159576`과 action pin run `33241159629`가 성공했다.
+구역 spine, 머리말/꼬리말 `BOTH`/`ODD`/`EVEN`/first, 동적 PAGE/NUMPAGES, 주석 번호·
+표식 정책을 보존한다. `noteLine`/`noteSpacing`은 active note면 stdout 전에 exit 3,
+dormant면 정확한 값을 담은 필수 구조화 경고를 낸다. 다음 작업은 T2-4 목록 번호 구조다.
+문단의 `paraPrIDRef`와 header.xml의 numbering/bullet 정의를 먼저 연결하고, 표시 문자열을
+고정 텍스트로 복사하지 말고 OfficeCLI numbering 어휘로 동적 구조를 만든다.
 
 Phase 7의 host discovery·installer·공급망 하드닝은 로컬에서 완료했다.
 Host 계약 35개, Windows installer 12개, 비-root Linux installer 21개와
@@ -304,21 +308,24 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
   replay가 실패한다. 문단은 남으므로 위치는 보존된다.
 - **`header.xml`이 없어도 진행한다.** 서식은 잃지만 텍스트는 살린다.
   아무것도 못 하는 것보다 낫다.
-- **각주/미주의 본문 구조는 보존하지만 표식 정책은 아직 Word 기본값이다.**
-  `userChar`/`prefixChar`/`suffixChar`와 구역별 번호 형식·재시작·배치는 안전한
-  매핑 근거가 없어 T2-3의 구역 설정과 함께 재검토한다. 실제 각주가 든 공개
-  HWPX 코퍼스도 아직 확보하지 못했다.
+- **각주/미주의 동적 번호·접두/접미·위첨자는 보존하지만 구분선/간격은 대응 속성이 없다.**
+  `noteLine`/`noteSpacing`이 있고 해당 종류의 실제 주석도 있으면 값과 무관하게 exit 3으로
+  거부한다. 실제 주석이 없을 때만 정확한 원본 값을 담은 필수 JSON 경고와 함께 진행한다.
+  흔한 기본값 allowlist는 두지 않는다. `userChar` custom mark도 자동 번호를 바꾸지 않고
+  보존할 경로가 검증될 때까지 exit 3이다.
+- **머리말/꼬리말의 구역 시작 story만 안전하게 내린다.** `BOTH`/`ODD`/`EVEN`과 첫 페이지
+  숨김은 빈 슬롯을 명시해 상속을 차단한다. 본문 뒤 중간 활성화나 겹치는 같은 슬롯은
+  한 DOCX 구역으로 근사하지 않고 exit 3이다.
 - **수식은 손실 없는 폐쇄 부분집합만 지원한다.** 공식 r1.3을 기준으로 하되 OfficeCLI
   LaTeX가 동등하게 표현하지 못하는 `LONGDIV`/`LADDER`/`SCALE` 및 일부 big/small
   변형은 exit 3으로 거부한다. 다양한 실제 한컴 수식 코퍼스는 아직 없다.
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 머리말/꼬리말과 구역별 각주/미주 표식·번호 정책 (T2-3)
-2. 목록 번호 매기기 (`numbering`, T2-4)
-3. 스타일 이름 매핑 (`styleIDRef` → docx `style`, T2-5)
-4. 도형·글상자와 차트 (T2-6/T2-7)
-5. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
+1. 목록 번호 매기기 (`numbering`, T2-4)
+2. 스타일 이름 매핑 (`styleIDRef` → docx `style`, T2-5)
+3. 도형·글상자와 차트 (T2-6/T2-7)
+4. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
 
 ## 6. 참고 자료 위치
 

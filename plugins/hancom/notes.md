@@ -204,3 +204,13 @@
 - 64KiB 입력, 8,192 토큰, 그룹/접두사 깊이 64, AST 16,384노드·깊이 128, 행렬 4,096셀, LaTeX 256KiB 한계를 두고 각 N/N+1 경계를 테스트했다. 손상·미지 명령·PUA·RGB·불균등 행렬과 자원 초과는 exit 2이며, 후반 수식 실패 전 성공한 문단도 stdout에 유출하지 않는다.
 - 실제 OfficeCLI에서 공개 SimpleEquation을 플러그인 dump→batch→validate→query로 재생했고, 인라인/표시·색상·행렬/구조·적분 상하한·왼쪽 첨자·장식과 표 셀 `A-수식-B-수식-C` 순서를 네이티브 OMML DOCX에서 확인했다. `plugins lint`는 unknown prop 0이었다. 다만 다양한 실제 한컴 수식 코퍼스는 아직 확보하지 못했다.
 - 로컬 Rust 1.88 전체 457개 테스트, stable Clippy `-D warnings`, release build와 포맷/diff 검사가 통과했다. 구현 커밋 `d62155df`, HWPX plugin run `33236634179`, action pin run `33236634150`이 모두 성공했다.
+
+### 2026-08-29 T2-3 구역 story·주석 정책
+- `content.hpf` spine의 구역을 공용 모델에 유지하고 각 구역 본문 뒤에 DOCX section carrier를 만든다. 머리말/꼬리말은 `BOTH`/`ODD`/`EVEN`을 default/even 슬롯에 투영하고 문서 어디서든 parity가 필요하면 모든 관련 구역의 빠진 슬롯을 빈 part로 명시해 이전 구역 상속을 막는다. `hideFirstHeader`/`hideFirstFooter`는 `titlePage`와 first part로 보존한다.
+- 한컴/OfficeCLI 실제 파일로 header/footer 생성 순서를 실측했다. host가 자동 생성하는 첫 문단은 첫 source 문단으로 재사용하고, story가 표로 시작할 때만 모든 블록을 붙인 뒤 seed `p[1]`을 제거한다. 본문 뒤 중간 활성화와 겹치는 timeline은 구역 전체로 넓히지 않고 exit 3이다. 단독 ODD/EVEN은 반대 슬롯을 비워 정확히 지원한다.
+- 머리말/꼬리말 안의 `PAGE`/`TOTAL_PAGE`는 표시 숫자가 아니라 동적 DOCX `PAGE`/`NUMPAGES` field로 내린다. host field 스키마가 handler가 이미 받는 문자 서식 속성을 선언하지 않아 실제 `exam-kor-1p.hwpx` lint에서 3건이 검출됐고, schema 회귀 테스트와 shared run bases로 정정했다. 최종 결과는 75개 BatchItem, unknown prop 0이다.
+- 구역별 `footNotePr`/`endNotePr`의 번호 형식, 재시작, 시작 번호, 배치와 prefix/suffix/supscript를 typed model로 올리고 DOCX section/note reference에 적용한다. host의 note add/dump도 body와 note-body 양쪽의 동적 번호 주변 문자를 보존하도록 확장했다.
+- OWPML `noteLine` 18종, width 16종, RGB와 `noteSpacing` 세 수치를 닫힌 형식으로 검증·보존한다. DOCX에 같은 구역 범위가 없으므로 값과 무관한 정책을 쓴다. active note면 stdout 전에 exit 3, dormant policy면 exact source values가 든 `HWPX_DORMANT_NOTE_LAYOUT_NOT_MATERIALIZED` 경고를 stderr에 먼저 flush한다. `--quiet`/`--log-file`도 경고를 숨기지 않고, host는 성공한 dump-reader의 bounded JSON warning envelope만 전달한다.
+- 한컴 2020에서 직접 footnote/endnote HWPX와 DOCX oracle을 만들었다. 두 HWPX 모두 authored note line/spacing 때문에 exit 3, stdout 0바이트였다. 공개 hwpxlib `HeaderFooter.hwpx`는 7개 BatchItem·unknown prop 0이고, dormant footnote/endnote 원본 정책 두 건을 구조화 경고로 유지한다.
+- 후속 리뷰에서 본문에 홀로 나온 FOOTNOTE/ENDNOTE `autoNum`, 다른 종류 note 안의 marker, header/note `subList`의 알 수 없는 직접 자식이 사라질 수 있던 경계를 RED로 재현했다. marker는 대응 note context에서만 소비하고 나머지는 corrupt/unsupported로 실패하며, 탭 뒤 story 활성화도 mid-section으로 거부한다.
+- 최종 로컬 게이트는 Rust 전체 486개, host 계약 38개, Rust 1.88 Clippy `-D warnings`, release build, 고정 .NET 10.0.302 build, `cargo fmt --check`, `git diff --check`다. 구현 커밋 `393785ab`, HWPX plugin run `33241159576`, action pin run `33241159629`가 모두 성공했고, 결정은 `docs/adr/0007-hancom-section-stories-and-note-policy.md`에 기록했다.

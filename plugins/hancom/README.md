@@ -194,6 +194,9 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 열 너비 (`hp:cellSz`) | `colWidths` (twip) |
 | 이미지 (`hp:pic` + `BinData`) | `add --type picture --prop src=data:...` |
 | 각주/미주 (`hp:footNote` / `hp:endNote`) | 참조 위치의 실제 `footnote` / `endnote` + 주석 본문 블록 |
+| 구역별 각주/미주 정책 | 번호 형식·재시작·시작·배치 + 동적 참조의 접두/접미·위첨자 |
+| 머리말/꼬리말 (`hp:header` / `hp:footer`) | 구역별 `header` / `footer` default·even·first story |
+| 페이지 번호 (`hp:autoNum` PAGE/TOTAL_PAGE) | 동적 `PAGE` / `NUMPAGES` field |
 | 수식 (`hp:equation`) | `equation` (`formula`=LaTeX, `mode`=inline/display) |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
@@ -205,8 +208,15 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 
 각주/미주는 필수 `hp:subList`의 여러 문단·런 서식·표·이미지를 구조적으로
 보존한다. 중첩 주석이나 `subList` 밖의 내용은 조용히 버리지 않고 손상 입력으로
-거부한다. 다만 `userChar`/`prefixChar`/`suffixChar` 사용자 표식과 구역별
-`footNotePr`/`endNotePr` 번호 형식·재시작·배치는 아직 Word 기본값으로 출력한다.
+거부한다. 구역별 번호 형식·재시작·시작 번호·배치와 접두/접미 문자·위첨자는
+동적 DOCX 참조로 보존한다. `userChar` 사용자 표식은 자동 번호 의미를 유지할 수 없어
+exit 3으로 거부한다. DOCX에 대응 구역 속성이 없는 `noteLine`/`noteSpacing`은 정확히
+파싱한다. 해당 종류의 실제 주석이 있으면 부분 stdout 없이 exit 3, 주석이 없으면 원본
+값을 담은 필수 구조화 경고를 stderr로 낸 뒤 변환한다(`--quiet`도 이 경고는 숨기지 않는다).
+
+머리말/꼬리말은 `BOTH`/`ODD`/`EVEN`, 첫 페이지 숨김, 여러 구역과 내부 문단·표·이미지·
+동적 페이지 필드를 보존한다. 한 구역 안에서 본문 뒤에 활성화되거나 같은 슬롯이 겹치는
+timeline은 DOCX 한 구역으로 넓히지 않고 exit 3으로 거부한다.
 
 수식은 공식 수식 형식 r1.3을 기준으로 분수·근호·첨자·주요 연산자와 함수·적분·행렬·
 cases/pile/alignment·색상을 OfficeCLI LaTeX로 옮기며, OfficeCLI가 네이티브 OMML로 만든다.
@@ -225,7 +235,6 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 ### 아직 안 되는 것
 
 - 도형·글상자 (`hp:rect`, `hp:textart` 등)
-- 머리말/꼬리말
 - 목록 번호 매기기 (텍스트는 살지만 `numbering` 구조는 미매핑)
 - 스타일 이름 (`styleIDRef` → docx `style`)
 - HWPX **쓰기** (그래서 `format-handler`가 아니라 `dump-reader`다 — `docs/01-protocol-contract.md` ADR-1)
@@ -234,9 +243,9 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 44개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 64개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
-cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E
+cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 61개
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo build --workspace --locked --release
