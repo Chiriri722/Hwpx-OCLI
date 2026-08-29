@@ -56,7 +56,7 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 호스트 예약 코드 6을 절대 내지 않음 | `never_exits_with_host_reserved_code_six` |
 | stdout 오염 없음 (도움말·진단·에러) | `help_does_not_pollute_stdout`, `dump_keeps_diagnostics_off_stdout` |
 | `--quiet` / `--log-file` / `--media-dir` | 각 동명 테스트 |
-| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·구역 story·목록 번호·이름 스타일·도형·자원 경계) | `parse_owpml.rs` 100개 |
+| OWPML 파싱 (문단·런·서식·표·병합·이미지·주석·수식·구역 story·목록 번호·이름 스타일·도형·차트·자원 경계) | `parse_owpml.rs` 107개 |
 | 병합 격자 인덱싱 (가로/세로/복합/빈칸) | `word.rs::horizontal_merge_mid_row_*` 외 4개 |
 | 단위 변환 (HWPUNIT→twip/pt, twip→pt) | `model.rs`, `word.rs::twip_to_pt_divides_by_twenty` |
 | 엔티티 해제 (텍스트·속성 양쪽) | `preserves_korean_and_special_characters`, `unescapes_entities_in_attribute_values` |
@@ -67,21 +67,21 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 | 항목 | 위험 | 비고 |
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 공개 HWPX 281건의 성공/실패 기준선을 전수 확인했고 이름 스타일이 활성인 보고서도 포함한다. 사설 업무 문서와 출판 계열 대표성은 계속 확장해야 한다 |
-| 이미지·각주/미주·수식·도형·머리말 | 낮음~미상 | 이미지와 representable 주석은 합성 픽스처/실제 OfficeCLI 구조로 검증했다. 한컴 2020에서 직접 만든 실제 각주·미주는 `noteLine`/`noteSpacing` 손실 때문에 exit 3·stdout 0을 확인했다. 공개 `HeaderFooter.hwpx`, 활성 이름/개요 스타일, rect/textbox/ellipse는 실제 DOCX replay와 lint를 통과했다. 다양한 수식·구역 story 및 미지원 도형군의 정확한 오라클은 더 필요하다 |
+| 이미지·각주/미주·수식·도형·차트·머리말 | 낮음~미상 | 이미지와 representable 주석은 합성 픽스처/실제 OfficeCLI 구조로 검증했다. 한컴 2020에서 직접 만든 실제 각주·미주는 `noteLine`/`noteSpacing` 손실 때문에 exit 3·stdout 0을 확인했다. 공개 `HeaderFooter.hwpx`, 활성 이름/개요 스타일, rect/textbox/ellipse와 자체완결 차트 28개는 실제 DOCX replay와 lint를 통과했다. 다양한 수식·구역 story, 미지원 도형군, caption/relationship-bearing chart의 정확한 오라클은 더 필요하다 |
 | Windows / Linux 동작 | 부분 검증 | run `31700156231`의 양 OS H3 브리지·MSRV 1.88와 기존 HWPX discovery는 성공. H1 run `31890284597`, `32793306250`는 OfficeCLI 1.0.143 오류 처리에 가려 실패했다. 1.0.145 고정 자산은 로컬 양 OS smoke를 통과했으며 workflow 재실행이 필요 |
 | 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. 별도 host 계약에서 1초 idle budget보다 긴 프로세스가 반복 heartbeat로 완료되는 종단간 타이머 reset을 확인. 대형 binary HWP 자체는 미실측 |
 | `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-T2-6은 커밋 `b379b4d3`에서
-`docs/adr/0010-hancom-shape-and-textbox-policy.md`의 경계로 구현했다. 공식 r1.2,
-한컴 2020 rect/ellipse/center/line 오라클, 공개 281개 코퍼스에 공통으로 증명된
-rect/rounded rect/textbox/whole ellipse만 typed drawing으로 내린다. 구조적 textbox
-본문과 `shapeComment` 설명을 보존하고 미지원 도형은 stdout 전에 명시적으로 거부한다.
-최종 코퍼스는 173 success/22 corrupt/86 unsupported/0 other이며 Rust 526개·host
-42개·실제 replay/lint/validate를 통과했다. 다음 작업은 공식 차트 형식 r1.2와
-네이티브 DOCX를 이용한 T2-7 차트 경계 확정이다.
+T2-6은 커밋 `b379b4d3`과 ADR-0010에서 검증된 rect/rounded rect/textbox/whole
+ellipse만 보존한다. T2-7은 커밋 `cd110588`과 ADR-0011에서 관계 없는 자체완결
+chart 28개를 strict raw carrier로 보존하고 caption·관계·미검증 frame을 stdout 전에
+거부한다. 28/28 실제 replay/OpenXML validate/fingerprint/topology, Rust 533개·host
+44개·`plugins lint` unknown prop 0을 통과했다. T2-8은 공개 font-specific mapping과
+30파일 PUA 분포, 한컴 native `exam_kor` DOCX를 재평가해 native와 같은 무변경 보존+
+진단을 ADR-0012로 확정했다. 다음 작업은 T3-1 HWPX writer 의미·format-handler/save
+계약 설계와 T3-2 공식 DVC 게이트다.
 
 Phase 7의 host discovery·installer·공급망 하드닝은 로컬에서 완료했다.
 Host 계약 35개, Windows installer 12개, 비-root Linux installer 21개와
@@ -326,11 +326,18 @@ RHWP로 HWP → HWPX 변환한 실제 양식 문서. **우리가 만든 픽스�
   line/polygon/curve/connectLine/container/OLE/textart/arc/video, 회전·flip·group·보호·
   hyperlink·caption은 exit 3이다. `shapeComment`는 `docPr descr` 설명으로 보존한다.
   자세한 경계는 ADR-0010을 따른다.
+- **차트는 관계 없는 자체완결 `c:chartSpace`와 검증된 frame만 지원한다.** 기본 raw
+  carrier는 strict이고, 한컴 parser의 `hwpxChartOrderRepairV1`도 catAx/valAx/view3D의
+  정확한 pre-error에만 적용한 뒤 validation 오류 0을 요구한다. caption·relationship-
+  bearing/external chart와 미검증 배치는 exit 3이며 자세한 경계는 ADR-0011을 따른다.
+- **PUA는 한컴 native DOCX처럼 무변경 보존하고 개수를 진단한다.** exact source font
+  identity 없이 Hanyang 등 font-specific 표를 전역 적용하지 않는다(ADR-0012).
 
 ## 5. 다음 기능 우선순위 (제안)
 
-1. 차트 (T2-7, 공식 차트 형식 r1.2 필수)
-2. HWPX 쓰기 → 확보되면 `format-handler`로 승격 (ADR-1)
+1. HWPX writer 의미와 format-handler/save 계약 설계 (T3-1, ADR-1을 뒤집는 새 ADR)
+2. 공식 `hancom-io/dvc` 검증 게이트 도입 (T3-2)
+3. HWPX 쓰기 → 확보되면 `format-handler`로 승격
 
 ## 6. 참고 자료 위치
 

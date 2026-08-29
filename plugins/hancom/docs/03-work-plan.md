@@ -6,9 +6,10 @@
 > 대체된 경우 최신 문서를 우선한다.
 >
 > **진행 상태**: P0(G1·G2)과 P1(G3·G4) 완료. P-1 회귀 코퍼스 도입 완료.
-> P2(G5 스타일 매핑, T2-6 도형·글상자)는 후속 공개 281개 코퍼스와 한컴 2020
-> 네이티브 DOCX 오라클을 확보해 ADR-0009/0010에서 완료했다. G6 문자 치환은
-> 신뢰할 대응표가 생길 때만 재개하는 evidence-gated 항목이다.
+> P2(G5 스타일 매핑, T2-6 도형·글상자, T2-7 차트, T2-8 PUA 재평가)는 후속
+> 공개 281개 코퍼스와 한컴 2020 네이티브 DOCX 오라클을 확보해
+> ADR-0009/0010/0011/0012에서 완료했다. G6은 글꼴 identity 없는 치환보다
+> native와 같은 무변경 보존이 정확하다는 evidence-gated 결론으로 닫았다.
 > 4절의 각 항목 아래에 완료 기록을 덧붙였다.
 
 실제 문서 5건으로 검증한 결과와 그로부터 도출한 다음 작업 계획.
@@ -313,7 +314,7 @@ d3/d4 결과: text 폼필드 3개 + checkbox 8개, 에세이 815자는 `align`·
 OfficeCLI 224항목 replay·lint·validate를 통과했다. 정본은 ADR-0009와
 `specs/001-hancom-unified/task-plan.md`다.
 
-#### G6. 한컴 사용자 정의 영역(PUA) 문자 — **부분 완료 (감지·보고)**
+#### G6. 한컴 사용자 정의 영역(PUA) 문자 — **완료 (보존·진단 정책 확정)**
 
 **증거**: d2에 `U+F0854`/`U+F0855` 한 쌍. 5개 문서 중 1건, 총 2자.
 
@@ -341,8 +342,17 @@ glyphs; they may render as empty boxes outside Hancom fonts)
 `counts_private_use_chars_including_nested_tables`,
 `private_use_chars_are_reported_but_not_altered`
 
-**남은 것**: 신뢰할 수 있는 한컴 PUA ↔ 유니코드 대응표를 확보하면 치환한다.
-근거 없이 표를 만들지는 않는다.
+**2026-08-30 재평가·완료**: public-domain KTUG Hanyang old-Hangul 표의
+5,660개 BMP mapping을 확보했지만 이는 특정 legacy font profile의 표다. 281개
+코퍼스 전수 스캔은 30파일·25,759회·85종 PUA를 확인했고, 그중 25,649회가
+supplementary PUA였다. 현재 모델은 OWPML의 일곱 font slot을 한 필드로 축약하므로
+USER/SYMBOL font identity를 증명할 수도 없다.
+
+한컴 2020 native `exam_kor` DOCX는 source HWPX의 BMP PUA 44회와 supplementary
+PUA 83회를 모두 그대로 보존하고 Jamo를 만들지 않았다. 따라서 치환보다 현행
+무변경 보존+개수 진단이 native 호환성과 정보 보존에 맞다. future mapping은 일곱
+source slot, exact-font allowlist, mapping별 native/PDF glyph oracle이 모두 생겼을
+때 명시적 opt-in profile로만 검토한다. 정본은 ADR-0012다.
 
 #### T2-6. 도형·글상자 — **완료**
 
@@ -352,6 +362,21 @@ glyphs; they may render as empty boxes outside Hancom fonts)
 z-order·겹침, 색/무채움/선, 텍스트 방향·여백·내부 블록, 도형 설명을 보존한다.
 line/custom path/container/OLE와 회전·그룹 등은 부분 성공으로 숨기지 않고 exit 3이다.
 구현은 `b379b4d3`, 정본 경계는 ADR-0010이다.
+
+#### T2-7. 차트 — **완료**
+
+공식 차트 형식 r1.2, OWPML model, 공개 29파일·30 chart part와 한컴 2020
+네이티브 DOCX를 교차검증했다. 관계가 없는 28개 자체완결 `c:chartSpace`는 raw
+carrier로 보존하고, caption chart 2개가 든 TOP_AND_BOTTOM 보고서는 부분 성공으로
+숨기지 않고 exit 3으로 거부한다. frame은 검증된 `SQUARE/BOTH_SIDES`, floating
+`COLUMN/PARA TOP/LEFT`, zero-offset profile만 허용한다.
+
+기본 host carrier는 schema-valid XML만 무변경 수용한다. 한컴 parser가 선택하는
+`hwpxChartOrderRepairV1`만 정확한 구조화 pre-error가 있는 catAx/valAx/view3D의
+원본 node 순서를 SDK particle metadata에 맞추고 post-validation 오류 0을 요구한다.
+관계·외부 자원·dateAx/serAx·일반화 repair는 지원하지 않는다. 28/28 replay,
+validate, fingerprint, topology와 `plugins lint` unknown prop 0을 통과했다. 구현은
+`cd110588`, 정본 경계는 ADR-0011이다.
 
 ### 후순위로 강등하는 항목
 
@@ -365,12 +390,13 @@ line/custom path/container/OLE와 회전·그룹 등은 부분 성공으로 숨�
 | 수식 | - | T2-2 완료 | 공식 r1.3과 공개 `SimpleEquation.hwpx`로 폐쇄 지원 집합을 구현했다 |
 | 이름 스타일 | 보류 | T2-5 완료 | 활성 보고서 표본과 한컴 네이티브 DOCX 오라클로 정의·참조·개요 경계를 검증했다 |
 | 도형·글상자 | - | T2-6 완료 | 공식 r1.2·공개 코퍼스·한컴 rect/ellipse/line 오라클로 폐쇄 경계를 검증했다 |
-| 차트 | - | T2-7 다음 | 공식 차트 형식 r1.2와 네이티브 DOCX를 함께 검증해야 한다 |
+| 차트 | - | T2-7 완료 | 관계 없는 자체완결 chart 28개를 native-verified raw carrier로 보존한다 |
+| PUA | 보류 | T2-8 완료 | 한컴 native와 같이 무변경 보존하며 exact font identity 없이는 치환하지 않는다 |
 
 이 표의 최초 판단은 5개 표본만을 근거로 했고, 이후 확보한 공개·한컴 생성 표본에 따라
-T2-1~T2-6을 재개했다. 현재 우선순위와 완료 상태의 정본은
-`specs/001-hancom-unified/task-plan.md`다. 미검증 도형군과 차트는 추정으로
-지원하지 않는다.
+T2-1~T2-8을 재개했다. 현재 우선순위와 완료 상태의 정본은
+`specs/001-hancom-unified/task-plan.md`다. 미검증 도형군과 chart profile은
+추정으로 지원하지 않는다.
 
 ## 4. 작업 순서와 방식
 
@@ -385,7 +411,8 @@ T2-1~T2-6을 재개했다. 현재 우선순위와 완료 상태의 정본은
 
 후속     G5 스타일 매핑            (T2-5 완료)
        도형·글상자 폐쇄 부분집합   (T2-6 완료)
-       차트 공식 형식/오라클       (T2-7 다음)
+       차트 자체완결 raw carrier    (T2-7 완료)
+       PUA 보존 정책 재평가         (T2-8 완료)
        프로세스 정비 (5절)
 ```
 

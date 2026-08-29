@@ -275,10 +275,30 @@ R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
       정확한 SDK build, `plugins lint` unknown prop 0, 실제 replay/OpenXML validate,
       공개 코퍼스 173 success/22 corrupt/86 unsupported/0 other를 통과했다.
       결정 경계는 ADR-0010에 고정했다.
-- [ ] T2-7 · 차트 → docx chart. **R1의 "차트 형식 r1.2" 스펙이 필수**
-- [ ] T2-8 · 보류 항목 재평가: G5 스타일 매핑은 T2-5에서 완료. G6 PUA 치환은
-      신뢰할 대응표·글꼴별 오라클 확보 시 재평가
-- [ ] T2-9 · 각 항목마다 `plugins lint`(호스트 내장 docx 스키마 검증) 재실행 — 어휘 변경 시 필수
+- [x] T2-7 · 차트 → docx chart. 커밋 `cd110588`에서 공식 차트 형식 r1.2,
+      OWPML 모델 커밋 `1453388472c703a4b299a0834f425cdac16644b9`, 한컴 2020
+      네이티브 DOCX와 공개 30개 chart part를 교차검증했다. 관계가 없고 자체완결인
+      `c:chartSpace`와 native-verified `SQUARE/BOTH_SIDES`, floating
+      `COLUMN/PARA TOP/LEFT`, zero-offset 프레임만 raw chart carrier로 보존한다.
+      기본 프로필은 schema-valid XML만 무변경 수용하고, 한컴 parser가 명시하는
+      `hwpxChartOrderRepairV1`만 구조화 SDK 오류가 정확히 일치하는 catAx/valAx/view3D
+      순서를 SDK particle metadata로 재배치한 뒤 오류 0을 요구한다. 외부 관계·caption·
+      미검증 배치·dateAx/serAx repair는 stdout 전에 실패한다. 29개 파일은 28 success/
+      0 corrupt/1 unsupported/0 other였고, 지원 차트 28/28이 OfficeCLI replay·OpenXML
+      validate·구조 fingerprint·관계 topology 검사를 통과했다. 로컬 533개 Rust 테스트,
+      44개 host 계약, Clippy/release와 `plugins lint` unknown prop 0을 통과했으며 결정은
+      ADR-0011에 고정했다.
+- [x] T2-8 · 보류 항목 재평가. G5 스타일 매핑은 T2-5에서 완료했다. G6 PUA는
+      public-domain Hanyang old-Hangul 5,660개 표를 찾았지만 글꼴 한정 표이고, 현재
+      모델이 USER/SYMBOL을 포함한 7개 font slot을 한 필드로 축약해 적용 대상을 증명할
+      수 없다. 281개 코퍼스에는 30파일·25,759회·85종 PUA가 있으며 25,649회가
+      supplementary PUA다. 한컴 2020 native `exam_kor` DOCX도 원본의 BMP 44회와
+      supplementary 83회를 그대로 보존하고 Jamo로 치환하지 않았다. 따라서 현행
+      무변경 보존+개수 진단을 최종 기본 정책으로 유지한다. 향후에는 7개 source slot,
+      exact-font allowlist, 글꼴별 native/PDF oracle이 모두 있을 때만 opt-in profile로
+      재검토한다. 결정은 ADR-0012에 고정했다.
+- [x] T2-9 · 각 P2 어휘 변경마다 실제 `plugins lint`를 재실행했다. T2-7 최종
+      대표 dump도 4개 BatchItem, unknown prop 0을 확인했다.
 
 ### P3 — HWPX 쓰기 / format-handler 승격 (A2 실행)
 
@@ -398,10 +418,15 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 11. Q6은 해소했다. 공식 HWPML 문법과 실제 2.91 공개 코퍼스를 확보했고 통합 바이너리의
     증분 비용이 작으므로 `.hml`을 P1에 유지한다. 미지원 컨트롤은 누락시키지 않고 exit 3으로
     실패한다.
+12. T2-7은 관계 없는 자체완결 차트만 raw carrier로 보존한다. schema-order 허용은
+    source-selected `hwpxChartOrderRepairV1`로 한정하고 기본 raw surface는 strict를 유지한다.
+    세부 경계는 ADR-0011을 따른다.
+13. G6 PUA는 한컴 native DOCX와 같이 무변경 보존한다. 글꼴 한정 표를 전역 적용하지 않으며,
+    정확한 source font slot과 allowlist oracle 없이는 치환하지 않는다(ADR-0012).
 
 ## Status
 
-**P0·P1 완료 · P2 진행 중(T2-7 다음).** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1·P2 완료 · P3 다음.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -429,14 +454,22 @@ T2-6은 축 정렬 rectangle/rounded rectangle, 구조적 textbox, whole ellipse
 부분집합만 typed OfficeCLI drawing으로 내리고 나머지 활성 도형을 명시적으로 거부한다.
 구현 커밋 `b379b4d3`은 실제 한컴 rect/ellipse/center/line 오라클, 두 실제 OfficeCLI
 replay, 281개 공개 코퍼스와 ADR-0010으로 지원/실패 경계를 고정했다.
+T2-7은 커밋 `cd110588`에서 28개 자체완결 chart part를 raw carrier로 보존하고,
+관계·caption·미검증 배치와 일반화할 수 없는 schema repair는 fail-closed로 유지했다.
+28/28 실제 replay·validate·fingerprint·topology, 533개 Rust 테스트, 44개 host 계약과
+ADR-0011로 경계를 고정했다. T2-8은 PUA 대응표와 30파일 전수 분포, 한컴 native
+`exam_kor` DOCX를 재검토한 결과 native도 BMP 44회·supplementary 83회를 무변경 보존하므로
+현행 보존+진단을 최종 정책으로 확정했다(ADR-0012). T2-9 lint는 unknown prop 0이다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T2-7은 고정한 공식 차트 형식 r1.2와 네이티브 DOCX 오라클을 함께 사용해 차트
-   데이터·계열·축·레이아웃의 보존 가능 범위를 확정한다.
-2. 각 P2 항목은 파서→공용 모델→docx JSONL 매핑과 `plugins lint`를 한 단위로 검증한다.
+1. T3-1에서 R6/R8의 writer 의미와 현재 format-handler/save 계약을 대조해 쓰기 설계를
+   먼저 닫고, ADR-1을 뒤집는 별도 ADR을 작성한다.
+2. T3-2에서 공식 R5 `hancom-io/dvc`를 재현 가능하게 고정해 writer 산출물의 CI 게이트로
+   도입하고, R9 구매 필요 여부를 실제 검증 범위로 판단한다.
 3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-4. P4/P5 착수 전 **사용자 확인 필요**: R2 표본 제공 가능 여부, Q3(읽기 전용 vs 편집), Q5(JVM 허용 여부).
+4. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
+   runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.
 5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.

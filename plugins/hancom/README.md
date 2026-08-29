@@ -200,6 +200,8 @@ officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
 | 목록 번호 (`hh:numbering` / `hh:bullet` / 구역 개요) | 동적 `abstractNum` + `num` + 문단 `numId`/`numLevel` |
 | 이름 스타일 (`hh:styles` + `styleIDRef`) | 활성 `style` 정의 + 문단 `style`, 직접 서식 override 유지 |
 | 수식 (`hp:equation`) | `equation` (`formula`=LaTeX, `mode`=inline/display) |
+| 사각형·글상자·전체 타원 | 검증된 inline/floating `shape`/`textbox`, 구조적 글상자 본문·설명 |
+| 자체완결 차트 (`hp:chart` + `Chart/*.xml`) | strict raw chart part + native-verified floating drawing |
 | 폼 체크박스 (`hp:checkBtn`) | `add --type formfield --prop type=checkbox --prop checked=...` |
 | 누름틀 (`hp:fieldBegin type="CLICK_HERE"`) | 빈 슬롯 → `formfield type=text` / 내용 있으면 서식 유지 텍스트 |
 | 내어쓰기 (음수 `hc:intent`) | `hangingIndent` (docx는 음수 `firstLine`을 허용하지 않음) |
@@ -232,6 +234,24 @@ exit 3으로 거부한다. PUA 표식은 G6 정책대로 치환을 추측하지 
 구역마다 다른 개요 정의를 요구하는 경우에는 부분 출력 없이 exit 3으로 거부한다.
 세부 경계는 [`../../docs/adr/0009-hancom-named-style-policy.md`](../../docs/adr/0009-hancom-named-style-policy.md)에 기록했다.
 
+도형은 공식 r1.2와 한컴 native DOCX가 함께 증명한 축 정렬 rectangle/rounded rectangle,
+구조적 textbox, whole ellipse만 보존한다. inline과 검증된 page-floating 배치, wrap/flow,
+거리·z-order·겹침, 단색/무채움/선과 `shapeComment` 설명을 유지한다. line/custom path/
+container/OLE 등은 근사하거나 누락하지 않고 exit 3으로 거부한다. 세부 경계는
+[`../../docs/adr/0010-hancom-shape-and-textbox-policy.md`](../../docs/adr/0010-hancom-shape-and-textbox-policy.md)에 기록했다.
+
+차트는 관계와 외부 자원이 없는 자체완결 UTF-8 `c:chartSpace`만 raw part로 보존한다.
+OWPML frame은 native로 검증된 `SQUARE/BOTH_SIDES`, floating
+`COLUMN/PARA TOP/LEFT`, zero-offset profile이어야 한다. 기본 raw carrier는 schema-valid
+XML만 무변경 수용하며, 한컴 parser가 명시하는 `hwpxChartOrderRepairV1`만 제한된
+catAx/valAx/view3D child-order 오류를 고친 뒤 validation 오류 0을 요구한다. 세부 경계는
+[`../../docs/adr/0011-hancom-chart-carrier-policy.md`](../../docs/adr/0011-hancom-chart-carrier-policy.md)에 기록했다.
+
+PUA는 글꼴별 표를 전역 mapping으로 추측하지 않고 한컴 native DOCX와 같이 그대로
+보존하며 개수를 진단한다. exact source font identity와 glyph oracle이 없는 치환은 다른
+문자로 의미를 바꿀 수 있다. 재평가 근거와 future opt-in 조건은
+[`../../docs/adr/0012-hancom-private-use-character-policy.md`](../../docs/adr/0012-hancom-private-use-character-policy.md)에 기록했다.
+
 수식은 공식 수식 형식 r1.3을 기준으로 분수·근호·첨자·주요 연산자와 함수·적분·행렬·
 cases/pile/alignment·색상을 OfficeCLI LaTeX로 옮기며, OfficeCLI가 네이티브 OMML로 만든다.
 인라인/표시 배치와 문단·표 셀 안의 형제 순서를 보존한다. 의미를 근사해야 하는
@@ -248,16 +268,19 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ### 아직 안 되는 것
 
-- 도형·글상자 (`hp:rect`, `hp:textart` 등)
+- line/polygon/curve/connectLine/container/OLE/textart/arc/video, 회전·flip·group·보호·
+  hyperlink·caption 등 검증되지 않은 도형 profile
+- caption/TOP_AND_BOTTOM, 관계·외부 데이터·embedded workbook이 있는 차트와 검증되지
+  않은 차트 배치
 - HWPX **쓰기** (그래서 `format-handler`가 아니라 `dump-reader`다 — `docs/01-protocol-contract.md` ADR-1)
 
 ## 개발
 
 ```bash
 cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별 전용 검사
-cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 89개
+cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 107개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
-cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 63개
+cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 64개
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo build --workspace --locked --release

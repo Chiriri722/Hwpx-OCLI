@@ -241,3 +241,17 @@
 - 호스트는 inline/floating shape/textbox, semantic page alignment, wrap side/distance, behindDoc/overlap/z-order, roundRect adjustment, noFill, description을 add/dump한다. `wrap=behind` fallback과 표 셀 상자가 앞선 body 전역 textbox ordinal 누락을 RED→GREEN으로 추가 보강했다. 일반 shape dump는 임의 DrawingML을 재해석하지 않고 raw carrier를 유지한다.
 - 실제 center 문서 370개 명령은 전체 replay와 OpenXML validate를 통과했다. ellipse 원문은 별도 WMF MIME 때문에 전체 replay가 막혔지만 실제 플러그인 shape 명령을 격리 재생해 preset·페이지 좌표·noFill·allowOverlap을 검증했다. 두 대표 dump의 `plugins lint` unknown prop은 0이다.
 - 최종 공개 코퍼스는 173 success/22 corrupt/86 unsupported/0 other다. 이전 226 success가 줄어든 것은 active 미지원 도형을 더 이상 조용히 누락하지 않기 때문이다. 로컬 게이트는 Rust 526개, host 42개, locked Clippy/release, 정확한 SDK 10.0.302 solution build 오류 0, schema/help·포맷·diff 검사다. 구현 커밋은 `b379b4d3`, 결정은 ADR-0010이다.
+
+### 2026-08-30 T2-7 차트
+- 공식 차트 형식 r1.2 PDF의 SHA-256 `E014DB3E4B55BC57D93B3ABA0B186151B3487575E3A6397A2983715B43BEEEB1`과 OWPML model 커밋 `1453388472c703a4b299a0834f425cdac16644b9`를 확인했다. 281개 공개 코퍼스에는 29파일·30 chart part가 있고, 28개 일반 자체완결 chart와 한 보고서의 caption chart 2개로 나뉜다.
+- 한컴 2020 native DOCX는 일반 chart XML을 거의 그대로 옮기고 document 관계만 추가했다. 따라서 chart data/series/axis/layout을 typed 어휘로 재구성하지 않고 strict raw carrier로 보존한다. source frame은 `PICTURE`, `SQUARE/BOTH_SIDES`, unlocked/no-caption, floating `COLUMN/PARA TOP/LEFT`, zero offset의 관측된 폐쇄 profile만 허용한다.
+- chart part는 UTF-8 `c:chartSpace`, 관계·외부 자원 없음, 안전한 `Chart/*.xml` 경로여야 한다. DTD/PI/미지 entity·namespace와 relationship-bearing chart는 거부한다. 16MiB source part, 512 refs, 64MiB emitted XML, 공유 256MiB expanded ZIP, depth 256 예산을 적용하고 canonical path cache로 중복 해제를 막는다.
+- native XML의 일부 catAx/valAx/view3D child order는 SDK validator가 거부했다. 기본 raw profile은 이를 허용하지 않는다. 한컴 parser가 명시하는 `hwpxChartOrderRepairV1`만 정확한 구조화 pre-error fingerprint, known unique children, extLst/MC boundary 없음 조건에서 SDK particle 순서로 원본 node를 이동하고 post-validation 오류 0을 요구한다. dateAx/serAx와 일반화 repair는 없다.
+- 공개 29파일 분류는 28 success/0 corrupt/1 unsupported/0 other다. 지원 28개는 dump→DOCX→atomic batch→query→OpenXML validate 오류 0, document-to-chart 관계 1개와 chart outbound 관계 0, sibling order를 제외한 element/attribute/text/parentage fingerprint 28/28 일치를 확인했다. `plugins lint`는 4 BatchItem·unknown prop 0이다.
+- 로컬 게이트는 Rust 533개, host 44개, locked Clippy/release, host build 오류 0(기존 nullable warning만 존재), 포맷/diff 검사다. 구현 커밋은 `cd110588`, 결정은 ADR-0011이다.
+
+### 2026-08-30 T2-8 PUA 재평가
+- RHWP가 인용한 public-domain KTUG Hanyang old-Hangul 표에는 BMP PUA→Jamo 5,660개가 있으나 특정 legacy font profile의 표다. 별도 supplementary symbol map에는 provisional 항목도 있어 이를 전역 Hancom registry로 취급할 수 없다.
+- 281개 코퍼스 전수 스캔은 30파일·25,759회·85종 PUA를 확인했다. BMP old-Hangul range는 110회뿐이고 supplementary PUA가 25,649회다. 현재 parser는 OWPML의 HANGUL/LATIN/HANJA/JAPANESE/OTHER/SYMBOL/USER font slot을 단일 `CharStyle.font`로 축약하므로 USER/SYMBOL의 정확한 source font를 치환 시점에 증명할 수 없다.
+- 한컴 2020에서 `exam_kor.hwp`를 직접 DOCX로 내보내 원본 HWPX와 code point를 비교했다. 양쪽 모두 BMP PUA 44회, supplementary PUA 83회였고 같은 BMP 25종과 `U+F00DA` 3회, `U+F0854`/`U+F0855` 각 40회를 보존했으며 standard/extended Jamo는 0이었다.
+- 따라서 한컴 native 동작과 일치하는 현행 무변경 보존+개수 진단을 최종 기본 정책으로 유지한다. 향후 치환은 일곱 source font slot 보존, exact-font/code-point allowlist, 각 mapping의 native/PDF glyph oracle, 명시적 opt-in profile이 모두 있을 때만 검토한다. 현행 테스트는 PUA 감지·중첩 표 집계·무변경 보존을 고정하며 결정은 ADR-0012다.

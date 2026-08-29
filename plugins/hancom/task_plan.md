@@ -49,11 +49,16 @@
 - 기존 기능 계획이 완료로 표시되어도 테스트와 실제 OfficeCLI 왕복 검증으로 다시 확인한다.
 - 새 작업은 보안·호환성 위험을 별도 계획으로 기록하고, 재현 테스트가 가능한 항목부터 수정한다.
 - P0/P1과 P-1은 완료로 확인했다. G5 스타일 매핑은 확장 코퍼스와 한컴 네이티브
-  DOCX 오라클을 확보해 T2-5에서 완료했다. G6 PUA 치환은 신뢰할 대응표가 없어
-  보존·진단 경계를 유지한다.
+  DOCX 오라클을 확보해 T2-5에서 완료했다. G6 PUA는 공개 Hanyang 표와 281개
+  코퍼스, 한컴 native DOCX를 재검토한 뒤에도 정확한 source font identity 없이는
+  치환하지 않고 보존·진단하는 정책을 ADR-0012로 확정했다.
 - T2-6은 공식 r1.2·한컴 네이티브·281개 공개 코퍼스가 함께 증명하는 축 정렬
   rect/rounded rect, 구조적 textbox, whole ellipse만 지원한다. line/custom path/
   container/OLE 등은 조용히 버리지 않고 fail-closed하며 결정은 ADR-0010을 따른다.
+- T2-7은 관계가 없는 자체완결 `c:chartSpace`와 네이티브 검증 frame만 raw carrier로
+  보존한다. 기본 host profile은 strict이며, 한컴 parser만 제한된
+  `hwpxChartOrderRepairV1`을 명시한다. 관계·caption·미검증 repair는 fail-closed하고
+  결정은 ADR-0011을 따른다.
 - 정식 보안 스캔에서 7건(높음 2, 중간 3, 낮음 2)을 확인했다. 우선 압축 자원 예산, 표 크기·산술 검증, 중복 섹션 제거를 같은 입력 검증 경계에서 수정한다.
 - 반복 이미지 증폭은 고유 BinData 캐시와 참조·출력 예산을 함께 적용해야 완결된다. 진단 경로 이슈와 Windows 설치 경로는 그 다음 호환성 묶음으로 처리한다.
 - 정식 스캔 7건은 먼저 macOS/Unix 실행 경로의 입력 경계·이미지 캐시·진단 경계에서 닫았다. Phase 5에서 Windows 하드 링크 식별 구현도 추가했고 네이티브 Windows runner에서 확인했다.
@@ -125,9 +130,9 @@
 - Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
-**Phase 6 / H1 and Phase 7 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 P0·P1과 T2-1~T2-6도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T2-6 구현 커밋 `b379b4d3`은 검증된 rect/textbox/ellipse만 보존하고 active 미지원 도형은 명시적으로 거부한다.
+**Phase 6 / H1, Phase 7, P0·P1·P2 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 T2-1~T2-9도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T2-6 구현 커밋 `b379b4d3`은 검증된 rect/textbox/ellipse만 보존하고 active 미지원 도형을 명시적으로 거부한다. T2-7 구현 커밋 `cd110588`은 28개 자체완결 차트를 보존하고 관계·caption·미검증 frame을 거부하며, T2-8은 PUA 무변경 보존을 ADR-0012로 확정했다.
 
 ## Next Action Plan
-1. `specs/001-hancom-unified/task-plan.md`의 T2-7 차트를 공식 차트 형식 r1.2와 한컴 네이티브 DOCX 오라클로 실측한다.
-2. 각 P2 변경에 기존 Rust·host·installer·실제 HWP/HWPX 회귀와 `plugins lint`를 같은 기준으로 적용한다.
+1. `specs/001-hancom-unified/task-plan.md`의 T3-1에 따라 R6/R8 writer 의미와 host format-handler/save 계약을 대조해 쓰기 설계와 ADR을 확정한다.
+2. T3-2에서 R5 `hancom-io/dvc`를 고정·도입해 향후 writer 산출물의 공식 검증 게이트를 만든다.
 3. upstream 동기화는 기능 변경과 섞지 않고 별도 통합 변경으로 진행한다.
