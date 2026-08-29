@@ -23,8 +23,8 @@ use base64::Engine;
 use super::batch::BatchItem;
 use crate::model::{
     Block, Cell, CharStyle, CheckBox, Document, Equation, HeaderFooter, HeaderFooterPage, Image,
-    Inline, Note, NoteKind, NoteProperties, NumberingDefinition, PageNumberField, ParaStyle,
-    Paragraph, Section, Table, TextField, VertAlign,
+    Inline, NamedStyle, Note, NoteKind, NoteProperties, NumberingDefinition, PageNumberField,
+    ParaStyle, Paragraph, Section, Table, TextField, VertAlign,
 };
 
 /// 문단·런 `text` prop의 줄바꿈 문자 (Shift+Enter). `\n`과 혼동하면 안 된다.
@@ -69,6 +69,7 @@ const TYPE_FOOTER: &str = "footer";
 const TYPE_ABSTRACT_NUM: &str = "abstractNum";
 const TYPE_NUM: &str = "num";
 const TYPE_NUMBERING_LEVEL: &str = "level";
+const TYPE_STYLE: &str = "style";
 
 /// `add` 직후 그 요소를 가리키는 경로.
 ///
@@ -204,6 +205,14 @@ pub fn try_emit_document<E>(
         count += 1;
     }
 
+    // Named styles may carry numId, so numbering resources come first. Every
+    // style itself must precede body/table/note/story paragraphs that reference
+    // it; otherwise OfficeCLI records a dangling pStyle warning.
+    for style in &doc.styles {
+        sink(emit_named_style(style))?;
+        count += 1;
+    }
+
     // Header/footer attachment resolves /section[N] against section-break
     // carriers. Build every body block and carrier before creating any part.
     for (section_index, section) in doc.sections.iter().enumerate() {
@@ -232,6 +241,29 @@ pub fn try_emit_document<E>(
         count += 1;
     }
     Ok(count)
+}
+
+fn emit_named_style(style: &NamedStyle) -> BatchItem {
+    let mut item = BatchItem::add("/styles", TYPE_STYLE)
+        .prop("id", style.id.clone())
+        .prop("name", style.name.clone())
+        .prop("type", "paragraph")
+        // HWPX does not distinguish Word built-in/custom styles. Do not let
+        // OfficeCLI infer customStyle=true merely because the source id is
+        // numeric; Hancom's own DOCX conversion leaves this flag absent.
+        .prop("customStyle", "false");
+    if let Some(next) = &style.next {
+        item = item.prop("next", next.clone());
+    }
+    if let Some(priority) = style.ui_priority {
+        item = item.prop("uiPriority", priority.to_string());
+    }
+    item = apply_named_para_props(item, &style.paragraph);
+    item = apply_named_char_props(item, &style.character);
+    if let Some(level) = style.outline_level {
+        item = item.prop("outlineLvl", level.to_string());
+    }
+    item
 }
 
 fn emit_abstract_numbering(definition: &NumberingDefinition) -> BatchItem {
@@ -888,6 +920,9 @@ fn normalize_breaks(s: &str, brk: char) -> String {
 }
 
 fn apply_para_props(mut item: BatchItem, s: &ParaStyle) -> BatchItem {
+    if let Some(style_id) = &s.named_style_id {
+        item = item.prop("style", style_id.clone());
+    }
     if let Some(numbering) = s.numbering {
         item = item
             .prop("numId", numbering.num_id.to_string())
@@ -924,6 +959,66 @@ fn apply_para_props(mut item: BatchItem, s: &ParaStyle) -> BatchItem {
     {
         // `lineSpacing`은 배수 표기(`1.5x`)를 받는다 (`_shared/paragraph.json`).
         item = item.prop("lineSpacing", format!("{}x", trim_float(r)));
+    }
+    item
+}
+
+fn apply_named_para_props(mut item: BatchItem, style: &ParaStyle) -> BatchItem {
+    if let Some(numbering) = style.numbering {
+        item = item
+            .prop("numId", numbering.num_id.to_string())
+            .prop("ilvl", numbering.level.to_string());
+    }
+    if let Some(align) = style.align {
+        item = item.prop("align", align.as_docx());
+    }
+    if let Some(value) = style.indent_left_twip.filter(|value| *value != 0) {
+        item = item.prop("leftIndent", value.to_string());
+    }
+    if let Some(value) = style.indent_first_twip.filter(|value| *value > 0) {
+        item = item.prop("firstLineIndent", value.to_string());
+    }
+    if let Some(value) = style.indent_hanging_twip.filter(|value| *value > 0) {
+        item = item.prop("hangingIndent", value.to_string());
+    }
+    if let Some(value) = style.space_before_twip.filter(|value| *value != 0) {
+        item = item.prop("spaceBefore", value.to_string());
+    }
+    if let Some(value) = style.space_after_twip.filter(|value| *value != 0) {
+        item = item.prop("spaceAfter", value.to_string());
+    }
+    if let Some(ratio) = style
+        .line_spacing_ratio
+        .filter(|ratio| (*ratio - 1.0).abs() > f64::EPSILON)
+    {
+        item = item.prop("lineSpacing", format!("{}x", trim_float(ratio)));
+    }
+    item
+}
+
+fn apply_named_char_props(mut item: BatchItem, style: &CharStyle) -> BatchItem {
+    item = item.flag("bold", style.bold);
+    item = item.flag("italic", style.italic);
+    item = item.flag("underline", style.underline);
+    item = item.flag("strike", style.strike);
+    if let Some(color) = &style.color {
+        item = item.prop("color", color.clone());
+    }
+    // HWPX shadeColor is a run/style background, not Word's finite named
+    // highlighter palette. `shading` preserves its exact RGB value.
+    if let Some(shading) = &style.highlight {
+        item = item.prop("shading", shading.clone());
+    }
+    if let Some(size) = style.size_pt {
+        item = item.prop("size", format!("{}pt", trim_float(size)));
+    }
+    if let Some(font) = &style.font {
+        item = item.prop("font", font.clone());
+    }
+    match style.vert_align {
+        Some(VertAlign::Superscript) => item = item.prop("vertAlign", "superscript"),
+        Some(VertAlign::Subscript) => item = item.prop("vertAlign", "subscript"),
+        None => {}
     }
     item
 }
@@ -1276,6 +1371,7 @@ mod tests {
                 },
             ],
             numberings: Vec::new(),
+            styles: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1375,6 +1471,7 @@ mod tests {
                 ..Section::default()
             }],
             numberings: Vec::new(),
+            styles: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1413,6 +1510,7 @@ mod tests {
                 ..Section::default()
             }],
             numberings: Vec::new(),
+            styles: Vec::new(),
         };
 
         let items = emit_document(&document);
@@ -1639,6 +1737,7 @@ mod tests {
                 ..Section::default()
             }],
             numberings: Vec::new(),
+            styles: Vec::new(),
         };
 
         let items = emit_document(&doc);
@@ -2722,6 +2821,7 @@ mod tests {
         let doc = document! {
             blocks: vec![Block::Paragraph(Paragraph {
                 style: ParaStyle {
+                    named_style_id: None,
                     align: Some(crate::model::Align::Center),
                     indent_left_twip: Some(400),
                     indent_first_twip: Some(200),

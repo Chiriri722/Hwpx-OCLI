@@ -672,6 +672,34 @@ fn unsupported_late_equation_exits_three_without_partial_stdout() {
 }
 
 #[test]
+fn missing_active_named_style_exits_two_without_partial_stdout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("missing-active-style.hwpx");
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="1"><hh:style id="1" type="PARA" name="다른 스타일" paraPrIDRef="{para_pr}" charPrIDRef="{char_pr}" nextStyleIDRef="1" lockForm="0"/></hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:t>부분 출력 금지</hp:t></hp:run></hp:p>"#
+    ));
+    std::fs::write(&path, builder.build()).expect("write HWPX");
+
+    let output = canonical_plugin()
+        .arg("dump")
+        .arg(path)
+        .output()
+        .expect("run canonical plugin");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stdout.is_empty(),
+        "style validation must complete before any BatchItem is written"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("style id 0"));
+}
+
+#[test]
 fn hwpml_doctype_is_recognized_then_rejected_with_exit_three() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("doctype.hml");

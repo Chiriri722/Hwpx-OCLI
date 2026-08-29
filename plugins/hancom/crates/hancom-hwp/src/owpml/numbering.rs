@@ -11,8 +11,8 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use super::model::{
-    Block, CharStyle, Inline, NumberingDefinition, NumberingFormat, NumberingJustification,
-    NumberingLevel, Section,
+    Block, CharStyle, Inline, NamedStyle, NumberingDefinition, NumberingFormat,
+    NumberingJustification, NumberingLevel, Section,
 };
 use super::xml::{attr, local_name, resolve_entity};
 use crate::error::{PluginError, Result};
@@ -67,6 +67,9 @@ pub(crate) struct NumberingCatalog {
     definitions: Vec<RawDefinition>,
     index: HashMap<SourceKey, IndexedDefinition>,
     order: Vec<SourceKey>,
+    /// Target id reserved for Hancom's implicit outlineShapeIDRef="0" profile.
+    /// It is materialized only when an active OUTLINE paragraph/style uses it.
+    implicit_outline_target: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +229,7 @@ impl NumberingCatalog {
             ..Self::default()
         };
         catalog.build_index();
+        catalog.implicit_outline_target = u32::try_from(catalog.order.len() + 1).ok();
         catalog
     }
 
@@ -277,12 +281,31 @@ impl NumberingCatalog {
         Ok(indexed.target_id)
     }
 
+    pub fn resolve_outline_target(&self, source_id: &str) -> Result<u32> {
+        let key = SourceKey {
+            kind: SourceKind::Number,
+            id: source_id.to_string(),
+        };
+        if self.index.contains_key(&key) {
+            return self.resolve_target(SourceKind::Number, source_id);
+        }
+        if source_id == "0" {
+            return self.implicit_outline_target.ok_or_else(|| {
+                PluginError::unsupported_feature(
+                    "too many numbering definitions to allocate the implicit outline profile",
+                )
+            });
+        }
+        self.resolve_target(SourceKind::Number, source_id)
+    }
+
     pub fn materialize(
         &self,
         sections: &[Section],
+        styles: &[NamedStyle],
         char_styles: &HashMap<String, CharStyle>,
     ) -> Result<Vec<NumberingDefinition>> {
-        let active = collect_active_numberings(sections);
+        let active = collect_active_numberings(sections, styles);
         let mut output = Vec::with_capacity(active.len());
 
         for key in &self.order {
@@ -319,11 +342,37 @@ impl NumberingCatalog {
                 levels,
             });
         }
+        if let Some(target_id) = self.implicit_outline_target {
+            if let Some(&max_level) = active.get(&target_id) {
+                output.push(NumberingDefinition {
+                    id: target_id,
+                    bullet: false,
+                    levels: materialize_implicit_outline_levels(max_level),
+                });
+            }
+        }
         Ok(output)
     }
 }
 
-fn collect_active_numberings(sections: &[Section]) -> BTreeMap<u32, u8> {
+/// Hancom 2020's native OOXML export materializes this profile when a section
+/// uses outlineShapeIDRef="0" without a matching hh:numbering definition. Its
+/// level text repeats `%1.` at every depth; preserve that observed behavior
+/// instead of treating the sentinel as a dangling ordinary NUMBER reference.
+fn materialize_implicit_outline_levels(max_level: u8) -> Vec<NumberingLevel> {
+    (0..=max_level)
+        .map(|level| NumberingLevel {
+            level,
+            start: 1,
+            format: NumberingFormat::Decimal,
+            text: "%1.".repeat(usize::from(level) + 1),
+            justification: NumberingJustification::Left,
+            marker_style: CharStyle::default(),
+        })
+        .collect()
+}
+
+fn collect_active_numberings(sections: &[Section], styles: &[NamedStyle]) -> BTreeMap<u32, u8> {
     fn walk(blocks: &[Block], active: &mut BTreeMap<u32, u8>) {
         for block in blocks {
             match block {
@@ -354,6 +403,14 @@ fn collect_active_numberings(sections: &[Section]) -> BTreeMap<u32, u8> {
         walk(&section.blocks, &mut active);
         for story in section.headers.iter().chain(&section.footers) {
             walk(&story.blocks, &mut active);
+        }
+    }
+    for style in styles {
+        if let Some(numbering) = style.paragraph.numbering {
+            active
+                .entry(numbering.num_id)
+                .and_modify(|level| *level = (*level).max(numbering.level))
+                .or_insert(numbering.level);
         }
     }
     active

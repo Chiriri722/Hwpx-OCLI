@@ -32,13 +32,20 @@ const MAX_TABLE_CELLS: usize = 100_000;
 const MAX_TABLE_GRID_SLOTS: usize = 1_000_000;
 
 pub fn parse_section(xml: &str, styles: &StyleTable) -> Result<Section> {
+    parse_section_with_outline(xml, styles).map(|(section, _)| section)
+}
+
+pub(crate) fn parse_section_with_outline(
+    xml: &str,
+    styles: &StyleTable,
+) -> Result<(Section, Option<String>)> {
     let outline_id = find_section_outline_id(xml)?;
     let styles = styles.scoped(outline_id.as_deref());
     let mut section = Section::default();
     parse_section_metadata(xml, &styles, &mut section)?;
     section.blocks = parse_section_body(xml, &styles)?;
     validate_active_note_layouts(&section)?;
-    Ok(section)
+    Ok((section, outline_id))
 }
 
 /// `secPr` is nested in the first paragraph, while header/footer stories can
@@ -861,7 +868,8 @@ fn parse_paragraph(
     depth: usize,
     note_context: Option<NoteKind>,
 ) -> Result<Vec<Block>> {
-    let para_style = styles.para_style(attr(start, "paraPrIDRef").as_deref())?;
+    let mut para_style = styles.para_style(attr(start, "paraPrIDRef").as_deref())?;
+    para_style.named_style_id = styles.named_style_id(attr(start, "styleIDRef").as_deref())?;
 
     let mut out: Vec<Block> = Vec::new();
     let mut current = Paragraph {

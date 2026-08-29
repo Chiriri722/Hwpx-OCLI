@@ -16,6 +16,20 @@ fn parse(b: &HwpxBuilder) -> officecli_hwpx::owpml::model::Document {
     read_document_from(Cursor::new(b.build())).expect("document parses")
 }
 
+fn document_with_named_styles(styles: &str, active_style: &str) -> HwpxBuilder {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    let item_count = styles.matches("<hh:style ").count();
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="{item_count}">{styles}</hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="{active_style}"><hp:run charPrIDRef="{char_pr}"><hp:t>스타일 본문</hp:t></hp:run></hp:p>"#
+    ));
+    builder
+}
+
 #[test]
 fn reads_paragraph_text_in_order() {
     let doc = parse(&simple_doc(&["첫 번째 문단", "두 번째 문단", "세 번째"]));
@@ -1763,6 +1777,429 @@ fn preserves_empty_paragraphs_as_blank_lines() {
     let doc = parse(&simple_doc(&["위", "", "아래"]));
     let texts: Vec<String> = doc.paragraphs().map(|p| p.plain_text()).collect();
     assert_eq!(texts, vec!["위", "", "아래"]);
+}
+
+#[test]
+fn emits_active_named_styles_before_paragraphs_without_losing_direct_formatting() {
+    let mut builder = HwpxBuilder::new();
+    let base_char = builder.char_pr(CharPr::plain());
+    let style_char = builder.char_pr(CharPr {
+        height: Some(1400),
+        italic: true,
+        ..CharPr::plain()
+    });
+    let direct_char = builder.char_pr(CharPr::bold());
+    let base_para = builder.para_pr(ParaPr::default());
+    let style_para = builder.para_pr(ParaPr {
+        align: Some("CENTER".into()),
+        space_after: Some(600),
+        ..Default::default()
+    });
+    let direct_para = builder.para_pr(ParaPr {
+        align: Some("RIGHT".into()),
+        space_before: Some(400),
+        ..Default::default()
+    });
+    builder.ref_list_xml(format!(
+        concat!(
+            r#"<hh:styles itemCnt="2">"#,
+            r#"<hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="{base_para}" charPrIDRef="{base_char}" nextStyleIDRef="0" langID="1042" lockForm="0"/>"#,
+            r#"<hh:style id="7" type="PARA" name="제목 &amp; 개요" engName="Title &amp; Outline" paraPrIDRef="{style_para}" charPrIDRef="{style_char}" nextStyleIDRef="0" langID="1042" lockForm="1"/>"#,
+            r#"</hh:styles>"#,
+        ),
+        base_para = base_para,
+        base_char = base_char,
+        style_para = style_para,
+        style_char = style_char,
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="7"><hp:run charPrIDRef="{direct_char}"><hp:t>직접 서식 유지</hp:t></hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let styles: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("style"))
+        .collect();
+    assert_eq!(styles.len(), 2, "active style and its next dependency");
+    assert_eq!(styles[0].props["id"], "0");
+    assert!(
+        !styles[0].props.contains_key("next"),
+        "self-next is redundant"
+    );
+
+    let title = styles
+        .iter()
+        .find(|item| item.props.get("id").and_then(|value| value.as_str()) == Some("7"))
+        .expect("active title style");
+    assert_eq!(title.props["name"], "제목 & 개요");
+    assert_eq!(title.props["type"], "paragraph");
+    assert_eq!(title.props["next"], "0");
+    assert!(
+        !title.props.contains_key("locked"),
+        "Hancom's lockForm metadata is not DOCX style locking"
+    );
+    assert_eq!(title.props["customStyle"], "false");
+    assert_eq!(title.props["uiPriority"], "7");
+    assert_eq!(title.props["align"], "center");
+    assert_eq!(title.props["spaceAfter"], "120");
+    assert_eq!(title.props["italic"], "true");
+    assert_eq!(title.props["size"], "14pt");
+
+    let paragraph_index = items
+        .iter()
+        .position(|item| {
+            item.props.get("text").and_then(|value| value.as_str()) == Some("직접 서식 유지")
+        })
+        .expect("body paragraph");
+    assert!(
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.r#type == Some("style"))
+            .all(|(index, _)| index < paragraph_index),
+        "style definitions must precede every consumer"
+    );
+    let paragraph = &items[paragraph_index];
+    assert_eq!(paragraph.props["style"], "7");
+    assert_eq!(paragraph.props["align"], "right");
+    assert_eq!(paragraph.props["spaceBefore"], "80");
+    assert_eq!(paragraph.props["bold"], "true");
+}
+
+#[test]
+fn maps_active_outline_style_level_even_when_direct_para_pr_differs() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let direct_para = builder.para_pr(ParaPr::default());
+    let outline_para = builder.para_pr_with_heading(ParaPr::centered(), "OUTLINE", "0", 2);
+    builder.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="9" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.^2.</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="3" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.^2.^3.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    builder.ref_list_xml(format!(
+        concat!(
+            r#"<hh:styles itemCnt="1">"#,
+            r#"<hh:style id="2" type="PARA" name="개요 3" engName="Outline 3" paraPrIDRef="{outline_para}" charPrIDRef="{char_pr}" nextStyleIDRef="2" langID="1042" lockForm="0"/>"#,
+            r#"</hh:styles>"#,
+        ),
+        outline_para = outline_para,
+        char_pr = char_pr,
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="2"><hp:run charPrIDRef="{char_pr}"><hp:secPr outlineShapeIDRef="9"/><hp:t>구조적 제목</hp:t></hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let style = items
+        .iter()
+        .find(|item| item.r#type == Some("style"))
+        .expect("outline style");
+    assert_eq!(style.props["id"], "2");
+    assert_eq!(style.props["outlineLvl"], "2");
+    assert_eq!(style.props["numId"], "1");
+    assert_eq!(style.props["ilvl"], "2");
+    assert_eq!(style.props["align"], "center");
+    let paragraph = items
+        .iter()
+        .find(|item| item.props.get("text").and_then(|value| value.as_str()) == Some("구조적 제목"))
+        .expect("body paragraph");
+    assert_eq!(paragraph.props["style"], "2");
+    assert!(!paragraph.props.contains_key("outlineLvl"));
+    assert!(
+        !paragraph.props.contains_key("numId"),
+        "outline numbering is inherited from the named style"
+    );
+}
+
+#[test]
+fn materializes_hancoms_implicit_outline_zero_profile_for_named_styles() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let direct_para = builder.para_pr(ParaPr::default());
+    let outline_para = builder.para_pr_with_heading(ParaPr::default(), "OUTLINE", "0", 4);
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="1"><hh:style id="18" type="PARA" name="개요 5" paraPrIDRef="{outline_para}" charPrIDRef="{char_pr}" nextStyleIDRef="18" lockForm="0"/></hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="18"><hp:run charPrIDRef="{char_pr}"><hp:secPr outlineShapeIDRef="0"/><hp:t>암묵 개요</hp:t></hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let style = items
+        .iter()
+        .find(|item| item.r#type == Some("style"))
+        .expect("outline style");
+    assert_eq!(style.props["numId"], "1");
+    assert_eq!(style.props["ilvl"], "4");
+    assert_eq!(style.props["outlineLvl"], "4");
+    let levels: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("level"))
+        .collect();
+    assert_eq!(levels.len(), 5);
+    assert_eq!(levels[4].props["format"], "decimal");
+    assert_eq!(levels[4].props["lvlText"], "%1.%1.%1.%1.%1.");
+}
+
+#[test]
+fn rejects_outline_style_shared_by_sections_with_different_outline_numberings() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let direct_para = builder.para_pr(ParaPr::default());
+    let outline_para = builder.para_pr_with_heading(ParaPr::default(), "OUTLINE", "0", 0);
+    builder.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="2">"#,
+        r#"<hh:numbering id="1" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead></hh:numbering>"#,
+        r#"<hh:numbering id="2" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="ROMAN_CAPITAL" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead></hh:numbering>"#,
+        r#"</hh:numberings>"#,
+    ));
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="1"><hh:style id="2" type="PARA" name="개요" paraPrIDRef="{outline_para}" charPrIDRef="{char_pr}" nextStyleIDRef="2" lockForm="0"/></hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="2"><hp:run charPrIDRef="{char_pr}"><hp:secPr outlineShapeIDRef="1"/><hp:t>첫 구역</hp:t></hp:run></hp:p>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="2"><hp:run charPrIDRef="{char_pr}"><hp:secPr outlineShapeIDRef="2"/><hp:t>둘째 구역</hp:t></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("one DOCX style cannot own two section-specific outline definitions");
+    assert_eq!(
+        error.code,
+        officecli_hwpx::error::ErrorCode::UnsupportedFeature
+    );
+    assert!(error
+        .message
+        .contains("multiple section outline numberings"));
+}
+
+#[test]
+fn materializes_numbering_owned_only_by_an_active_named_style() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let direct_para = builder.para_pr(ParaPr::default());
+    let style_para = builder.para_pr_with_heading(ParaPr::default(), "NUMBER", "5", 1);
+    builder.ref_list_xml(concat!(
+        r#"<hh:numberings itemCnt="1"><hh:numbering id="5" start="0">"#,
+        r#"<hh:paraHead start="1" level="1" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>"#,
+        r#"<hh:paraHead start="1" level="2" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="0">^1.^2.</hh:paraHead>"#,
+        r#"</hh:numbering></hh:numberings>"#,
+    ));
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="1"><hh:style id="7" type="PARA" name="번호 스타일" paraPrIDRef="{style_para}" charPrIDRef="{char_pr}" nextStyleIDRef="7" lockForm="0"/></hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{direct_para}" styleIDRef="7"><hp:run charPrIDRef="{char_pr}"><hp:t>스타일 번호</hp:t></hp:run></hp:p>"#
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let style_index = items
+        .iter()
+        .position(|item| item.r#type == Some("style"))
+        .expect("numbered named style");
+    assert!(
+        items[..style_index]
+            .iter()
+            .any(|item| item.r#type == Some("num")),
+        "style-owned numbering must be defined first"
+    );
+    let style = &items[style_index];
+    assert_eq!(style.props["numId"], "1");
+    assert_eq!(style.props["ilvl"], "1");
+    let levels = items
+        .iter()
+        .filter(|item| item.r#type == Some("level"))
+        .count();
+    assert_eq!(levels, 2);
+
+    let paragraph = items
+        .iter()
+        .find(|item| item.props.get("text").and_then(|value| value.as_str()) == Some("스타일 번호"))
+        .expect("styled paragraph");
+    assert_eq!(paragraph.props["style"], "7");
+    assert!(
+        !paragraph.props.contains_key("numId"),
+        "numbering is inherited from the named style, not invented as direct formatting"
+    );
+}
+
+#[test]
+fn collects_named_styles_used_only_in_header_stories() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.ref_list_xml(format!(
+        concat!(
+            r#"<hh:styles itemCnt="2">"#,
+            r#"<hh:style id="0" type="PARA" name="본문" paraPrIDRef="{para_pr}" charPrIDRef="{char_pr}" nextStyleIDRef="0" lockForm="0"/>"#,
+            r#"<hh:style id="5" type="PARA" name="머리말" paraPrIDRef="{para_pr}" charPrIDRef="{char_pr}" nextStyleIDRef="0" lockForm="0"/>"#,
+            r#"</hh:styles>"#,
+        ),
+        para_pr = para_pr,
+        char_pr = char_pr,
+    ));
+    builder.section(format!(
+        concat!(
+            r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}">"#,
+            r#"<hp:ctrl><hp:header id="1" applyPageType="BOTH"><hp:subList>"#,
+            r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="5"><hp:run charPrIDRef="{char_pr}"><hp:t>전용 머리말</hp:t></hp:run></hp:p>"#,
+            r#"</hp:subList></hp:header></hp:ctrl><hp:t>본문</hp:t></hp:run></hp:p>"#,
+        ),
+        para_pr = para_pr,
+        char_pr = char_pr,
+    ));
+
+    let items = emit_document(&parse(&builder));
+    let style_ids: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("style"))
+        .map(|item| item.props["id"].as_str().expect("style id"))
+        .collect();
+    assert_eq!(style_ids, vec!["0", "5"]);
+    let header_paragraph = items
+        .iter()
+        .find(|item| item.props.get("text").and_then(|value| value.as_str()) == Some("전용 머리말"))
+        .expect("header paragraph");
+    assert_eq!(header_paragraph.props["style"], "5");
+}
+
+#[test]
+fn ignores_malformed_dormant_named_styles() {
+    let styles = concat!(
+        r#"<hh:style id="0" type="PARA" name="바탕글" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+        // This definition is deliberately unrepresentable, but no paragraph or
+        // active dependency reaches it.
+        r#"<hh:style id="99" type="TABLE" name="휴면 손상" paraPrIDRef="404" charPrIDRef="405" nextStyleIDRef="missing" lockForm="maybe"/>"#,
+    );
+    let builder = document_with_named_styles(styles, "0");
+    let items = emit_document(&parse(&builder));
+    let emitted: Vec<_> = items
+        .iter()
+        .filter(|item| item.r#type == Some("style"))
+        .collect();
+    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted[0].props["id"], "0");
+}
+
+#[test]
+fn rejects_active_named_style_table_count_mismatch() {
+    let mut builder = HwpxBuilder::new();
+    let char_pr = builder.char_pr(CharPr::plain());
+    let para_pr = builder.para_pr(ParaPr::default());
+    builder.ref_list_xml(format!(
+        r#"<hh:styles itemCnt="2"><hh:style id="0" type="PARA" name="바탕글" paraPrIDRef="{para_pr}" charPrIDRef="{char_pr}" nextStyleIDRef="0" lockForm="0"/></hh:styles>"#
+    ));
+    builder.section(format!(
+        r#"<hp:p paraPrIDRef="{para_pr}" styleIDRef="0"><hp:run charPrIDRef="{char_pr}"><hp:t>본문</hp:t></hp:run></hp:p>"#
+    ));
+
+    let error = read_document_from(Cursor::new(builder.build()))
+        .expect_err("an active style table must honor itemCnt");
+    assert_eq!(error.code, officecli_hwpx::error::ErrorCode::CorruptInput);
+    assert!(error.message.contains("itemCnt"));
+}
+
+#[test]
+fn rejects_missing_or_blank_paragraph_style_references_when_the_table_exists() {
+    for active_style in [None, Some(""), Some(" ")] {
+        let mut builder = HwpxBuilder::new();
+        let char_pr = builder.char_pr(CharPr::plain());
+        let para_pr = builder.para_pr(ParaPr::default());
+        builder.ref_list_xml(format!(
+            r#"<hh:styles itemCnt="1"><hh:style id="0" type="PARA" name="바탕글" paraPrIDRef="{para_pr}" charPrIDRef="{char_pr}" nextStyleIDRef="0" lockForm="0"/></hh:styles>"#
+        ));
+        let style_attribute = active_style
+            .map(|id| format!(r#" styleIDRef="{id}""#))
+            .unwrap_or_default();
+        builder.section(format!(
+            r#"<hp:p paraPrIDRef="{para_pr}"{style_attribute}><hp:run charPrIDRef="{char_pr}"><hp:t>필수 참조</hp:t></hp:run></hp:p>"#
+        ));
+
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("a present style table requires a non-empty paragraph style reference");
+        assert_eq!(
+            error.code,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "case {active_style:?}: {error:?}"
+        );
+        assert!(
+            error.message.contains("styleIDRef"),
+            "case {active_style:?}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_ambiguous_or_incomplete_active_named_styles() {
+    let cases = [
+        (
+            "missing active definition",
+            r#"<hh:style id="1" type="PARA" name="다른 스타일" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="1" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "style id 0 has no definition",
+        ),
+        (
+            "duplicate active id",
+            concat!(
+                r#"<hh:style id="0" type="PARA" name="첫째" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+                r#"<hh:style id="0" type="PARA" name="둘째" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+            ),
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "duplicate definitions",
+        ),
+        (
+            "wrong active type",
+            r#"<hh:style id="0" type="CHAR" name="문자 스타일" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::UnsupportedFeature,
+            "type CHAR",
+        ),
+        (
+            "missing primary name",
+            r#"<hh:style id="0" type="PARA" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "has no name",
+        ),
+        (
+            "missing paraPr target",
+            r#"<hh:style id="0" type="PARA" name="손상" paraPrIDRef="99" charPrIDRef="0" nextStyleIDRef="0" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "paraPr 99",
+        ),
+        (
+            "missing charPr target",
+            r#"<hh:style id="0" type="PARA" name="손상" paraPrIDRef="0" charPrIDRef="99" nextStyleIDRef="0" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "charPr 99",
+        ),
+        (
+            "missing next dependency",
+            r#"<hh:style id="0" type="PARA" name="손상" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="9" lockForm="0"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "style id 9 has no definition",
+        ),
+        (
+            "invalid lock flag",
+            r#"<hh:style id="0" type="PARA" name="손상" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" lockForm="sometimes"/>"#,
+            officecli_hwpx::error::ErrorCode::CorruptInput,
+            "lockForm",
+        ),
+    ];
+
+    for (label, styles, expected_code, expected_message) in cases {
+        let builder = document_with_named_styles(styles, "0");
+        let error = read_document_from(Cursor::new(builder.build()))
+            .expect_err("active invalid style must fail closed");
+        assert_eq!(error.code, expected_code, "case {label}: {error:?}");
+        assert!(
+            error.message.contains(expected_message),
+            "case {label}: {error:?}"
+        );
+    }
 }
 
 #[test]

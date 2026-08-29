@@ -3,14 +3,14 @@
 //! 본문의 `hp:run/@charPrIDRef`와 `hp:p/@paraPrIDRef`가 이 표를 가리킨다.
 //! 요소·속성 이름 근거: `unhwp-0.7.0/src/hwpx/styles.rs`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use super::model::{
-    hwpunit_to_point, hwpunit_to_twip, Align, CharStyle, NumberingDefinition, ParaStyle,
-    ParagraphNumbering, Section, VertAlign,
+    hwpunit_to_point, hwpunit_to_twip, Align, Block, CharStyle, Inline, NamedStyle,
+    NumberingDefinition, ParaStyle, ParagraphNumbering, Section, VertAlign,
 };
 use super::numbering::{NumberingCatalog, RawHeading, SourceKind};
 use super::xml::{attr, local_name};
@@ -29,6 +29,46 @@ pub struct StyleTable {
     pub fonts: HashMap<String, String>,
     para_headings: HashMap<String, Vec<RawHeading>>,
     numbering_catalog: NumberingCatalog,
+    named_style_table_present: bool,
+    named_style_container_count: usize,
+    named_style_declared_count: Option<String>,
+    named_styles: Vec<RawNamedStyle>,
+    named_style_index: HashMap<String, usize>,
+    duplicate_named_styles: HashSet<String>,
+    duplicate_char_styles: HashSet<String>,
+    duplicate_para_styles: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RawNamedStyle {
+    id: Option<String>,
+    kind: Option<String>,
+    name: Option<String>,
+    para_pr_id: Option<String>,
+    char_pr_id: Option<String>,
+    next_style_id: Option<String>,
+    lock_form: Option<String>,
+}
+
+impl RawNamedStyle {
+    fn from_start(start: &quick_xml::events::BytesStart<'_>) -> Self {
+        Self {
+            id: attr(start, "id"),
+            kind: attr(start, "type"),
+            name: attr(start, "name"),
+            para_pr_id: attr(start, "paraPrIDRef"),
+            char_pr_id: attr(start, "charPrIDRef"),
+            next_style_id: attr(start, "nextStyleIDRef"),
+            lock_form: attr(start, "lockForm"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NamedStyleHeading {
+    None,
+    Numbered,
+    Outline(u8),
 }
 
 impl StyleTable {
@@ -51,12 +91,259 @@ impl StyleTable {
         }
     }
 
+    pub(crate) fn materialize_named_styles(
+        &self,
+        sections: &[Section],
+        section_outline_ids: &[Option<String>],
+    ) -> Result<Vec<NamedStyle>> {
+        if !self.named_style_table_present {
+            return Ok(Vec::new());
+        }
+        debug_assert_eq!(sections.len(), section_outline_ids.len());
+
+        // A HWPX outline style resolves its numbering through the section's
+        // outlineShapeIDRef, even when the paragraph's direct paraPr says NONE.
+        // Carry each section origin through next-style dependencies so every
+        // materialized outline style can prove that it has one global DOCX
+        // numbering target.
+        let mut pending = Vec::new();
+        for (section_index, section) in sections.iter().enumerate() {
+            pending.extend(
+                collect_active_named_style_ids(section)
+                    .into_iter()
+                    .map(|id| (id, section_index)),
+            );
+        }
+        if pending.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.validate_named_style_table()?;
+        let mut required: HashMap<String, HashSet<usize>> = HashMap::new();
+        while let Some((id, section_index)) = pending.pop() {
+            if !required
+                .entry(id.clone())
+                .or_default()
+                .insert(section_index)
+            {
+                continue;
+            }
+            validate_style_id(&id)?;
+            let raw = self.unique_named_style(&id)?;
+            if let Some(next) = non_empty(raw.next_style_id.as_deref()) {
+                validate_style_id(next)?;
+                if next != id {
+                    pending.push((next.to_string(), section_index));
+                }
+            }
+        }
+
+        let mut output = Vec::with_capacity(required.len());
+        for raw in &self.named_styles {
+            let Some(id) = raw.id.as_deref() else {
+                continue;
+            };
+            if let Some(section_indices) = required.get(id) {
+                output.push(self.materialize_named_style(
+                    raw,
+                    section_indices,
+                    section_outline_ids,
+                )?);
+            }
+        }
+        Ok(output)
+    }
+
+    fn validate_named_style_table(&self) -> Result<()> {
+        if self.named_style_container_count != 1 {
+            return Err(PluginError::corrupt(format!(
+                "active style graph requires exactly one hh:styles container, found {}",
+                self.named_style_container_count
+            )));
+        }
+        let declared = self
+            .named_style_declared_count
+            .as_deref()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .ok_or_else(|| PluginError::corrupt("active hh:styles has no valid itemCnt"))?;
+        if declared != self.named_styles.len() {
+            return Err(PluginError::corrupt(format!(
+                "active hh:styles itemCnt {declared} does not match {} style definitions",
+                self.named_styles.len()
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn materialize_numberings(
         &self,
         sections: &[Section],
+        styles: &[NamedStyle],
     ) -> Result<Vec<NumberingDefinition>> {
         self.numbering_catalog
-            .materialize(sections, &self.char_styles)
+            .materialize(sections, styles, &self.char_styles)
+    }
+
+    fn unique_named_style(&self, id: &str) -> Result<&RawNamedStyle> {
+        if self.duplicate_named_styles.contains(id) {
+            return Err(PluginError::corrupt(format!(
+                "active style id {id} has duplicate definitions"
+            )));
+        }
+        let index = self.named_style_index.get(id).ok_or_else(|| {
+            PluginError::corrupt(format!("active style id {id} has no definition"))
+        })?;
+        Ok(&self.named_styles[*index])
+    }
+
+    fn materialize_named_style(
+        &self,
+        raw: &RawNamedStyle,
+        section_indices: &HashSet<usize>,
+        section_outline_ids: &[Option<String>],
+    ) -> Result<NamedStyle> {
+        let id = required_style_attr(raw.id.as_deref(), "id", "active style")?;
+        validate_style_id(id)?;
+        let kind = required_style_attr(raw.kind.as_deref(), "type", &format!("style {id}"))?
+            .to_ascii_uppercase();
+        if kind != "PARA" {
+            return Err(PluginError::unsupported_feature(format!(
+                "active style {id} has unsupported type {kind}; paragraph style references require PARA"
+            )));
+        }
+
+        let name = non_empty(raw.name.as_deref())
+            .ok_or_else(|| PluginError::corrupt(format!("active style {id} has no name")))?
+            .to_string();
+        let para_pr_id = required_style_attr(
+            raw.para_pr_id.as_deref(),
+            "paraPrIDRef",
+            &format!("style {id}"),
+        )?;
+        let char_pr_id = required_style_attr(
+            raw.char_pr_id.as_deref(),
+            "charPrIDRef",
+            &format!("style {id}"),
+        )?;
+        if self.duplicate_para_styles.contains(para_pr_id) {
+            return Err(PluginError::corrupt(format!(
+                "active style {id} references duplicate paraPr {para_pr_id}"
+            )));
+        }
+        if self.duplicate_char_styles.contains(char_pr_id) {
+            return Err(PluginError::corrupt(format!(
+                "active style {id} references duplicate charPr {char_pr_id}"
+            )));
+        }
+        let base_paragraph = self.para_styles.get(para_pr_id).ok_or_else(|| {
+            PluginError::corrupt(format!(
+                "active style {id} references missing paraPr {para_pr_id}"
+            ))
+        })?;
+        let character = self.char_styles.get(char_pr_id).cloned().ok_or_else(|| {
+            PluginError::corrupt(format!(
+                "active style {id} references missing charPr {char_pr_id}"
+            ))
+        })?;
+
+        let heading = self.named_style_heading(para_pr_id)?;
+        let mut paragraph = match heading {
+            NamedStyleHeading::Numbered => self.scoped(None).para_style(Some(para_pr_id))?,
+            NamedStyleHeading::None => base_paragraph.clone(),
+            NamedStyleHeading::Outline(level) => {
+                let mut targets = BTreeSet::new();
+                for section_index in section_indices {
+                    let source_id = section_outline_ids
+                        .get(*section_index)
+                        .and_then(Option::as_deref)
+                        .ok_or_else(|| {
+                            PluginError::corrupt(format!(
+                                "active outline style {id} has no section outlineShapeIDRef numbering in section {section_index}"
+                            ))
+                        })?;
+                    targets.insert(self.numbering_catalog.resolve_outline_target(source_id)?);
+                }
+                if targets.len() != 1 {
+                    return Err(PluginError::unsupported_feature(format!(
+                        "active outline style {id} resolves to multiple section outline numberings"
+                    )));
+                }
+                let target_id = *targets
+                    .first()
+                    .expect("an active style always has a source section");
+                let mut paragraph = base_paragraph.clone();
+                paragraph.numbering = Some(ParagraphNumbering {
+                    num_id: target_id,
+                    level,
+                    outline: true,
+                });
+                paragraph
+            }
+        };
+        paragraph.named_style_id = None;
+        let outline_level = match heading {
+            NamedStyleHeading::Outline(level) => Some(level),
+            NamedStyleHeading::None | NamedStyleHeading::Numbered => None,
+        };
+        let next = non_empty(raw.next_style_id.as_deref())
+            .filter(|next| *next != id)
+            .map(ToOwned::to_owned);
+        // Hancom's own OOXML conversion omits w:locked even for lockForm=1.
+        // Validate the source metadata, but do not invent DOCX style locking.
+        let _lock_form = parse_style_bool(raw.lock_form.as_deref(), "lockForm", id)?;
+
+        Ok(NamedStyle {
+            id: id.to_string(),
+            name,
+            next,
+            ui_priority: id.parse::<i32>().ok(),
+            outline_level,
+            paragraph,
+            character,
+        })
+    }
+
+    fn named_style_heading(&self, para_pr_id: &str) -> Result<NamedStyleHeading> {
+        let Some(headings) = self.para_headings.get(para_pr_id) else {
+            return Ok(NamedStyleHeading::None);
+        };
+        if headings.len() != 1 {
+            return Err(PluginError::corrupt(format!(
+                "active style paraPr {para_pr_id} contains {} heading elements",
+                headings.len()
+            )));
+        }
+        let heading = &headings[0];
+        let kind = non_empty(heading.kind.as_deref())
+            .ok_or_else(|| {
+                PluginError::corrupt(format!(
+                    "active style paraPr {para_pr_id} heading has no type"
+                ))
+            })?
+            .to_ascii_uppercase();
+        match kind.as_str() {
+            "NONE" => Ok(NamedStyleHeading::None),
+            "NUMBER" | "BULLET" => Ok(NamedStyleHeading::Numbered),
+            "OUTLINE" => {
+                let level = heading
+                    .level
+                    .as_deref()
+                    .and_then(|value| value.trim().parse::<u8>().ok())
+                    .ok_or_else(|| {
+                        PluginError::corrupt(format!(
+                            "active style paraPr {para_pr_id} outline heading has no valid level"
+                        ))
+                    })?;
+                if level > 8 {
+                    return Err(PluginError::unsupported_feature(format!(
+                        "active style paraPr {para_pr_id} outline level {level} exceeds the DOCX style limit"
+                    )));
+                }
+                Ok(NamedStyleHeading::Outline(level))
+            }
+            other => Err(PluginError::unsupported_feature(format!(
+                "active style paraPr {para_pr_id} uses unsupported heading type {other}"
+            ))),
+        }
     }
 
     /// header.xml을 파싱한다.
@@ -84,6 +371,7 @@ impl StyleTable {
         let mut cur_char: Option<(String, CharStyle)> = None;
         let mut cur_para: Option<(String, ParaStyle)> = None;
         let mut cur_headings: Vec<RawHeading> = Vec::new();
+        let mut in_named_styles = false;
         let mut buf = Vec::new();
 
         loop {
@@ -94,6 +382,17 @@ impl StyleTable {
                     let name_owned = e.name();
                     let name = local_name(name_owned.as_ref());
                     match name.as_str() {
+                        "styles" => {
+                            in_named_styles = true;
+                            table.named_style_table_present = true;
+                            table.named_style_container_count += 1;
+                            if table.named_style_container_count == 1 {
+                                table.named_style_declared_count = attr(&e, "itemCnt");
+                            }
+                        }
+                        "style" if in_named_styles => {
+                            insert_named_style(&mut table, RawNamedStyle::from_start(&e));
+                        }
                         "charPr" => {
                             let id = attr(&e, "id").unwrap_or_default();
                             let mut style = CharStyle::default();
@@ -230,9 +529,10 @@ impl StyleTable {
                 Ok(Event::End(e)) => {
                     let name_owned = e.name();
                     match local_name(name_owned.as_ref()).as_str() {
+                        "styles" => in_named_styles = false,
                         "charPr" => {
                             if let Some((id, style)) = cur_char.take() {
-                                table.char_styles.insert(id, style);
+                                insert_char_style(&mut table, id, style);
                             }
                         }
                         "paraPr" => {
@@ -242,7 +542,7 @@ impl StyleTable {
                                         .para_headings
                                         .insert(id.clone(), std::mem::take(&mut cur_headings));
                                 }
-                                table.para_styles.insert(id, style);
+                                insert_para_style(&mut table, id, style);
                             }
                         }
                         _ => {}
@@ -255,7 +555,7 @@ impl StyleTable {
 
         // 자기닫힘 태그로 끝난 경우를 위해 남은 것을 흘려보낸다.
         if let Some((id, style)) = cur_char.take() {
-            table.char_styles.insert(id, style);
+            insert_char_style(&mut table, id, style);
         }
         if let Some((id, style)) = cur_para.take() {
             if !cur_headings.is_empty() {
@@ -263,11 +563,103 @@ impl StyleTable {
                     .para_headings
                     .insert(id.clone(), std::mem::take(&mut cur_headings));
             }
-            table.para_styles.insert(id, style);
+            insert_para_style(&mut table, id, style);
         }
 
         Ok(table)
     }
+}
+
+fn insert_named_style(table: &mut StyleTable, style: RawNamedStyle) {
+    let index = table.named_styles.len();
+    if let Some(id) = &style.id {
+        if table.named_style_index.insert(id.clone(), index).is_some() {
+            table.duplicate_named_styles.insert(id.clone());
+        }
+    }
+    table.named_styles.push(style);
+}
+
+fn insert_char_style(table: &mut StyleTable, id: String, style: CharStyle) {
+    if table.char_styles.insert(id.clone(), style).is_some() {
+        table.duplicate_char_styles.insert(id);
+    }
+}
+
+fn insert_para_style(table: &mut StyleTable, id: String, style: ParaStyle) {
+    if table.para_styles.insert(id.clone(), style).is_some() {
+        table.duplicate_para_styles.insert(id);
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+fn required_style_attr<'a>(
+    value: Option<&'a str>,
+    attribute: &str,
+    context: &str,
+) -> Result<&'a str> {
+    non_empty(value).ok_or_else(|| PluginError::corrupt(format!("{context} has no {attribute}")))
+}
+
+fn validate_style_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.trim() != id
+        || id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(PluginError::corrupt(format!(
+            "active style id {id:?} is not a valid DOCX style identifier"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_style_bool(value: Option<&str>, attribute: &str, style_id: &str) -> Result<bool> {
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "0" | "false" => Ok(false),
+        "1" | "true" => Ok(true),
+        _ => Err(PluginError::corrupt(format!(
+            "active style {style_id} has invalid {attribute} value {value:?}"
+        ))),
+    }
+}
+
+fn collect_active_named_style_ids(section: &Section) -> HashSet<String> {
+    fn walk(blocks: &[Block], active: &mut HashSet<String>) {
+        for block in blocks {
+            match block {
+                Block::Paragraph(paragraph) => {
+                    if let Some(id) = &paragraph.style.named_style_id {
+                        active.insert(id.clone());
+                    }
+                    for inline in &paragraph.inlines {
+                        if let Inline::Note(note) = inline {
+                            walk(&note.blocks, active);
+                        }
+                    }
+                }
+                Block::Table(table) => {
+                    for cell in &table.cells {
+                        walk(&cell.blocks, active);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut active = HashSet::new();
+    walk(&section.blocks, &mut active);
+    for story in section.headers.iter().chain(&section.footers) {
+        walk(&story.blocks, &mut active);
+    }
+    active
 }
 
 pub(crate) struct SectionStyles<'a> {
@@ -276,6 +668,15 @@ pub(crate) struct SectionStyles<'a> {
 }
 
 impl SectionStyles<'_> {
+    pub fn named_style_id(&self, id: Option<&str>) -> Result<Option<String>> {
+        if !self.table.named_style_table_present {
+            return Ok(None);
+        }
+        let id = required_style_attr(id, "styleIDRef", "paragraph")?;
+        validate_style_id(id)?;
+        Ok(Some(id.to_owned()))
+    }
+
     pub fn char_style(&self, id: Option<&str>) -> CharStyle {
         self.table.char_style(id)
     }
@@ -343,10 +744,15 @@ impl SectionStyles<'_> {
                 )));
             }
         };
-        let target_id = self
-            .table
-            .numbering_catalog
-            .resolve_target(source_kind, source_id)?;
+        let target_id = if outline {
+            self.table
+                .numbering_catalog
+                .resolve_outline_target(source_id)?
+        } else {
+            self.table
+                .numbering_catalog
+                .resolve_target(source_kind, source_id)?
+        };
         style.numbering = Some(ParagraphNumbering {
             num_id: target_id,
             level,

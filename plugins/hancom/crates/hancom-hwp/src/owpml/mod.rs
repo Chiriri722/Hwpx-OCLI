@@ -70,15 +70,20 @@ pub fn read_document_from<R: Read + Seek>(reader: R) -> Result<Document> {
 
     let paths: Vec<String> = pkg.section_paths().to_vec();
     let mut sections = Vec::with_capacity(paths.len());
+    let mut section_outline_ids = Vec::with_capacity(paths.len());
     for p in &paths {
         let xml = pkg.read_section_xml(p)?;
-        sections.push(section::parse_section(&xml, &styles)?);
+        let (section, outline_id) = section::parse_section_with_outline(&xml, &styles)?;
+        sections.push(section);
+        section_outline_ids.push(outline_id);
     }
 
-    let numberings = styles.materialize_numberings(&sections)?;
+    let named_styles = styles.materialize_named_styles(&sections, &section_outline_ids)?;
+    let numberings = styles.materialize_numberings(&sections, &named_styles)?;
     let mut doc = Document {
         sections,
         numberings,
+        styles: named_styles,
     };
     resolve_images(&mut pkg, &mut doc)?;
     Ok(doc)

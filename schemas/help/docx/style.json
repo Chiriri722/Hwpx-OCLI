@@ -238,6 +238,52 @@
       "readback": "one of values",
       "enforcement": "report"
     },
+    "leftIndent": {
+      "type": "length",
+      "aliases": [
+        "indent",
+        "leftindent"
+      ],
+      "description": "left paragraph indent on the style's pPr.",
+      "add": true,
+      "set": true,
+      "get": true,
+      "examples": [
+        "--prop leftIndent=720"
+      ],
+      "readback": "unit-qualified",
+      "enforcement": "report"
+    },
+    "firstLineIndent": {
+      "type": "length",
+      "aliases": [
+        "firstlineindent"
+      ],
+      "description": "first-line paragraph indent on the style's pPr; mutually exclusive with hangingIndent.",
+      "add": true,
+      "set": true,
+      "get": true,
+      "examples": [
+        "--prop firstLineIndent=360"
+      ],
+      "readback": "unit-qualified",
+      "enforcement": "report"
+    },
+    "hangingIndent": {
+      "type": "length",
+      "aliases": [
+        "hangingindent"
+      ],
+      "description": "hanging paragraph indent on the style's pPr; mutually exclusive with firstLineIndent.",
+      "add": true,
+      "set": true,
+      "get": true,
+      "examples": [
+        "--prop hangingIndent=360"
+      ],
+      "readback": "unit-qualified",
+      "enforcement": "report"
+    },
     "spaceBefore": {
       "type": "length",
       "aliases": [

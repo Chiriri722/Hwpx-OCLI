@@ -149,6 +149,8 @@ var tests = new (string Name, Action Run)[]
     ("host watchdog accepts heartbeats throughout a slow plugin run", HostWatchdogAcceptsHeartbeats),
     ("dump-reader surfaces only bounded structured success warnings", DumpReaderStructuredWarningsAreFilteredAndBounded),
     ("field schema accepts emitted character formatting", FieldSchemaAcceptsEmittedCharacterFormatting),
+    ("style schema accepts emitted paragraph indents", StyleSchemaAcceptsEmittedParagraphIndents),
+    ("style add preserves numeric ids and forward next references", StyleAddPreservesNumericIdsAndForwardNextReferences),
     ("note reference decorations preserve prefix suffix and baseline", NoteReferenceDecorationsArePreserved),
 };
 
@@ -168,6 +170,51 @@ foreach (var (name, run) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static void StyleAddPreservesNumericIdsAndForwardNextReferences()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-style-forward-next-{Guid.NewGuid():N}.docx");
+    try
+    {
+        OfficeCli.BlankDocCreator.Create(path);
+        using (var handler = new OfficeCli.Handlers.WordHandler(path, editable: true))
+        {
+            var firstPath = handler.Add("/styles", "style", null, new Dictionary<string, string>
+            {
+                ["id"] = "7",
+                ["name"] = "Hancom Child",
+                ["type"] = "paragraph",
+                ["next"] = "0",
+                ["customStyle"] = "false",
+            });
+            Assert(firstPath == "/styles/7", $"numeric style id was rewritten: {firstPath}");
+            Assert(handler.LastAddUnsupportedProps.Count == 0,
+                $"forward-next style props were rejected: {string.Join(", ", handler.LastAddUnsupportedProps)}");
+
+            var secondPath = handler.Add("/styles", "style", null, new Dictionary<string, string>
+            {
+                ["id"] = "0",
+                ["name"] = "Hancom Root",
+                ["type"] = "paragraph",
+                ["customStyle"] = "false",
+            });
+            Assert(secondPath == "/styles/0", $"numeric target style id was rewritten: {secondPath}");
+            handler.Save();
+        }
+
+        using var document = WordprocessingDocument.Open(path, false);
+        var styles = document.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+        var child = styles.Elements<Style>().Single(style => style.StyleId?.Value == "7");
+        Assert(child.NextParagraphStyle?.Val?.Value == "0",
+            $"forward next reference changed: {child.NextParagraphStyle?.Val?.Value ?? "<missing>"}");
+        Assert(styles.Elements<Style>().Any(style => style.StyleId?.Value == "0"),
+            "numeric target style was not preserved");
+    }
+    finally
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+}
 
 static void NoteReferenceDecorationsArePreserved()
 {
@@ -1250,6 +1297,36 @@ static void FieldSchemaAcceptsEmittedCharacterFormatting()
 
     Assert(unknown.Count == 0,
         $"field schema rejected emitted character formatting: {string.Join(", ", unknown)}");
+}
+
+static void StyleSchemaAcceptsEmittedParagraphIndents()
+{
+    var schemaType = typeof(DumpReaderInvoker).Assembly.GetType("OfficeCli.Help.SchemaHelpLoader")
+        ?? throw new TypeLoadException("OfficeCli.Help.SchemaHelpLoader");
+    var method = schemaType.GetMethod(
+        "ValidateProperties",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new MissingMethodException(schemaType.FullName, "ValidateProperties");
+    foreach (var (specificIndent, value) in new[]
+    {
+        ("firstLineIndent", "10pt"),
+        ("hangingIndent", "10pt"),
+    })
+    {
+        var props = new Dictionary<string, string>
+        {
+            ["id"] = "2",
+            ["name"] = "개요 1",
+            ["type"] = "paragraph",
+            ["leftIndent"] = "20pt",
+            [specificIndent] = value,
+        };
+        var unknown = method.Invoke(null, ["docx", "style", "add", props]) as IReadOnlyList<string>
+            ?? throw new InvalidOperationException("ValidateProperties returned null");
+
+        Assert(unknown.Count == 0,
+            $"style schema rejected emitted paragraph indents: {string.Join(", ", unknown)}");
+    }
 }
 
 static string TestAppHostPath()

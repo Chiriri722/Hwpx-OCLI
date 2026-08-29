@@ -95,9 +95,15 @@ impl CharStyle {
     }
 }
 
-/// 문단 서식. HWPX `hh:paraPr` 하나에 대응한다.
+/// 문단 서식. HWPX `hh:paraPr`와 문단의 선택적 `styleIDRef`에 대응한다.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParaStyle {
+    /// 문단이 참조하는 문서 수준 이름 스타일의 안정적인 ID.
+    ///
+    /// 직접 문단 속성과 별개로 보존한다. HWPX에서는 `paraPrIDRef`와
+    /// `styleIDRef`가 서로 다른 정의를 가리키는 경우가 흔하며, 전자를 후자로
+    /// 대체하면 실제 작성자가 준 직접 서식이 사라진다.
+    pub named_style_id: Option<String>,
     pub align: Option<Align>,
     /// 왼쪽 들여쓰기 (twip).
     pub indent_left_twip: Option<i64>,
@@ -120,6 +126,22 @@ pub struct ParaStyle {
     pub line_spacing_ratio: Option<f64>,
     /// 문단에 적용할 DOCX 번호 매기기 인스턴스와 단계.
     pub numbering: Option<ParagraphNumbering>,
+}
+
+/// 문서 수준의 이름 있는 문단 스타일.
+///
+/// HWPX `hh:style type="PARA"` 중 실제 문단에서 참조되거나 `nextStyleIDRef`
+/// 의존성으로 도달 가능한 정의만 물질화한다. 휴면 정의의 손상이 정상 문서
+/// 변환을 막지 않게 하면서, 방출되는 참조에는 항상 선행 정의가 있게 한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedStyle {
+    pub id: String,
+    pub name: String,
+    pub next: Option<String>,
+    pub ui_priority: Option<i32>,
+    pub outline_level: Option<u8>,
+    pub paragraph: ParaStyle,
+    pub character: CharStyle,
 }
 
 impl ParaStyle {
@@ -841,6 +863,7 @@ pub struct Section {
 pub struct Document {
     pub sections: Vec<Section>,
     pub numberings: Vec<NumberingDefinition>,
+    pub styles: Vec<NamedStyle>,
 }
 
 impl Default for Document {
@@ -848,6 +871,7 @@ impl Default for Document {
         Self {
             sections: vec![Section::default()],
             numberings: Vec::new(),
+            styles: Vec::new(),
         }
     }
 }
@@ -861,6 +885,7 @@ impl Document {
                 ..Section::default()
             }],
             numberings: Vec::new(),
+            styles: Vec::new(),
         }
     }
 
