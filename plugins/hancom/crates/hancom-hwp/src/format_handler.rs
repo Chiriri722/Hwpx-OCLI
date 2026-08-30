@@ -307,12 +307,41 @@ fn parse_open(request: &Value) -> std::result::Result<(Option<PathBuf>, bool), W
             "the first protocol frame must have msg_type=open",
         ));
     }
+    // Hosts predating the protocol-v1 lifecycle fix placed the two open-only
+    // fields inside `args`. Accept exactly that known shape, but never merge
+    // it with canonical top-level fields or ignore additions: either behavior
+    // would make precedence and future protocol evolution ambiguous.
+    let legacy_args = match request.get("args") {
+        None => None,
+        Some(Value::Object(args)) => {
+            if request.get("path").is_some() || request.get("editable").is_some() {
+                return Err(WireError::invalid_request(
+                    "open frame cannot mix top-level lifecycle fields with legacy args",
+                ));
+            }
+            if args.len() != 2 || !args.contains_key("path") || !args.contains_key("editable") {
+                return Err(WireError::invalid_request(
+                    "legacy open.args must contain exactly path and editable",
+                ));
+            }
+            Some(args)
+        }
+        Some(_) => {
+            return Err(WireError::invalid_request(
+                "legacy open.args must be an object",
+            ));
+        }
+    };
+
     // The process-level `open <file>` argument is the authoritative source
     // identity. Protocol-v1 hosts normally repeat that value in the first
     // JSONL frame, but released hosts have also omitted the redundant field.
     // Accept only true absence for compatibility: a present value must remain
     // a string and is canonicalized and identity-checked by `serve` above.
-    let path = match request.get("path") {
+    let path_value = legacy_args
+        .and_then(|args| args.get("path"))
+        .or_else(|| request.get("path"));
+    let path = match path_value {
         None => None,
         Some(Value::String(value)) => Some(PathBuf::from(value)),
         received => {
@@ -325,7 +354,10 @@ fn parse_open(request: &Value) -> std::result::Result<(Option<PathBuf>, bool), W
     // A released host may omit this hint for read-only commands such as view.
     // Absence must never grant write access: default to a read-only session,
     // while preserving strict validation whenever the field is present.
-    let editable = match request.get("editable") {
+    let editable_value = legacy_args
+        .and_then(|args| args.get("editable"))
+        .or_else(|| request.get("editable"));
+    let editable = match editable_value {
         None => false,
         Some(Value::Bool(editable)) => *editable,
         Some(_) => {

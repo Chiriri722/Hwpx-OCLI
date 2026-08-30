@@ -28,6 +28,16 @@ Linux, Windows, and macOS because the same native `view` handshake omitted
 this second failure likewise proves an interoperability discrepancy without
 proving which build or transport layer removed the field.
 
+Run `33302693952` then passed native HWPX/OWPML reads on all three systems but
+rejected the first `set` because the session advertised only read commands. Its
+error wording exactly matched the host implementation immediately preceding
+commit `0429890a`; inspection of that implementation shows that it did not
+discard the fields, but serialized both under `args`. An independent full
+CLI-to-resident-to-plugin capture using .NET SDK 10.0.302 confirmed that the
+current host sends canonical top-level fields. This narrows the compatibility
+target to a known legacy envelope without establishing why that implementation
+was used in the failing workflow.
+
 Rejecting the session is safe but leaves all three supported native workflows
 unusable. Blindly accepting any malformed `path` would instead weaken the
 source-identity check.
@@ -52,7 +62,11 @@ source-identity check.
    the field as required by protocol v1.
 7. `protocol` and `msg_type=open` remain mandatory. No compatibility rule
    accepts a command frame as a handshake.
-8. Diagnostics state only the observed failure. They must not claim a .NET,
+8. A legacy `args` object is accepted only when it contains exactly `path` and
+   `editable`, with the same string/Boolean type and canonical identity checks
+   as their top-level equivalents. Missing or extra keys, non-object `args`,
+   and any mixture with top-level lifecycle fields are rejected.
+9. Diagnostics state only the observed failure. They must not claim a .NET,
    GitHub-hosted-runner, or OS root cause until a captured failing frame and a
    minimized reproducer prove one.
 
@@ -64,6 +78,8 @@ source-identity check.
   or bypass the identity check.
 - An omitted editability hint can only reduce authority to a read-only session;
   malformed present values remain errors.
+- A known pre-lifecycle-fix host retains its explicit edit intent through the
+  exact nested envelope, while ambiguous mixed or extended shapes fail closed.
 - Host implementations and conformance tests must continue to emit `path` and
   Boolean `editable`; these compatibility rules must not be copied into the
   normative protocol text.
@@ -81,6 +97,11 @@ source-identity check.
   the source after a rejected mutation.
 - `hwpx_format_handler.rs::open_frame_present_editable_keeps_strict_type_checks`
   verifies that a present `null` does not use the omission fallback.
+- `hwpx_format_handler.rs::legacy_nested_open_fields_preserve_explicit_editability`
+  verifies that the exact historical envelope preserves an explicit writer
+  session through durable save and reopen.
+- `hwpx_format_handler.rs::legacy_nested_open_fields_reject_mixed_or_extended_shapes`
+  rejects mixed, extra-key, and incomplete legacy envelopes.
 - `OfficeCli.Tests::FormatHandlerLifecycleFramesMatchProtocolV1` continues to
   require the host's canonical top-level path and editable flag.
 - The implementing CI run must pass the native HWPX/OWPML smoke on all three

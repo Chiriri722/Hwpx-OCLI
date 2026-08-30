@@ -156,6 +156,10 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 일치해야 한다. `null`이나 다른 타입, 다른 파일은 폴백하지 않고 거부한다.
 `editable` 키가 완전히 빠지면 권한을 추론하지 않고 **읽기 전용(`false`)** 으로만
 폴백한다. 키가 존재하면 Boolean이어야 하며, `null`이나 다른 타입은 거부한다.
+또한 lifecycle 수정 이전 릴리스 호스트가 사용한 정확한 모양인
+`args: {path: <string>, editable: <boolean>}`만 호환 입력으로 허용한다. 이 객체는
+두 키를 모두 가져야 하고 다른 키가 없어야 하며, 최상위 `path`/`editable`과 섞이면
+거부한다. 중첩 Boolean을 그대로 사용하므로 쓰기 권한을 추론하지 않는다.
 호스트의 규범 계약에서는 `path`와 Boolean `editable`이 모두 계속 필수이고,
 `protocol`과 `msg_type=open`은 호환 폴백 없이 필수다. 근거와 비주장은
 [ADR-0015](../../../docs/adr/0015-hancom-format-handler-open-path-compatibility.md)에 기록한다.
