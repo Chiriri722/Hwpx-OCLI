@@ -234,7 +234,7 @@ fn open_frame_present_editable_keeps_strict_type_checks() {
 }
 
 #[test]
-fn legacy_nested_open_fields_preserve_explicit_editability() {
+fn legacy_lifecycle_envelopes_preserve_explicit_editability_and_durable_save() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("legacy-open-args.hwpx");
     std::fs::write(&path, build_package(&section("before", "second"))).expect("write fixture");
@@ -248,7 +248,7 @@ fn legacy_nested_open_fields_preserve_explicit_editability() {
             }
         }),
         json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"legacy edited"}}),
-        json!({"protocol":1,"msg_type":"save"}),
+        json!({"protocol":1,"msg_type":"command","command":"save","args":{}}),
         json!({"protocol":1,"msg_type":"close"}),
     ]);
 
@@ -265,6 +265,53 @@ fn legacy_nested_open_fields_preserve_explicit_editability() {
     assert!(commands.contains(&json!("set")));
     assert!(commands.contains(&json!("save")));
     assert!(read_section(&path).contains(">legacy edited<"));
+}
+
+#[test]
+fn legacy_command_save_rejects_incomplete_or_extended_shapes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("strict-legacy-save.hwpx");
+    std::fs::write(&path, build_package(&section("source", "second"))).expect("write fixture");
+    let canonical = path.canonicalize().expect("canonical");
+
+    for (label, save) in [
+        (
+            "missing args",
+            json!({"protocol":1,"msg_type":"command","command":"save"}),
+        ),
+        (
+            "null args",
+            json!({"protocol":1,"msg_type":"command","command":"save","args":null}),
+        ),
+        (
+            "nonempty args",
+            json!({"protocol":1,"msg_type":"command","command":"save","args":{"unexpected":1}}),
+        ),
+        (
+            "props",
+            json!({"protocol":1,"msg_type":"command","command":"save","args":{},"props":{}}),
+        ),
+        (
+            "extra field",
+            json!({"protocol":1,"msg_type":"command","command":"save","args":{},"unexpected":1}),
+        ),
+    ] {
+        let input = frame_lines(&[
+            json!({"protocol":1,"msg_type":"open","path":canonical,"editable":true}),
+            save,
+            json!({"protocol":1,"msg_type":"close"}),
+        ]);
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(input), &mut output)
+            .unwrap_or_else(|error| panic!("{label}: serve failed: {error}"));
+        let replies = replies(output);
+        assert_eq!(replies.len(), 3, "{label}: {replies:#?}");
+        assert_eq!(replies[1]["msg_type"], "error", "{label}: {replies:#?}");
+        assert_eq!(
+            replies[1]["error"]["code"], "invalid_request",
+            "{label}: {replies:#?}"
+        );
+    }
 }
 
 #[test]

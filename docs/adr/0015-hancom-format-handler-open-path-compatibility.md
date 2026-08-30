@@ -1,8 +1,8 @@
-# ADR-0015: Bound released-host open omissions without granting write access
+# ADR-0015: Bound released-host lifecycle compatibility without granting write access
 
 - Status: Accepted
 - Decision date: 2026-08-30
-- Scope: Hancom HWPX/OWPML format-handler open handshake
+- Scope: Hancom HWPX/OWPML format-handler open and save lifecycle frames
 - Related: [ADR-0013](0013-hancom-package-preserving-editor-policy.md), [ADR-0014](0014-hancom-format-handler-install-promotion.md)
 - Plan: [`../../specs/001-hancom-unified/task-plan.md`](../../specs/001-hancom-unified/task-plan.md)
 
@@ -38,6 +38,15 @@ current host sends canonical top-level fields. This narrows the compatibility
 target to a known legacy envelope without establishing why that implementation
 was used in the failing workflow.
 
+Run `33303406446` accepted that exact legacy open envelope and completed the
+first mutation on all three operating systems. It then failed on save with the
+handler's diagnostic `save uses msg_type=save rather than a command envelope`.
+That is the unique response to the lifecycle-fix predecessor's exact
+`{"msg_type":"command","command":"save","args":{}}` frame. The same
+historical host implementation that nested open fields sent this save shape,
+so the two observations form one bounded compatibility target rather than a
+new inferred serializer variant.
+
 Rejecting the session is safe but leaves all three supported native workflows
 unusable. Blindly accepting any malformed `path` would instead weaken the
 source-identity check.
@@ -66,7 +75,13 @@ source-identity check.
    `editable`, with the same string/Boolean type and canonical identity checks
    as their top-level equivalents. Missing or extra keys, non-object `args`,
    and any mixture with top-level lifecycle fields are rejected.
-9. Diagnostics state only the observed failure. They must not claim a .NET,
+9. A legacy command-style save is accepted only when the already-open session
+   is editable and the request contains exactly `protocol`, `msg_type=command`,
+   `command=save`, and an explicitly present empty `args` object. Missing,
+   null, or nonempty `args`; `props`; and every extra field are rejected. This
+   does not grant write authority and does not replace canonical
+   `msg_type=save` in the normative contract.
+10. Diagnostics state only the observed failure. They must not claim a .NET,
    GitHub-hosted-runner, or OS root cause until a captured failing frame and a
    minimized reproducer prove one.
 
@@ -79,7 +94,8 @@ source-identity check.
 - An omitted editability hint can only reduce authority to a read-only session;
   malformed present values remain errors.
 - A known pre-lifecycle-fix host retains its explicit edit intent through the
-  exact nested envelope, while ambiguous mixed or extended shapes fail closed.
+  exact nested open and command-save envelopes, while ambiguous mixed or
+  extended shapes fail closed.
 - Host implementations and conformance tests must continue to emit `path` and
   Boolean `editable`; these compatibility rules must not be copied into the
   normative protocol text.
@@ -97,11 +113,13 @@ source-identity check.
   the source after a rejected mutation.
 - `hwpx_format_handler.rs::open_frame_present_editable_keeps_strict_type_checks`
   verifies that a present `null` does not use the omission fallback.
-- `hwpx_format_handler.rs::legacy_nested_open_fields_preserve_explicit_editability`
-  verifies that the exact historical envelope preserves an explicit writer
-  session through durable save and reopen.
+- `hwpx_format_handler.rs::legacy_lifecycle_envelopes_preserve_explicit_editability_and_durable_save`
+  verifies that the exact historical open and save envelopes preserve an
+  explicit writer session through durable save and reopen.
 - `hwpx_format_handler.rs::legacy_nested_open_fields_reject_mixed_or_extended_shapes`
   rejects mixed, extra-key, and incomplete legacy envelopes.
+- `hwpx_format_handler.rs::legacy_command_save_rejects_incomplete_or_extended_shapes`
+  rejects missing/null/nonempty args, props, and extra fields on command-save.
 - `OfficeCli.Tests::FormatHandlerLifecycleFramesMatchProtocolV1` continues to
   require the host's canonical top-level path and editable flag.
 - The implementing CI run must pass the native HWPX/OWPML smoke on all three

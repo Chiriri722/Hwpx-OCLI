@@ -147,7 +147,7 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 표 좌표는 exit 2다. DTD는 포맷 판별 후 엔티티 확장 없이 exit 3으로 거부한다.
 파싱이 끝난 뒤에만 JSONL을 emit하므로 어떤 실패도 부분 stdout을 남기지 않는다.
 
-## C11. HWPX/OWPML `open` 호환 경계
+## C11. HWPX/OWPML lifecycle 호환 경계
 
 호스트의 규범 계약은 여전히 CLI `open <file>` 인자와 첫 JSONL 프레임의 최상위
 `path`를 함께 보내는 것이다. Hancom format-handler는 릴리스 호스트 상호운용을
@@ -160,6 +160,12 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 `args: {path: <string>, editable: <boolean>}`만 호환 입력으로 허용한다. 이 객체는
 두 키를 모두 가져야 하고 다른 키가 없어야 하며, 최상위 `path`/`editable`과 섞이면
 거부한다. 중첩 Boolean을 그대로 사용하므로 쓰기 권한을 추론하지 않는다.
+같은 구형 호스트의 `save`는 정확히
+`{"protocol":1,"msg_type":"command","command":"save","args":{}}`였으므로,
+이미 `editable=true`로 열린 세션에서 이 네 필드와 명시적인 빈 `args`만 있는 경우에
+한해 저장한다. `args` 누락/null/비어 있지 않음, `props`, 추가 필드는 모두 거부한다.
+이 호환 규칙은 쓰기 권한을 만들지 않으며 규범 형식은 계속
+`{"protocol":1,"msg_type":"save"}`다.
 호스트의 규범 계약에서는 `path`와 Boolean `editable`이 모두 계속 필수이고,
 `protocol`과 `msg_type=open`은 호환 폴백 없이 필수다. 근거와 비주장은
 [ADR-0015](../../../docs/adr/0015-hancom-format-handler-open-path-compatibility.md)에 기록한다.

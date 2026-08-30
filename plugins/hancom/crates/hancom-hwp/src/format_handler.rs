@@ -597,8 +597,20 @@ impl HwpxSession {
             "set" => Err(WireError::unsupported_command(
                 "read-only HWPX sessions do not implement set",
             )),
+            // Hosts predating the protocol-v1 lifecycle fix proxied Save as a
+            // command with one explicit, empty args object. Accept only that
+            // exact historical frame and only inside an already-authorized
+            // editable session. The canonical msg_type=save frame above
+            // remains the normative contract.
+            "save" if is_exact_legacy_command_save(request) && self.editable => {
+                self.save().map_err(WireError::from)?;
+                Ok(Value::Null)
+            }
+            "save" if is_exact_legacy_command_save(request) => Err(WireError::unsupported_command(
+                "read-only HWPX sessions do not implement save",
+            )),
             "save" => Err(WireError::invalid_request(
-                "save uses msg_type=save rather than a command envelope",
+                "legacy command save must contain exactly an empty args object",
             )),
             "add" | "remove" | "move" | "copy" | "raw_set" | "add_part" | "extract_binary" => {
                 Err(WireError::unsupported_command(format!(
@@ -994,6 +1006,16 @@ impl HwpxSession {
         self.index = next_index;
         Ok(())
     }
+}
+
+fn is_exact_legacy_command_save(request: &Value) -> bool {
+    request.as_object().is_some_and(|object| {
+        object.len() == 4
+            && object.contains_key("protocol")
+            && object.contains_key("msg_type")
+            && object.contains_key("command")
+            && matches!(object.get("args"), Some(Value::Object(args)) if args.is_empty())
+    })
 }
 
 fn map_string<'a>(
