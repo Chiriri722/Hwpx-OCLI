@@ -147,14 +147,17 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 표 좌표는 exit 2다. DTD는 포맷 판별 후 엔티티 확장 없이 exit 3으로 거부한다.
 파싱이 끝난 뒤에만 JSONL을 emit하므로 어떤 실패도 부분 stdout을 남기지 않는다.
 
-## C11. HWPX/OWPML `open` 경로 호환 경계
+## C11. HWPX/OWPML `open` 호환 경계
 
 호스트의 규범 계약은 여전히 CLI `open <file>` 인자와 첫 JSONL 프레임의 최상위
 `path`를 함께 보내는 것이다. Hancom format-handler는 릴리스 호스트 상호운용을
 위해 **프레임에서 `path` 키가 완전히 빠진 경우에만** 이미 받은 CLI 경로를 사용한다.
 키가 존재하면 문자열이어야 하며, canonical filesystem identity가 CLI 경로와
 일치해야 한다. `null`이나 다른 타입, 다른 파일은 폴백하지 않고 거부한다.
-`protocol`, `msg_type=open`, Boolean `editable`도 계속 필수다. 근거와 비주장은
+`editable` 키가 완전히 빠지면 권한을 추론하지 않고 **읽기 전용(`false`)** 으로만
+폴백한다. 키가 존재하면 Boolean이어야 하며, `null`이나 다른 타입은 거부한다.
+호스트의 규범 계약에서는 `path`와 Boolean `editable`이 모두 계속 필수이고,
+`protocol`과 `msg_type=open`은 호환 폴백 없이 필수다. 근거와 비주장은
 [ADR-0015](../../../docs/adr/0015-hancom-format-handler-open-path-compatibility.md)에 기록한다.
 
 ---

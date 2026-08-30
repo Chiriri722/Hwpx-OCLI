@@ -1,4 +1,4 @@
-# ADR-0015: Treat the format-handler CLI path as authoritative when the frame omits its duplicate
+# ADR-0015: Bound released-host open omissions without granting write access
 
 - Status: Accepted
 - Decision date: 2026-08-30
@@ -21,6 +21,13 @@ an RHWP-produced HWPX sample. Those controlled reproductions all carried the
 path and succeeded. The evidence therefore establishes an interoperability
 failure but does not establish a platform or serializer root cause.
 
+After the path-only compatibility rule was released, GitHub Actions run
+`33302040476` advanced past that validation and then failed identically on
+Linux, Windows, and macOS because the same native `view` handshake omitted
+`editable`. The source-level host contract still observed a Boolean value, so
+this second failure likewise proves an interoperability discrepancy without
+proving which build or transport layer removed the field.
+
 Rejecting the session is safe but leaves all three supported native workflows
 unusable. Blindly accepting any malformed `path` would instead weaken the
 source-identity check.
@@ -37,9 +44,15 @@ source-identity check.
    array, and object values remain invalid; no malformed value falls back.
 4. A present string is canonicalized and must identify the same filesystem
    object as the CLI argument. A mismatch remains an error.
-5. `protocol`, `msg_type=open`, and Boolean `editable` remain mandatory. The
-   fallback does not infer editability or accept a command frame as a handshake.
-6. Diagnostics state only the observed failure. They must not claim a .NET,
+5. A completely absent `editable` field is interpreted as `false`. This is a
+   fail-closed compatibility rule for read-only operations: omission can never
+   advertise `set`/`save`, establish a writer baseline, or grant write access.
+6. If `editable` is present, it must be a JSON Boolean. `null` and every other
+   type remain invalid. Hosts and their conformance tests must continue to send
+   the field as required by protocol v1.
+7. `protocol` and `msg_type=open` remain mandatory. No compatibility rule
+   accepts a command frame as a handshake.
+8. Diagnostics state only the observed failure. They must not claim a .NET,
    GitHub-hosted-runner, or OS root cause until a captured failing frame and a
    minimized reproducer prove one.
 
@@ -49,8 +62,11 @@ source-identity check.
   already selected on the command line.
 - A conflicting or ill-typed frame cannot redirect the handler to another file
   or bypass the identity check.
-- Host implementations and conformance tests must continue to emit `path`; this
-  compatibility behavior must not be copied into the normative protocol text.
+- An omitted editability hint can only reduce authority to a read-only session;
+  malformed present values remain errors.
+- Host implementations and conformance tests must continue to emit `path` and
+  Boolean `editable`; these compatibility rules must not be copied into the
+  normative protocol text.
 - The native workflow remains the end-to-end regression gate because the
   in-process host contract alone did not expose the observed release failure.
 
@@ -60,6 +76,11 @@ source-identity check.
   covers the sole accepted omission.
 - `hwpx_format_handler.rs::open_frame_present_path_keeps_strict_type_and_identity_checks`
   covers `null` and a different existing file.
+- `hwpx_format_handler.rs::open_frame_without_editable_defaults_to_read_only`
+  verifies that omission excludes `set`/`save`, permits reading, and preserves
+  the source after a rejected mutation.
+- `hwpx_format_handler.rs::open_frame_present_editable_keeps_strict_type_checks`
+  verifies that a present `null` does not use the omission fallback.
 - `OfficeCli.Tests::FormatHandlerLifecycleFramesMatchProtocolV1` continues to
   require the host's canonical top-level path and editable flag.
 - The implementing CI run must pass the native HWPX/OWPML smoke on all three

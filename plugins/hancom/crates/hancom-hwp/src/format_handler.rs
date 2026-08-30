@@ -322,10 +322,18 @@ fn parse_open(request: &Value) -> std::result::Result<(Option<PathBuf>, bool), W
             )));
         }
     };
-    let editable = request
-        .get("editable")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| WireError::invalid_request("open.editable must be a boolean"))?;
+    // A released host may omit this hint for read-only commands such as view.
+    // Absence must never grant write access: default to a read-only session,
+    // while preserving strict validation whenever the field is present.
+    let editable = match request.get("editable") {
+        None => false,
+        Some(Value::Bool(editable)) => *editable,
+        Some(_) => {
+            return Err(WireError::invalid_request(
+                "open.editable must be a boolean",
+            ));
+        }
+    };
     Ok((path, editable))
 }
 

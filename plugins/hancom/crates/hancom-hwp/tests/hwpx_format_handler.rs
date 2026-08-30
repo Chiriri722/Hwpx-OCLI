@@ -185,6 +185,55 @@ fn open_frame_without_redundant_path_uses_the_cli_source() {
 }
 
 #[test]
+fn open_frame_without_editable_defaults_to_read_only() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("readonly-default.hwpx");
+    let original = build_package(&section("read only", "second"));
+    std::fs::write(&path, &original).expect("write fixture");
+    let input = frame_lines(&[
+        json!({"protocol":1,"msg_type":"open","path":path.canonicalize().expect("canonical")}),
+        json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text"}}),
+        json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"forbidden"}}),
+        json!({"protocol":1,"msg_type":"close"}),
+    ]);
+
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(input), &mut output).expect("serve protocol");
+    let replies = replies(output);
+    let commands = replies[0]["result"]["capabilities"]["commands"]
+        .as_array()
+        .expect("commands");
+    assert!(!commands.contains(&json!("set")));
+    assert!(!commands.contains(&json!("save")));
+    assert_eq!(replies[1]["result"], "read only\nsecond");
+    assert_eq!(replies[2]["error"]["code"], "unsupported_command");
+    assert_eq!(std::fs::read(path).expect("read original"), original);
+}
+
+#[test]
+fn open_frame_present_editable_keeps_strict_type_checks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("strict-editable.hwpx");
+    std::fs::write(&path, build_package(&section("source", "second"))).expect("write fixture");
+    let input = frame_lines(&[json!({
+        "protocol":1,
+        "msg_type":"open",
+        "path":path.canonicalize().expect("canonical"),
+        "editable":null
+    })]);
+
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(input), &mut output).expect("serve protocol");
+    let replies = replies(output);
+    assert_eq!(replies.len(), 1, "unexpected replies: {replies:#?}");
+    assert_eq!(replies[0]["msg_type"], "error");
+    assert_eq!(
+        replies[0]["error"]["message"],
+        "open.editable must be a boolean"
+    );
+}
+
+#[test]
 fn open_frame_present_path_keeps_strict_type_and_identity_checks() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("cli-source.hwpx");
