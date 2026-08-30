@@ -152,18 +152,22 @@ pub fn serve<R: BufRead, W: Write>(path: &Path, mut input: R, output: &mut W) ->
             path.display()
         ))
     })?;
-    let canonical_request_path = fs::canonicalize(&request_path).map_err(|error| {
-        PluginError::corrupt(format!(
-            "cannot resolve open-handshake path {}: {error}",
-            request_path.display()
-        ))
-    })?;
-    if canonical_request_path != canonical_cli_path {
-        write_error(
-            output,
-            WireError::invalid_argument("open-handshake path does not match the CLI source path"),
-        )?;
-        return Ok(());
+    if let Some(request_path) = request_path {
+        let canonical_request_path = fs::canonicalize(&request_path).map_err(|error| {
+            PluginError::corrupt(format!(
+                "cannot resolve open-handshake path {}: {error}",
+                request_path.display()
+            ))
+        })?;
+        if canonical_request_path != canonical_cli_path {
+            write_error(
+                output,
+                WireError::invalid_argument(
+                    "open-handshake path does not match the CLI source path",
+                ),
+            )?;
+            return Ok(());
+        }
     }
 
     let mut session = match HwpxSession::open(canonical_cli_path, editable) {
@@ -296,14 +300,28 @@ fn frame_too_large() -> PluginError {
     PluginError::invalid_argument(format!("JSONL frame exceeds {MAX_FRAME_BYTES} bytes"))
 }
 
-fn parse_open(request: &Value) -> std::result::Result<(PathBuf, bool), WireError> {
+fn parse_open(request: &Value) -> std::result::Result<(Option<PathBuf>, bool), WireError> {
     validate_protocol(request)?;
     if string_field(request, "msg_type")? != "open" {
         return Err(WireError::invalid_request(
             "the first protocol frame must have msg_type=open",
         ));
     }
-    let path = PathBuf::from(string_field(request, "path")?);
+    // The process-level `open <file>` argument is the authoritative source
+    // identity. Protocol-v1 hosts normally repeat that value in the first
+    // JSONL frame, but released hosts have also omitted the redundant field.
+    // Accept only true absence for compatibility: a present value must remain
+    // a string and is canonicalized and identity-checked by `serve` above.
+    let path = match request.get("path") {
+        None => None,
+        Some(Value::String(value)) => Some(PathBuf::from(value)),
+        received => {
+            return Err(WireError::invalid_request(format!(
+                "path must be a string (received {})",
+                json_value_kind(received)
+            )));
+        }
+    };
     let editable = request
         .get("editable")
         .and_then(Value::as_bool)

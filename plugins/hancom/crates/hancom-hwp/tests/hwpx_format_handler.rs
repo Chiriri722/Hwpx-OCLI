@@ -162,6 +162,64 @@ fn manifest_is_a_split_format_handler_with_honest_vocabulary() {
 }
 
 #[test]
+fn open_frame_without_redundant_path_uses_the_cli_source() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cli-source.hwpx");
+    std::fs::write(&path, build_package(&section("cli fallback", "second")))
+        .expect("write fixture");
+    let input = frame_lines(&[
+        json!({"protocol":1,"msg_type":"open","editable":false}),
+        json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text"}}),
+        json!({"protocol":1,"msg_type":"close"}),
+    ]);
+
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(input), &mut output).expect("serve protocol");
+    let replies = replies(output);
+    assert_eq!(replies.len(), 3, "unexpected replies: {replies:#?}");
+    assert!(
+        replies.iter().all(|reply| reply["msg_type"] == "ok"),
+        "unexpected replies: {replies:#?}"
+    );
+    assert_eq!(replies[1]["result"], "cli fallback\nsecond");
+}
+
+#[test]
+fn open_frame_present_path_keeps_strict_type_and_identity_checks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cli-source.hwpx");
+    let other = dir.path().join("other.hwpx");
+    let package = build_package(&section("source", "second"));
+    std::fs::write(&path, &package).expect("write source");
+    std::fs::write(&other, &package).expect("write other");
+
+    for (label, open, expected) in [
+        (
+            "null",
+            json!({"protocol":1,"msg_type":"open","path":null,"editable":false}),
+            "path must be a string (received null)",
+        ),
+        (
+            "different file",
+            json!({"protocol":1,"msg_type":"open","path":other,"editable":false}),
+            "open-handshake path does not match the CLI source path",
+        ),
+    ] {
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(frame_lines(&[open])), &mut output)
+            .unwrap_or_else(|error| panic!("{label}: serve failed: {error}"));
+        let replies = replies(output);
+        assert_eq!(
+            replies.len(),
+            1,
+            "{label}: unexpected replies: {replies:#?}"
+        );
+        assert_eq!(replies[0]["msg_type"], "error", "{label}: {replies:#?}");
+        assert_eq!(replies[0]["error"]["message"], expected, "{label}");
+    }
+}
+
+#[test]
 fn protocol_reads_edits_and_durably_reopens_the_saved_package() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("document.hwpx");
