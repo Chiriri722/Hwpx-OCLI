@@ -132,7 +132,7 @@ fn canonical_binary_is_the_primary_hancom_hwp_entrypoint() {
 }
 
 #[test]
-fn info_declares_dump_reader_kind_and_all_hancom_hwp_extensions() {
+fn info_declares_dump_reader_kind_and_only_legacy_hancom_extensions() {
     let m = info_manifest();
     let kinds: Vec<&str> = m["kinds"]
         .as_array()
@@ -150,8 +150,8 @@ fn info_declares_dump_reader_kind_and_all_hancom_hwp_extensions() {
         .collect();
     assert_eq!(
         exts,
-        vec![".hwpx", ".owpml", ".hml", ".hwp"],
-        "all advertised extensions must include a leading dot"
+        vec![".hwp", ".hml"],
+        "editable HWPX/OWPML must be advertised only by the format-handler"
     );
 }
 

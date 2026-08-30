@@ -1,4 +1,7 @@
-//! OfficeCLI `dump-reader` 플러그인 — 한글(HWPX/OWPML/HWPML/HWP) → docx 명령.
+//! Hancom 플러그인 공용 라이브러리.
+//!
+//! HWP/HML dump-reader와 HWPX/OWPML package editor/format-handler가 파서와
+//! 오류 경계를 공유한다.
 //!
 //! 계약: `docs/01-protocol-contract.md`
 
@@ -344,7 +347,8 @@ fn unsupported_binary_hwp(detected: &format::SourceFormat) -> PluginError {
 }
 
 pub const HELP_TEXT: &str = concat!(
-    "officecli-hancom-hwp — OfficeCLI dump-reader plugin for HWPX/OWPML/HWPML/HWP\n",
+    "officecli-hancom-hwp — OfficeCLI dump-reader plugin for HWP/HML\n",
+    "Direct HWPX/OWPML dump is retained only for bridge and projection diagnostics.\n",
     "\n",
     "USAGE:\n",
     "  officecli-hancom-hwp --info\n",

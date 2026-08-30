@@ -81,19 +81,14 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-latest
-            officecli_asset: officecli-linux-x64
-            officecli_sha256: '449f0e6a1298e3c6d7da792d26ab53d04ba77bd990f299b51123c7aef383d2ce'
             rhwp_asset: rhwp-v0.8.4-linux-x86_64.tar.gz
             rhwp_sha256: 'd2f015447147a840b3a587e8e9bedd75973fb2e0a60eac37b08cad9e34cdac54'
           - name: Windows x64
             os: windows-latest
-            officecli_asset: officecli-win-x64.exe
-            officecli_sha256: '760696b262f3d6bd2cd174577220d54541b6e1e04ec58dee051f1897395638b8'
             rhwp_asset: rhwp-v0.8.4-windows-x86_64.zip
             rhwp_sha256: 'e65b3e220573b18e1588768c5a16684eb89b2daf2488768575444cb83cd1b8c6'
 
     env:
-      OFFICECLI_VERSION: v1.0.145
       RHWP_VERSION: v0.8.4
       HWP_FIXTURE_URL: https://raw.githubusercontent.com/edwardkim/rhwp/496333b27d21ddb9114ba9ae340bcb895870c9a7/samples/basic/english.hwp
       HWP_FIXTURE_SHA256: 'ee72c16067013e110528375f04b2d123a8c4b0eaa9fee35fb39983614791e7e9'
@@ -105,10 +100,25 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
 
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5 (v5.4.0)
+        with:
+          dotnet-version: '10.0.302'
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # branch: stable (verified 2026-08-28)
         with:
           components: clippy
+
+      - name: Publish current OfficeCLI host
+        run: >-
+          dotnet publish ../../src/officecli/officecli.csproj
+          --configuration Release
+          --no-self-contained
+          -p:PublishTrimmed=false
+          -p:PublishSingleFile=false
+          -p:NuGetAudit=false
+          --output "${{ runner.temp }}/officecli-current"
 
       - name: Test
         run: cargo test --workspace --locked --all-targets
@@ -129,8 +139,6 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
-          OFFICECLI_ASSET: ${{ matrix.officecli_asset }}
-          OFFICECLI_SHA256: ${{ matrix.officecli_sha256 }}
           RHWP_ASSET: ${{ matrix.rhwp_asset }}
           RHWP_SHA256: ${{ matrix.rhwp_sha256 }}
         run: |
@@ -140,13 +148,10 @@ jobs:
           smoke_dir="${RUNNER_TEMP}/hwpx-h1-smoke"
           mkdir -p "${asset_dir}" "${smoke_dir}"
 
-          officecli="${asset_dir}/officecli"
+          officecli="${RUNNER_TEMP}/officecli-current/officecli"
           rhwp_archive="${asset_dir}/${RHWP_ASSET}"
           fixture="${smoke_dir}/english.hwp"
 
-          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
-            --output "${officecli}" \
-            "https://github.com/iOfficeAI/OfficeCLI/releases/download/${OFFICECLI_VERSION}/${OFFICECLI_ASSET}"
           curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
             --output "${rhwp_archive}" \
             "https://github.com/edwardkim/rhwp/releases/download/${RHWP_VERSION}/${RHWP_ASSET}"
@@ -162,7 +167,6 @@ jobs:
             fi
           }
 
-          verify_sha256 OfficeCLI "${OFFICECLI_SHA256}" "${officecli}"
           verify_sha256 RHWP "${RHWP_SHA256}" "${rhwp_archive}"
           verify_sha256 fixture "${HWP_FIXTURE_SHA256}" "${fixture}"
 
@@ -170,7 +174,7 @@ jobs:
           rhwp="${asset_dir}/rhwp/rhwp"
           chmod +x "${officecli}" "${rhwp}"
           [[ "${rhwp}" == /* ]] || { echo "RHWP path is not absolute: ${rhwp}" >&2; exit 1; }
-          [[ "$("${officecli}" --version)" == "1.0.145" ]]
+          [[ -n "$("${officecli}" --version)" ]]
           [[ "$("${rhwp}" --version)" == "rhwp v0.8.4" ]]
 
           legacy_hwpx="${HOME}/.officecli/plugins/dump-reader/hwpx/plugin"
@@ -178,16 +182,26 @@ jobs:
           printf '%s\n' 'legacy officecli-dump-reader-hwpx installation' >"${legacy_hwpx}"
 
           ./scripts/install.sh --no-build
-          for extension in hwp hwpx owpml hml; do
-            plugin="${HOME}/.officecli/plugins/dump-reader/${extension}/plugin"
+          for target in \
+            dump-reader/hwp \
+            dump-reader/hml \
+            format-handler/hwpx \
+            format-handler/owpml
+          do
+            plugin="${HOME}/.officecli/plugins/${target}/plugin"
             [[ -x "${plugin}" ]] || { echo "plugin was not installed at ${plugin}" >&2; exit 1; }
           done
-          cmp --silent ./target/release/officecli-hancom-hwp "${legacy_hwpx}"
+          [[ ! -e "${legacy_hwpx}" && ! -L "${legacy_hwpx}" ]]
+          [[ ! -e "${HOME}/.officecli/plugins/dump-reader/owpml/plugin" ]]
+          cmp --silent ./target/release/officecli-hancom-hwp \
+            "${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
+          cmp --silent ./target/release/officecli-hancom-hwpx \
+            "${HOME}/.officecli/plugins/format-handler/hwpx/plugin"
 
           unset OFFICECLI_PLUGIN_DUMP_READER_HWP \
-            OFFICECLI_PLUGIN_DUMP_READER_HWPX \
-            OFFICECLI_PLUGIN_DUMP_READER_OWPML \
-            OFFICECLI_PLUGIN_DUMP_READER_HML
+            OFFICECLI_PLUGIN_DUMP_READER_HML \
+            OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX \
+            OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML
           "${officecli}" plugins list --json | python3 -c '
           import json
           import pathlib
@@ -195,21 +209,24 @@ jobs:
 
           payload = json.load(sys.stdin)
           assert payload.get("success") is True, payload
-          matches = [
-              plugin
-              for plugin in payload.get("data", [])
-              if plugin.get("name") == "officecli-hancom-hwp"
-              and {".hwp", ".hwpx", ".owpml", ".hml"}.issubset(
-                set(plugin.get("extensions", []))
-              )
-          ]
-          assert matches, payload
-          paths = {
-            tuple(pathlib.Path(plugin["path"]).parts[-3:])
-            for plugin in matches
+          plugins = payload.get("data", [])
+          expected = {
+            ("officecli-hancom-hwp", "dump-reader", "hwp"),
+            ("officecli-hancom-hwp", "dump-reader", "hml"),
+            ("officecli-hancom-hwpx", "format-handler", "hwpx"),
+            ("officecli-hancom-hwpx", "format-handler", "owpml"),
           }
-          for extension in ("hwp", "hwpx", "owpml", "hml"):
-            assert ("dump-reader", extension, "plugin") in paths, matches
+          observed = set()
+          for plugin in plugins:
+            parts = pathlib.Path(plugin["path"]).parts
+            if len(parts) >= 3:
+              observed.add((plugin.get("name"), parts[-3], parts[-2]))
+          assert expected <= observed, (expected - observed, plugins)
+          assert not any(
+            tuple(pathlib.Path(plugin["path"]).parts[-3:-1])
+            in {("dump-reader", "hwpx"), ("dump-reader", "owpml")}
+            for plugin in plugins
+          ), plugins
           '
 
           before_hash="$(sha256sum "${fixture}" | awk '{print $1}')"
@@ -236,7 +253,7 @@ jobs:
             echo "OfficeCLI direct HWPX view did not contain the expected text" >&2
             exit 1
           fi
-          [[ -s "${smoke_dir}/english-direct.docx" ]]
+          [[ ! -e "${smoke_dir}/english-direct.docx" ]]
 
           direct_owpml="${smoke_dir}/english-owpml.owpml"
           cp "${direct_hwpx}" "${direct_owpml}"
@@ -245,7 +262,42 @@ jobs:
             echo "OfficeCLI OWPML discovery did not contain the expected text" >&2
             exit 1
           fi
-          [[ -s "${smoke_dir}/english-owpml.docx" ]]
+          [[ ! -e "${smoke_dir}/english-owpml.docx" ]]
+
+          editable="${smoke_dir}/editable.hwpx"
+          python3 scripts/generate-editable-fixture.py "${editable}" --text before
+          editable_before="$(sha256sum "${editable}" | awk '{print $1}')"
+          "${officecli}" set "${editable}" \
+            '/document/section[1]/paragraph[1]/text[1]' \
+            --prop 'text=after & saved'
+          "${officecli}" save "${editable}" >/dev/null
+          "${officecli}" close "${editable}" >/dev/null
+          edited_output="$("${officecli}" view "${editable}" text)"
+          [[ "${edited_output}" == *"after & saved"* ]]
+          "${officecli}" validate "${editable}" >/dev/null
+          [[ "$(sha256sum "${editable}" | awk '{print $1}')" != "${editable_before}" ]]
+          python3 - "${editable}" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as package:
+              section = package.read("Contents/section0.xml").decode("utf-8")
+          assert "after &amp; saved" in section, section
+          PY
+          "${officecli}" close "${editable}" >/dev/null
+
+          editable_owpml="${smoke_dir}/editable.owpml"
+          cp "${editable}" "${editable_owpml}"
+          "${officecli}" set "${editable_owpml}" \
+            '/document/section[1]/paragraph[2]/text[1]' \
+            --prop 'text=OWPML saved'
+          "${officecli}" save "${editable_owpml}" >/dev/null
+          "${officecli}" close "${editable_owpml}" >/dev/null
+          edited_owpml_output="$("${officecli}" view "${editable_owpml}" text)"
+          [[ "${edited_owpml_output}" == *"OWPML saved"* ]]
+          "${officecli}" validate "${editable_owpml}" >/dev/null
+          "${officecli}" close "${editable_owpml}" >/dev/null
+          [[ ! -e "${smoke_dir}/editable.docx" ]]
 
           hml_fixture="${smoke_dir}/discovery.hml"
           python3 - "${hml_fixture}" <<'PY'
@@ -271,8 +323,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          OFFICECLI_ASSET: ${{ matrix.officecli_asset }}
-          OFFICECLI_SHA256: ${{ matrix.officecli_sha256 }}
           RHWP_ASSET: ${{ matrix.rhwp_asset }}
           RHWP_SHA256: ${{ matrix.rhwp_sha256 }}
         run: |
@@ -280,13 +330,11 @@ jobs:
           $smokeDir = Join-Path $env:RUNNER_TEMP 'hwpx-h1-smoke'
           New-Item -ItemType Directory -Force -Path $assetDir, $smokeDir | Out-Null
 
-          $officecli = Join-Path $assetDir $env:OFFICECLI_ASSET
+          $officecli = Join-Path $env:RUNNER_TEMP 'officecli-current\officecli.exe'
           $rhwpArchive = Join-Path $assetDir $env:RHWP_ASSET
           $fixture = Join-Path $smokeDir 'english.hwp'
 
-          $officecliUrl = "https://github.com/iOfficeAI/OfficeCLI/releases/download/$env:OFFICECLI_VERSION/$env:OFFICECLI_ASSET"
           $rhwpUrl = "https://github.com/edwardkim/rhwp/releases/download/$env:RHWP_VERSION/$env:RHWP_ASSET"
-          Invoke-WebRequest -Uri $officecliUrl -OutFile $officecli
           Invoke-WebRequest -Uri $rhwpUrl -OutFile $rhwpArchive
           Invoke-WebRequest -Uri $env:HWP_FIXTURE_URL -OutFile $fixture
 
@@ -297,7 +345,6 @@ jobs:
             }
           }
 
-          Assert-Sha256 'OfficeCLI' $env:OFFICECLI_SHA256 $officecli
           Assert-Sha256 'RHWP' $env:RHWP_SHA256 $rhwpArchive
           Assert-Sha256 'fixture' $env:HWP_FIXTURE_SHA256 $fixture
 
@@ -307,7 +354,7 @@ jobs:
             throw "RHWP path is not absolute: $rhwp"
           }
           $officecliVersion = (& $officecli --version 2>&1 | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $officecliVersion -ne '1.0.145') {
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($officecliVersion)) {
             throw "unexpected OfficeCLI version: $officecliVersion"
           }
           $rhwpVersion = (& $rhwp --version 2>&1 | Out-String).Trim()
@@ -320,26 +367,42 @@ jobs:
           [IO.File]::WriteAllText($legacyHwpx, 'legacy officecli-dump-reader-hwpx installation')
 
           ./scripts/install.ps1 -NoBuild
-          $installedPlugins = @('hwp', 'hwpx', 'owpml', 'hml') | ForEach-Object {
-            Join-Path $HOME ".officecli\plugins\dump-reader\$_\plugin.exe"
+          $installedPlugins = @(
+            'dump-reader\hwp',
+            'dump-reader\hml',
+            'format-handler\hwpx',
+            'format-handler\owpml'
+          ) | ForEach-Object {
+            Join-Path $HOME ".officecli\plugins\$_\plugin.exe"
           }
           foreach ($plugin in $installedPlugins) {
             if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
               throw "plugin.exe was not installed at $plugin"
             }
           }
-          $canonicalBinary = Join-Path $PWD 'target\release\officecli-hancom-hwp.exe'
-          $canonicalHash = (Get-FileHash -LiteralPath $canonicalBinary -Algorithm SHA256).Hash
-          $migratedHash = (Get-FileHash -LiteralPath $legacyHwpx -Algorithm SHA256).Hash
-          if ($migratedHash -ne $canonicalHash) {
-            throw "legacy HWPX path was not replaced by the canonical binary"
+          if (Test-Path -LiteralPath $legacyHwpx) {
+            throw "legacy dump-reader/HWPX path still shadows the format handler"
+          }
+          $legacyOwpml = Join-Path $HOME '.officecli\plugins\dump-reader\owpml\plugin.exe'
+          if (Test-Path -LiteralPath $legacyOwpml) {
+            throw "legacy dump-reader/OWPML path still shadows the format handler"
+          }
+          foreach ($pair in @(
+            @('target\release\officecli-hancom-hwp.exe', '.officecli\plugins\dump-reader\hwp\plugin.exe'),
+            @('target\release\officecli-hancom-hwpx.exe', '.officecli\plugins\format-handler\hwpx\plugin.exe')
+          )) {
+            $sourceHash = (Get-FileHash -LiteralPath (Join-Path $PWD $pair[0]) -Algorithm SHA256).Hash
+            $installedHash = (Get-FileHash -LiteralPath (Join-Path $HOME $pair[1]) -Algorithm SHA256).Hash
+            if ($sourceHash -ne $installedHash) {
+              throw "installed plugin differs from $($pair[0])"
+            }
           }
 
           foreach ($variable in @(
             'OFFICECLI_PLUGIN_DUMP_READER_HWP',
-            'OFFICECLI_PLUGIN_DUMP_READER_HWPX',
-            'OFFICECLI_PLUGIN_DUMP_READER_OWPML',
-            'OFFICECLI_PLUGIN_DUMP_READER_HML'
+            'OFFICECLI_PLUGIN_DUMP_READER_HML',
+            'OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX',
+            'OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML'
           )) {
             Remove-Item "Env:$variable" -ErrorAction SilentlyContinue
           }
@@ -351,25 +414,27 @@ jobs:
           if (-not $plugins.success) {
             throw "officecli plugins list returned an unsuccessful envelope: $pluginsRaw"
           }
-          $matches = @($plugins.data | Where-Object {
-            ($_.name -eq 'officecli-hancom-hwp') -and
-            ($_.extensions -contains '.hwp') -and
-            ($_.extensions -contains '.hwpx') -and
-            ($_.extensions -contains '.owpml') -and
-            ($_.extensions -contains '.hml')
-          })
-          if ($matches.Count -eq 0) {
-            throw "installed plugin did not declare all Hancom HWP extensions: $pluginsRaw"
+          $expectedByPath = @{
+            ([IO.Path]::GetFullPath($installedPlugins[0])) = @('officecli-hancom-hwp', '.hwp', '.hml')
+            ([IO.Path]::GetFullPath($installedPlugins[1])) = @('officecli-hancom-hwp', '.hwp', '.hml')
+            ([IO.Path]::GetFullPath($installedPlugins[2])) = @('officecli-hancom-hwpx', '.hwpx', '.owpml')
+            ([IO.Path]::GetFullPath($installedPlugins[3])) = @('officecli-hancom-hwpx', '.hwpx', '.owpml')
           }
-          foreach ($plugin in $installedPlugins) {
-            $pathMatch = @($matches | Where-Object {
+          foreach ($expectedPath in $expectedByPath.Keys) {
+            $match = @($plugins.data | Where-Object {
               [StringComparer]::OrdinalIgnoreCase.Equals(
                 [IO.Path]::GetFullPath($_.path),
-                [IO.Path]::GetFullPath($plugin)
+                $expectedPath
               )
             })
-            if ($pathMatch.Count -eq 0) {
-              throw "plugins list did not enumerate the user path $plugin`: $pluginsRaw"
+            if ($match.Count -ne 1) {
+              throw "plugins list did not enumerate exactly one plugin at $($expectedPath): $pluginsRaw"
+            }
+            $expected = $expectedByPath[$expectedPath]
+            if ($match[0].name -ne $expected[0] -or
+                -not ($match[0].extensions -contains $expected[1]) -or
+                -not ($match[0].extensions -contains $expected[2])) {
+              throw "unexpected manifest at $($expectedPath): $pluginsRaw"
             }
           }
 
@@ -413,9 +478,8 @@ jobs:
             throw "OfficeCLI direct HWPX view failed: $directOutput"
           }
           $directDocx = Join-Path $smokeDir 'english-direct.docx'
-          if (-not (Test-Path -LiteralPath $directDocx -PathType Leaf) -or
-              (Get-Item -LiteralPath $directDocx).Length -le 0) {
-            throw "OfficeCLI direct HWPX view did not create a non-empty sibling DOCX"
+          if (Test-Path -LiteralPath $directDocx) {
+            throw "format-handler HWPX view unexpectedly created a sibling DOCX"
           }
 
           $directOwpml = Join-Path $smokeDir 'english-owpml.owpml'
@@ -426,9 +490,77 @@ jobs:
             throw "OfficeCLI OWPML discovery failed: $owpmlOutput"
           }
           $owpmlDocx = Join-Path $smokeDir 'english-owpml.docx'
-          if (-not (Test-Path -LiteralPath $owpmlDocx -PathType Leaf) -or
-              (Get-Item -LiteralPath $owpmlDocx).Length -le 0) {
-            throw "OfficeCLI OWPML view did not create a non-empty sibling DOCX"
+          if (Test-Path -LiteralPath $owpmlDocx) {
+            throw "format-handler OWPML view unexpectedly created a sibling DOCX"
+          }
+
+          $editable = Join-Path $smokeDir 'editable.hwpx'
+          & python scripts/generate-editable-fixture.py $editable --text before
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to generate strict editable HWPX fixture"
+          }
+          $editableBefore = (Get-FileHash -LiteralPath $editable -Algorithm SHA256).Hash
+          $setOutput = (& $officecli set $editable '/document/section[1]/paragraph[1]/text[1]' --prop 'text=after & saved' 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWPX set failed: $setOutput"
+          }
+          & $officecli save $editable | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWPX save failed"
+          }
+          & $officecli close $editable | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWPX close failed after save"
+          }
+          $editedOutput = (& $officecli view $editable text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or -not $editedOutput.Contains('after & saved')) {
+            throw "saved HWPX did not reopen with edited text: $editedOutput"
+          }
+          & $officecli validate $editable | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWPX validate failed after save"
+          }
+          $editableAfter = (Get-FileHash -LiteralPath $editable -Algorithm SHA256).Hash
+          if ($editableAfter -eq $editableBefore) {
+            throw "OfficeCLI HWPX set did not change the source package"
+          }
+          $savedSection = (& python -c 'import sys,zipfile; print(zipfile.ZipFile(sys.argv[1]).read("Contents/section0.xml").decode("utf-8"))' $editable | Out-String)
+          if ($LASTEXITCODE -ne 0 -or -not $savedSection.Contains('after &amp; saved')) {
+            throw "saved HWPX section does not contain escaped edited text"
+          }
+          & $officecli close $editable | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI HWPX close failed after reopen verification"
+          }
+
+          $editableOwpml = Join-Path $smokeDir 'editable.owpml'
+          Copy-Item -LiteralPath $editable -Destination $editableOwpml
+          $owpmlSetOutput = (& $officecli set $editableOwpml '/document/section[1]/paragraph[2]/text[1]' --prop 'text=OWPML saved' 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI OWPML set failed: $owpmlSetOutput"
+          }
+          & $officecli save $editableOwpml | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI OWPML save failed"
+          }
+          & $officecli close $editableOwpml | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI OWPML close failed after save"
+          }
+          $editedOwpmlOutput = (& $officecli view $editableOwpml text 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or -not $editedOwpmlOutput.Contains('OWPML saved')) {
+            throw "saved OWPML did not reopen with edited text: $editedOwpmlOutput"
+          }
+          & $officecli validate $editableOwpml | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI OWPML validate failed after save"
+          }
+          & $officecli close $editableOwpml | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "OfficeCLI OWPML close failed after reopen verification"
+          }
+          if (Test-Path -LiteralPath (Join-Path $smokeDir 'editable.docx')) {
+            throw "format-handler edit created an unintended sibling DOCX"
           }
 
           $hmlFixture = Join-Path $smokeDir 'discovery.hml'
@@ -450,10 +582,17 @@ jobs:
         run: |
           if [[ -x ./scripts/install.sh ]]; then
             ./scripts/install.sh --uninstall
-            for extension in hwp hwpx owpml hml; do
-              plugin="${HOME}/.officecli/plugins/dump-reader/${extension}/plugin"
+            for target in \
+              dump-reader/hwp \
+              dump-reader/hml \
+              format-handler/hwpx \
+              format-handler/owpml \
+              dump-reader/hwpx \
+              dump-reader/owpml
+            do
+              plugin="${HOME}/.officecli/plugins/${target}/plugin"
               if [[ -e "${plugin}" || -L "${plugin}" ]]; then
-                echo "${extension} plugin remained after uninstall" >&2
+                echo "${target} plugin remained after uninstall" >&2
                 exit 1
               fi
             done
@@ -465,10 +604,17 @@ jobs:
         run: |
           if (Test-Path -LiteralPath ./scripts/install.ps1 -PathType Leaf) {
             ./scripts/install.ps1 -Uninstall
-            foreach ($extension in @('hwp', 'hwpx', 'owpml', 'hml')) {
-              $plugin = Join-Path $HOME ".officecli\plugins\dump-reader\$extension\plugin.exe"
+            foreach ($target in @(
+              'dump-reader\hwp',
+              'dump-reader\hml',
+              'format-handler\hwpx',
+              'format-handler\owpml',
+              'dump-reader\hwpx',
+              'dump-reader\owpml'
+            )) {
+              $plugin = Join-Path $HOME ".officecli\plugins\$target\plugin.exe"
               if (Test-Path -LiteralPath $plugin) {
-                throw "$extension plugin remained after uninstall"
+                throw "$target plugin remained after uninstall"
               }
             }
           }

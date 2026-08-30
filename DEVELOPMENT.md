@@ -1,8 +1,9 @@
 # Fork development environment
 
-This checkout combines the current OfficeCLI upstream with the HWPX dump-reader
-plugin that was previously developed in the standalone `hwpx-ocli` directory.
-The canonical plugin source is now the Cargo workspace at `plugins/hancom`.
+This checkout combines the current OfficeCLI upstream with the Hancom plugins
+previously developed in the standalone `hwpx-ocli` directory. The Cargo
+workspace at `plugins/hancom` now builds an HWP/HML dump-reader and a separate
+editable HWPX/OWPML format-handler.
 
 ## Repository layout
 
@@ -50,6 +51,10 @@ For end-to-end plugin validation, run from the plugin directory:
 cd plugins/hancom
 scripts/verify-roundtrip.sh
 ```
+
+The round-trip verifier requires the current host lifecycle implementation.
+Point `OFFICECLI` at a current publish when it is not already on `PATH`; it
+does not fall back to the pre-promotion v1.0.145 release.
 
 The private HWPX corpus remains outside Git. Set `HWPX_CORPUS` before running
 `scripts/verify-corpus.py`; only `tests/corpus/expected.json` is versioned.

@@ -45,15 +45,15 @@ impl Default for Manifest {
             version: PLUGIN_VERSION,
             protocol: PROTOCOL_VERSION,
             kinds: vec!["dump-reader"],
-            extensions: vec![".hwpx", ".owpml", ".hml", ".hwp"],
+            extensions: vec![".hwp", ".hml"],
             target: "docx",
             runtime: "rust",
             idle_timeout_seconds: IdleTimeout {
                 default: 60,
                 verbs: VerbTimeouts { dump: 30 },
             },
-            description: "Hancom HWP dump-reader — reads .hwpx/.owpml and legacy .hml directly, \
-                with .hwp via optional RHWP. \
+            description: "Hancom legacy-format dump-reader — reads .hml directly and .hwp via \
+                optional RHWP. Editable .hwpx/.owpml are handled by officecli-hancom-hwpx. \
                 본 제품은 한컴의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.",
             license: "MIT",
             supports: vec![
@@ -126,6 +126,14 @@ mod tests {
             let s = ext.as_str().expect("string");
             assert!(s.starts_with('.'), "extension must start with dot: {s}");
         }
+    }
+
+    #[test]
+    fn dump_reader_only_claims_legacy_formats() {
+        assert_eq!(
+            manifest_json()["extensions"],
+            serde_json::json!([".hwp", ".hml"])
+        );
     }
 
     #[test]

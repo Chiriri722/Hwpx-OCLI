@@ -35,7 +35,6 @@ import zipfile
 from pathlib import Path
 
 from executable_paths import (
-    first_existing_executable,
     preferred_executable,
     resolve_tool,
 )
@@ -43,7 +42,7 @@ from executable_paths import (
 REPO = Path(__file__).resolve().parent.parent
 EXPECTED_PATH = REPO / "tests" / "corpus" / "expected.json"
 PLUGIN = preferred_executable(
-    Path.home() / ".officecli" / "plugins" / "dump-reader" / "hwpx", "plugin"
+    Path.home() / ".officecli" / "plugins" / "dump-reader" / "hwp", "plugin"
 )
 # 요약에 넣을 지표만 센다. 절대 좌표나 ID는 넣지 않는다(불안정).
 OOXML_PATTERNS = {
@@ -58,10 +57,12 @@ OOXML_PATTERNS = {
 
 
 def find_officecli() -> str:
-    cache = Path.home() / ".local" / "officecli-verify"
     resolved = resolve_tool(None, "OFFICECLI", "officecli")
-    cached = first_existing_executable(cache, "officecli")
-    candidates = [path for path in (resolved, cached) if path is not None]
+    checkout = preferred_executable(
+        REPO / ".." / ".." / "src" / "officecli" / "bin" / "Release" / "net10.0",
+        "officecli",
+    )
+    candidates = [path for path in (resolved, checkout) if path is not None]
     for candidate in dict.fromkeys(candidates):
         try:
             subprocess.run([str(candidate), "--version"], capture_output=True, check=True)
@@ -69,8 +70,8 @@ def find_officecli() -> str:
         except (OSError, subprocess.CalledProcessError):
             continue
     sys.exit(
-        "officecli not found.\n"
-        "  put it on PATH, or run scripts/verify-roundtrip.sh --download first."
+        "current officecli host not found.\n"
+        "  put it on PATH or set OFFICECLI to its absolute path."
     )
 
 
@@ -118,9 +119,12 @@ def summarize(cli: str, src: Path, work: Path) -> dict:
     # 계약 불변식
     s["top_level_array"] = r.stdout.lstrip().startswith("[")
     raw_newline = 0
+    batch_items = []
     for ln in lines:
         try:
-            props = json.loads(ln).get("props") or {}
+            item = json.loads(ln)
+            batch_items.append(item)
+            props = item.get("props") or {}
         except json.JSONDecodeError:
             s["invalid_jsonl"] = True
             continue
@@ -131,7 +135,7 @@ def summarize(cli: str, src: Path, work: Path) -> dict:
 
     # 2. lint
     r = subprocess.run(
-        [cli, "plugins", "lint", "officecli-hwpx", "--fixture", str(local), "--json"],
+        [cli, "plugins", "lint", str(PLUGIN), "--fixture", str(local), "--json"],
         capture_output=True,
         text=True,
     )
@@ -140,11 +144,25 @@ def summarize(cli: str, src: Path, work: Path) -> dict:
     except Exception:
         s["unknown_props"] = "lint-failed"
 
-    # 3. 변환
+    # 3. dump-reader JSONL을 명시적으로 빈 DOCX에 재생한다. HWPX 자체는 이제
+    # format-handler가 소유하므로 `officecli view local.hwpx`는 DOCX를 만들지 않는다.
     docx = local.with_suffix(".docx")
     docx.unlink(missing_ok=True)
-    subprocess.run([cli, "view", str(local), "text"], capture_output=True, text=True)
-    s["docx_created"] = docx.is_file()
+    batch_path = local.with_suffix(".batch.json")
+    batch_path.write_text(
+        json.dumps(batch_items, ensure_ascii=False), encoding="utf-8"
+    )
+    created = subprocess.run(
+        [cli, "create", str(docx)], capture_output=True, text=True
+    )
+    replayed = subprocess.run(
+        [cli, "batch", str(docx), "--input", str(batch_path), "--stop-on-error"],
+        capture_output=True,
+        text=True,
+    )
+    s["docx_created"] = (
+        created.returncode == 0 and replayed.returncode == 0 and docx.is_file()
+    )
     if not s["docx_created"]:
         return s
 

@@ -115,24 +115,24 @@
 
 | 순위 | HWPX | HWP | OWPML | HML |
 |---|---|---|---|---|
-| 환경변수 | `$OFFICECLI_PLUGIN_DUMP_READER_HWPX` | `$OFFICECLI_PLUGIN_DUMP_READER_HWP` | `$OFFICECLI_PLUGIN_DUMP_READER_OWPML` | `$OFFICECLI_PLUGIN_DUMP_READER_HML` |
-| 사용자 경로 | `~/.officecli/plugins/dump-reader/hwpx/plugin` | `~/.officecli/plugins/dump-reader/hwp/plugin` | `~/.officecli/plugins/dump-reader/owpml/plugin` | `~/.officecli/plugins/dump-reader/hml/plugin` |
-| bundled 경로 | `<officecli 디렉터리>/plugins/dump-reader/hwpx/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hwp/plugin` | `<officecli 디렉터리>/plugins/dump-reader/owpml/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hml/plugin` |
-| PATH | `officecli-dump-reader-hwpx` → `officecli-hwpx` | `officecli-dump-reader-hwp` → `officecli-hwp` | `officecli-dump-reader-owpml` → `officecli-owpml` | `officecli-dump-reader-hml` → `officecli-hml` |
+| 환경변수 | `$OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX` | `$OFFICECLI_PLUGIN_DUMP_READER_HWP` | `$OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML` | `$OFFICECLI_PLUGIN_DUMP_READER_HML` |
+| 사용자 경로 | `~/.officecli/plugins/format-handler/hwpx/plugin` | `~/.officecli/plugins/dump-reader/hwp/plugin` | `~/.officecli/plugins/format-handler/owpml/plugin` | `~/.officecli/plugins/dump-reader/hml/plugin` |
+| bundled 경로 | `<officecli 디렉터리>/plugins/format-handler/hwpx/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hwp/plugin` | `<officecli 디렉터리>/plugins/format-handler/owpml/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hml/plugin` |
+| PATH | `officecli-format-handler-hwpx` → `officecli-hwpx` | `officecli-dump-reader-hwp` → `officecli-hwp` | `officecli-format-handler-owpml` → `officecli-owpml` | `officecli-dump-reader-hml` → `officecli-hml` |
 
-`<kind>`는 kebab-case, `<ext>`는 점 없는 확장자다. Unix 설치기는 HWPX 경로에
-실제 파일을 원자 교체하고 HWP/OWPML/HML 경로에는 `../hwpx/plugin` 상대 심볼릭
-링크를 둔다. Windows 설치기는 심볼릭 링크 권한에 의존하지 않고 네 경로의
-복사본을 staging·체크섬·`--info` 검증한 뒤 순차 교체한다. 두 설치기 모두
-확장자별 커밋 상태를 추적해 중간 실패 시 기존 파일을 역순으로 복원하고, 기존
-HWPX 단독 설치도 멱등적으로 네 경로 구성으로 마이그레이션한다. 강제 종료까지
-포함한 완전한 다중 경로 원자성은 보장하지 않는다.
+`<kind>`는 kebab-case, `<ext>`는 점 없는 확장자다. Unix 설치기는 HWP와 HWPX
+canonical 경로에 역할별 실제 파일을 원자 교체하고, HML은 `../hwp/plugin`,
+OWPML은 `../hwpx/plugin` 상대 심볼릭 링크를 둔다. Windows 설치기는 심볼릭 링크
+권한에 의존하지 않고 역할별 바이너리를 네 경로에 staging·체크섬·`--info` 의미
+검증한 뒤 순차 교체한다. 두 설치기 모두 활성 네 경로와 폐기할
+`dump-reader/{hwpx,owpml}` 두 경로의 커밋 상태를 추적해 중간 실패 시 기존 상태를
+역순으로 복원한다. 강제 종료까지 포함한 완전한 다중 경로 원자성은 보장하지 않는다.
 
 `plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가 여러 행으로
 보일 수 있다. 이는 `(kind, ext)`별 resolution 실패를 의미하지 않는다.
-실제 확인에는 각 확장자의 샘플에 `officecli view <복사본> text`를 사용한다. 이 명령은
-입력 파일 옆에 같은 stem의 `.docx`를 만들 수 있으므로 원본이 아닌
-복사본으로 실행한다.
+실제 확인에는 각 확장자의 샘플에 `officecli view <복사본> text`를 사용한다.
+HWP/HML dump-reader는 같은 stem의 `.docx`를 만들 수 있으므로 원본이 아닌 복사본으로
+실행한다. HWPX/OWPML format-handler는 원본을 직접 열고 형제 DOCX를 만들지 않는다.
 
 ## C10. HWPML 단일 XML 경계
 
@@ -151,12 +151,17 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 
 ## 결정 기록 (ADR)
 
-### ADR-1: `dump-reader`를 선택한다 (`format-handler` 아님)
+### ADR-1: `dump-reader`를 선택한다 (`format-handler` 아님) — superseded
 프로토콜 §2.3/§4.5는 `.hwpx`를 format-handler 예시로 든다. 그러나 format-handler는
 소스 파일을 read-write로 소유해야 한다(§2.3). HWPX **쓰기** 구현체가 없고
 `unhwp`도 추출 전용이므로, 쓰기 없이 format-handler를 선언하면 계약 위반이다.
 읽기 전용 마이그레이션은 dump-reader의 정의(§2.1)와 정확히 일치한다.
 쓰기 능력을 확보하면 format-handler로 승격한다.
+
+이 판단은 당시 구현에는 맞았지만 package-preserving writer를 확보해
+[ADR-0013](../../../docs/adr/0013-hancom-package-preserving-editor-policy.md)으로
+뒤집혔다. 현재 `.hwpx`/`.owpml`은 format-handler이고, `.hwp`/`.hml`만
+dump-reader다. 설치 승격의 원자적 경계는 ADR-0014에 기록한다.
 
 ### ADR-2: `unhwp`를 파싱에 쓰지 않는다
 초기 기록은 `unhwp`가 구조화된 모델을 노출하지 않는다고 잘못 전제했다.

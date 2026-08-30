@@ -6,22 +6,24 @@
 
 ### 1-a. 실제 `officecli` 바이너리로 검증됨
 
-`scripts/verify-roundtrip.sh`가 전 경로를 재현한다. **43개 항목 전부 통과.**
+`scripts/verify-roundtrip.sh`가 두 프로토콜의 전 경로를 재현한다. 승격 전
+릴리스가 아니라 이 checkout과 함께 빌드한 current OfficeCLI host가 필요하다.
 
 ```sh
-scripts/verify-roundtrip.sh --download   # 공식 릴리즈 받아서 검증
-scripts/verify-roundtrip.sh              # PATH/캐시의 officecli 사용
+scripts/verify-roundtrip.sh
+OFFICECLI=/absolute/path/to/current/officecli scripts/verify-roundtrip.sh
 ```
 
-officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프로젝트의 셀링포인트).
-스크립트가 릴리즈 자산을 받아 SHA256을 대조한 뒤 실행한다. 검증에 쓴 버전은
-`v1.0.143`.
+승격 전 v1.0.145에는 필요한 format-handler lifecycle 수정이 없으므로 스크립트는
+오래된 릴리스를 자동 다운로드하지 않는다.
 
 | 검증 항목 | 결과 |
 |---|---|
-| `officecli plugins list`가 기존 HWPX 설치 경로를 발견 | 통과 |
-| `officecli plugins lint` — emit한 모든 prop이 대상 스키마에 선언됨 | 통과, 미지 prop 0개 |
-| `officecli view <f>.hwpx text` → 형제 `.docx` 자동 생성 | 통과 |
+| `plugins list`가 HWP/HML dump-reader와 HWPX/OWPML format-handler를 정확히 발견 | 통과 |
+| HWPX/OWPML 직접 view → set → save → reopen → validate | 통과, 형제 DOCX 없음 |
+| HWPX 저장 전후 source hash와 escaped XML semantic delta | 통과 |
+| dump-reader 명시 경로 `plugins lint` | 통과, 미지 prop 0개 |
+| dump-reader JSONL → 빈 DOCX batch replay | 통과 |
 | 제목/혼합서식/엔티티/탭 텍스트 왕복 | 통과 |
 | **문단 내 줄바꿈이 `\v`로 남고 문단이 쪼개지지 않음** | 통과 |
 | 가운데·양쪽 정렬, 굵게, 색, 18pt, 글꼴, 문단 여백, 들여쓰기, 줄간격 | 통과 |
@@ -37,8 +39,9 @@ officecli는 .NET 없이 도는 단일 바이너리다(zero install이 이 프�
 | **도형·글상자** (inline/floating rect·ellipse, 중심 정렬, wrap, 설명) | 통과 — 실제 370개 명령 및 격리 ellipse replay, 미지 prop 0, DOCX validate 오류 0 |
 | **실제 한컴 문서 왕복** (2026 대구문학관 참가신청서) | 통과 — 체크박스 8/8, 표 5개, 열 너비 복원 |
 
-`plugins lint`는 우리가 추측한 게 아니라 **바이너리에 내장된 스키마**로 검사한다.
-어휘 매핑을 기계적으로 보증하는 가장 강한 수단이다.
+`plugins lint`는 dump-reader가 emit한 어휘를 **호스트 바이너리에 내장된
+스키마**로 검사한다. HWPX 직접 편집은 별도 format-handler 세션 계약과 G0~G3로
+검증한다.
 
 ### 1-b. 우리 테스트로 검증됨
 
@@ -49,6 +52,10 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 |---|---|
 | 매니페스트가 §4.1 필수필드를 모두 갖춤 | `protocol_contract.rs::info_declares_required_fields` |
 | `--info`가 단일 JSON 객체 + exit 0 | `info_exits_zero_and_prints_single_json_object` |
+| dump-reader 매니페스트가 정확히 `.hwp/.hml`만 선언 | `protocol_contract.rs::info_declares_only_legacy_dump_reader_extensions` |
+| format-handler 매니페스트·vocabulary·JSONL lifecycle | `hwpx_format_handler.rs` |
+| raw-entry COW와 G0~G3 저장 검증 | `owpml_editor_cow.rs`, `owpml_editor_g3.rs`, `owpml_output_conformance.rs` |
+| 네 활성/두 폐기 설치 경로의 commit·retire·rollback·uninstall | `install_contract.rs` |
 | JSONL이 한 줄에 객체 하나 / 최상위 배열 아님 | `dump_emits_one_json_object_per_line`, `dump_never_emits_top_level_array` |
 | BOM 없음 / CR 없음 / snake_case 키 | `dump_stdout_has_no_bom_and_no_crlf`, `info_uses_snake_case_keys_only` |
 | BatchItem 필드가 문서화된 것만 사용 | `dump_lines_use_documented_batch_item_fields` |
@@ -68,41 +75,27 @@ Rust 1.88의 전체 테스트와 `cargo clippy --all-targets -- -D warnings`가 
 |---|---|---|
 | 문서 종류 다양성 | 중간 | 공개 HWPX 281건의 성공/실패 기준선을 전수 확인했고 이름 스타일이 활성인 보고서도 포함한다. 사설 업무 문서와 출판 계열 대표성은 계속 확장해야 한다 |
 | 이미지·각주/미주·수식·도형·차트·머리말 | 낮음~미상 | 이미지와 representable 주석은 합성 픽스처/실제 OfficeCLI 구조로 검증했다. 한컴 2020에서 직접 만든 실제 각주·미주는 `noteLine`/`noteSpacing` 손실 때문에 exit 3·stdout 0을 확인했다. 공개 `HeaderFooter.hwpx`, 활성 이름/개요 스타일, rect/textbox/ellipse와 자체완결 차트 28개는 실제 DOCX replay와 lint를 통과했다. 다양한 수식·구역 story, 미지원 도형군, caption/relationship-bearing chart의 정확한 오라클은 더 필요하다 |
-| Windows / Linux 동작 | 부분 검증 | run `31700156231`의 양 OS H3 브리지·MSRV 1.88와 기존 HWPX discovery는 성공. H1 run `31890284597`, `32793306250`는 OfficeCLI 1.0.143 오류 처리에 가려 실패했다. 1.0.145 고정 자산은 로컬 양 OS smoke를 통과했으며 workflow 재실행이 필요 |
+| Windows / Linux 동작 | 승격 CI 재실행 필요 | clean Linux에서 current host의 두 kind discovery와 실제 HWPX/OWPML 저장을 통과했다. Windows installer 계약 18개와 Unix 계약 26개를 통과했다. workflow는 양 OS에서 current host를 publish하도록 갱신했으며 원격 run은 커밋 뒤 확인한다 |
 | 대용량 파일 성능 | 제한적 실측 | macOS arm64 합성 48MiB 표본 1회: 첫 출력 0.471초, 전체 0.540초, peak RSS 106.1MiB. 별도 host 계약에서 1초 idle budget보다 긴 프로세스가 반복 heartbeat로 완료되는 종단간 타이머 reset을 확인. 대형 binary HWP 자체는 미실측 |
-| `officecli batch` 원자성 상호작용 | 낮음 | `view` 경로는 확인. `--best-effort` 없이 대량 실패 시 거동은 미확인 |
+| format-handler structural edit 범위 | 의도적 제한 | plain text replacement만 광고한다. add/remove/move/copy/raw-set/add-part는 성공 no-op 없이 `unsupported_command`로 거부 |
 
 ### 다음 사람이 가장 먼저 해야 할 일
 
-T2-6은 커밋 `b379b4d3`과 ADR-0010에서 검증된 rect/rounded rect/textbox/whole
-ellipse만 보존한다. T2-7은 커밋 `cd110588`과 ADR-0011에서 관계 없는 자체완결
-chart 28개를 strict raw carrier로 보존하고 caption·관계·미검증 frame을 stdout 전에
-거부한다. 28/28 실제 replay/OpenXML validate/fingerprint/topology, Rust 533개·host
-44개·`plugins lint` unknown prop 0을 통과했다. T2-8은 공개 font-specific mapping과
-30파일 PUA 분포, 한컴 native `exam_kor` DOCX를 재평가해 native와 같은 무변경 보존+
-진단을 ADR-0012로 확정했다. 다음 작업은 T3-1 HWPX writer 의미·format-handler/save
-계약 설계와 T3-2 공식 DVC 게이트다.
+P3의 일반 완료 조건은 충족했다. ADR-0013의 closed text-edit subset, raw-entry COW,
+G0~G3, bounded format-handler JSONL lifecycle, durable atomic replace가 한 저장 경로로
+연결됐다. T3-2c는 제품이 특정 DVC 정책을 실제로 약속할 때만 실행하는 조건부
+게이트이므로 현재 완료 조건이 아니다.
 
-Phase 7의 host discovery·installer·공급망 하드닝은 로컬에서 완료했다.
-Host 계약 35개, Windows installer 12개, 비-root Linux installer 21개와
-Rust 전체 225개 회귀가 통과했다. Host는 후보 256개/전체 probe 30초/후보
-manifest 1MiB/정상 manifest 합계 16MiB를 all-or-error로 제한하고, 이름 기반
-`plugins info`의 재-probe identity가 바뀌면 `plugin_manifest_changed`로
-거부한다. 명시적 실행 경로는 한 번만 probe한다.
+설치기는 HWP/HML dump-reader와 HWPX/OWPML format-handler의 네 활성 경로를 먼저
+커밋한 뒤, 이전 `dump-reader/{hwpx,owpml}` 두 경로를 폐기한다. Unix는 HWP와
+HWPX canonical 실파일 두 개 및 HML/OWPML 상대 링크 두 개를 사용한다. Windows는
+역할별 바이너리를 네 경로에 복사한다. 두 플랫폼 모두 manifest 의미와 hash를
+검증하고, 여섯 경로를 같은 rollback domain으로 다룬다.
 
-Unix 설치기는 `hwpx/plugin` 하나만 실제 파일로 교체하고
-`hwp/plugin -> ../hwpx/plugin` 상대 심볼릭 링크를 둔다. Windows는
-staging한 두 복사본의 SHA-256과 `--info`를 확인한 뒤 순차 교체하며,
-중간 실패 시 best-effort rollback한다. 강제 종료까지 포함한 두 경로
-완전 원자성은 보장하지 않는다.
-
-Unix rollback은 한 target 삭제가 실패해도 양쪽 백업 복원을 모두 시도한다.
-검증된 새 설치 뒤 이전 백업 삭제만 실패하면 새 설치는 성공으로 유지하고
-보존된 복구 백업 경로를 stderr 경고로 알린다.
-
-설치와 제거는 절대 `HOME` 아래 `.officecli/plugins/dump-reader/{hwp,hwpx}`까지
-기존 조상을 모두 사전 검사해 symlink/junction/reparse와 non-directory를
-거부한다. 다만 같은 권한 주체의 검사 직후 경로 교체 경쟁은 handle 기반
+rollback은 installer가 둔 현재 파일의 hash/형태를 재검증하기 전에는 기존 백업을
+덮어쓰지 않는다. 외부 변경과 충돌하면 백업을 남기고 실패한다. 설치와 제거는 절대
+`HOME` 아래 두 kind의 모든 관리 경로 조상을 검사해 symlink/junction/reparse와
+non-directory를 거부한다. 같은 권한 주체의 검사 직후 경로 교체 경쟁은 handle 기반
 installer가 아니므로 잔여 한계다.
 
 OfficeCLI의 플러그인 목록은 정규화된 실행 경로별로 열거하므로 같은
@@ -115,19 +108,20 @@ OfficeCLI의 플러그인 목록은 정규화된 실행 경로별로 열거하�
 unknown prop, OfficeCLI batch/validate 및 문단·표·셀·폼필드 구조를 대조한다.
 로컬의 독립 HWP/HWPX 1쌍은 34개 JSONL이 byte-for-byte 일치했고, RHWP 공식
 HWP5 3종·HWP3 1종에서 만든 쌍도 19/48/712/467개 항목이 정확히 일치했다.
-이는 브리지와 직접 HWPX 경로의 동등성 근거이며, 서로 독립 편집된 더 다양한
-실문서 쌍을 계속 모아야 한다.
-
-그 다음 장기 품질 작업은 실제 문서 표본 확대다.
+이는 브리지와 parser projection의 동등성 근거이며, 서로 독립 편집된 더 다양한
+실문서 쌍을 계속 모아야 한다. 다음 계획 항목인 `.cell`/`.show` 스파이크는
+R2 실제 표본 없이는 시작하지 않는다. 표본 없이 포맷을 추측하는 대신 독립적인
+배포·보안·문서 작업만 진행한다.
 
 **실제 문서를 더 모아서 돌린다.** 1건으로 버그 5개가 나왔다. 표본을 늘리는 것이
 가장 효율이 높다.
 
 ```sh
-officecli-dump-reader-hwpx dump 실제문서.hwpx | head -20   # 텍스트가 나오는지
-officecli plugins lint officecli-hwpx --fixture 실제문서.hwpx --json
-officecli view 실제문서.hwpx text
-# 원본 옆에 실제문서.docx가 생길 수 있으므로 HWP 복사본으로 실행한다.
+officecli-hancom-hwp dump 실제문서.hwpx | head -20   # DOCX projection 진단
+officecli plugins lint /absolute/path/to/officecli-hancom-hwp \
+  --fixture 실제문서.hwpx --json
+officecli view 실제문서.hwpx text                   # format-handler 직접 조회
+# HWP dump-reader는 원본 옆에 DOCX를 만들 수 있으므로 복사본으로 실행한다.
 OFFICECLI_HWPX_CONVERTER=/absolute/path/to/rhwp officecli view 실제문서.hwp text
 ```
 
@@ -157,7 +151,7 @@ officecli view 실제문서.docx screenshot --out /tmp/check.png
 | `unhwp`로 파싱 | HWPX는 `zip` + `quick-xml` 직접 파싱, 바이너리 HWP는 선택적 RHWP→HWPX 브리지 | `unhwp`도 구조화 모델은 제공한다. 다만 폼 컨트롤 보존 경계를 검증하지 못했고 별도 매핑을 중복 유지해야 한다 (정정된 ADR-2, ADR-5) |
 | `unhwp = "0.5"` | 최신은 0.7.0 | 확인 안 된 버전 |
 | `edition = "2024"` | `2021` | unhwp 0.7이 2021. 2024로 올릴 이유 없음 |
-| dump-reader (근거 없이) | dump-reader (근거 명시) | 프로토콜은 `.hwpx`를 format-handler 예시로 든다. 쓰기 구현체가 없어 dump-reader가 맞다 (ADR-1) |
+| dump-reader (근거 없이) | 초기 dump-reader, 현재 역할 분리 | 당시 쓰기 구현체가 없어 ADR-1은 맞았다. ADR-0013 이후 HWPX/OWPML은 format-handler, HWP/HML은 dump-reader다 |
 
 시드 `main.rs`의 문제 9가지도 같은 문서 3절에 정리했다. 핵심은
 `read_to_string`으로 ZIP을 읽으려 한 것, `TempDir`이 즉시 drop돼 테스트가

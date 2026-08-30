@@ -1,17 +1,19 @@
 # Task Plan: 한컴오피스 통합 호환 플러그인 (HWP·HWPX·한셀·한쇼)
 
-작성 2026-08-28 · P0 완료 커밋 `e77fb77c` (`feat/hwpx-plugin`) · spec-kit feature `001-hancom-unified`
+작성 2026-08-28 · 최근 갱신 2026-08-30 · P0 완료 커밋 `e77fb77c`
+(`feat/hwpx-plugin`) · spec-kit feature `001-hancom-unified`
 근거 문서: `.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록),
 `docs/spec-sources.md` (한컴 공식 원문 URL·리비전·바이트·SHA-256)
 
 ## Goal
 
-현재 `plugins/hancom/crates/hancom-hwp`(HWPX/HWP 읽기 전용 dump-reader 1종)를 한컴오피스 독자 규격 전체를
-다루는 통합 호환 플러그인 스위트로 확장한다.
+`plugins/hancom`의 HWP/HML dump-reader와 package-preserving HWPX/OWPML
+format-handler를 기반으로, 근거가 확보된 한컴오피스 독자 규격을 정직한 실패
+경계와 함께 다루는 플러그인 스위트로 확장한다.
 
 | 계열 | 확장자 | 목표 kind | 목표 target | 현재 |
 |---|---|---|---|---|
-| 한글 | `.hwpx`, `.owpml` | dump-reader → format-handler | docx | 통합 dump-reader 직접 지원 |
+| 한글 | `.hwpx`, `.owpml` | format-handler | 원본 직접 편집 | package-preserving plain-text subset 완료 |
 | 한글 | `.hwp` | dump-reader | docx | RHWP 경유 (Phase 6 완료) |
 | 한글 | `.hml` | dump-reader | docx | HWPML 공통 부분집합 직접 지원 |
 | 한셀 | `.cell`, `.nxl` | dump-reader | **xlsx** | 없음 |
@@ -58,7 +60,8 @@ plugins/hancom/
     hancom-cell/      한셀: .cell/.nxl 파서
     hancom-show/      한쇼: .show 파서
   bins/
-    officecli-hancom-hwp/   target=docx  · exts .hwpx .owpml .hml .hwp
+    officecli-hancom-hwp/   dump-reader · target=docx · exts .hwp .hml
+    officecli-hancom-hwpx/  format-handler · exts .hwpx .owpml
     officecli-hancom-cell/  target=xlsx  · exts .cell .nxl
     officecli-hancom-show/  target=pptx  · exts .show
 ```
@@ -68,11 +71,13 @@ plugins/hancom/
 취약하다. (b) 프로토콜에 `targets: {ext: target}` 맵을 추가하는 업스트림 변경은 P7로 별도
 제안한다. 세 바이너리는 공용 코어를 공유하므로 중복 로직은 없다.
 
-### A2. 한글 계열은 dump-reader → format-handler 2단계로 승격
+### A2. 한글 계열은 역할별 두 바이너리로 승격 (완료)
 
-읽기는 지금처럼 dump-reader(→docx)로 유지하고, HWPX **쓰기**가 준비되면 `.hwpx`/`.owpml`만
-format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 제거와 같은 커밋이어야 한다.
-`.hwp`/`.hml`은 쓰기 대상이 아니므로 영구히 dump-reader로 남는다.
+HWPX/OWPML은 ADR-0013의 package-preserving closed text-edit subset과 durable save
+경계를 확보해 format-handler로 전환했다. 같은 변경에서 두 확장자의 dump-reader
+선언과 설치 경로를 제거한다. HWP/HML은 쓰기 대상이 아니므로 별도
+`officecli-hancom-hwp` dump-reader로 남는다. 설치 승격과 rollback 경계는
+ADR-0014에 고정한다.
 
 ### A3. 한셀/한쇼는 "판별 우선, 파싱 나중"
 
@@ -326,8 +331,12 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
       직접 plain `hp:p/hp:run/hp:t` set, 정규적 save/close를 구현한다. add/remove/move/
       copy/raw_set/add_part는 광고하지 않고 `unsupported_command`로 실패해 성공 no-op을
       만들지 않는다. 관대한 읽기 세션과 strict editable gate도 분리했다.
-- [ ] T3-5 · `.hwpx`/`.owpml`의 dump-reader 선언 제거와 format-handler 전환을 **같은 커밋**으로
-      (제약 2). `.hwp`/`.hml`은 dump-reader 유지 → 바이너리 분리 필요 여부 재확인
+- [x] T3-5 · `.hwpx`/`.owpml`의 dump-reader 선언 제거와 format-handler 전환을 **같은 커밋**으로
+      완료했다(제약 2). `.hwp`/`.hml` dump-reader와 HWPX/OWPML format-handler를 역할별
+      두 바이너리로 분리하고, 설치기는 네 활성 경로를 검증·커밋한 뒤 두 legacy 경로를
+      폐기한다. clean Linux current host에서 exact discovery와
+      `set → save → close → reopen → validate`, source hash/XML delta, 형제 DOCX 부재를
+      검증했고 Windows/Unix 설치 계약 18/26개를 통과했다. 결정은 ADR-0014에 고정했다.
 - [x] T3-6 · 원본 손상 방지. 같은 디렉터리 임시 파일에 COW하고 G0~G3·별도 재열기·
       file flush/sync와 권한 복사를 모두 마친 뒤 Unix rename+directory sync 또는 Windows
       ReplaceFileW(WRITE_DAC 거부 시 이름이 그대로라는 조건에서 MoveFileExW write-through)
@@ -457,7 +466,7 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 
 ## Status
 
-**P0·P1·P2 완료 · P3 진행 중.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1·P2·P3 완료.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -513,13 +522,19 @@ durable atomic replacement에 연결했다. 1 MiB JSONL 입력 상한은 초과 
 호환하며,
 호스트 자체는 규격 키로 수정했다. 580개 workspace Rust 테스트, Clippy, release 3-bin build와
 47개 host contract가 통과했다.
+T3-5는 dump-reader의 HWPX/OWPML 소유권을 제거하고 HWP/HML dump-reader와
+HWPX/OWPML format-handler를 역할별 두 바이너리 및 네 활성 설치 경로로 분리했다.
+active-first/retire-later 설치와 여섯 경로 conflict-safe rollback은 ADR-0014로 고정했다.
+Windows/Unix 설치 계약 18/26개, clean Linux current-host exact discovery 및 실제
+HWPX/OWPML `set → save → close → reopen → validate`, source hash/escaped XML delta가
+통과했으며 형제 DOCX는 생성되지 않았다. GitHub-hosted Linux/Windows workflow도 같은
+current-host 검증을 수행하도록 갱신했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T3-5에서 dump-reader의 `.hwpx`/`.owpml` 선언 제거와 새 format-handler 설치를 같은
-   커밋으로 전환하고 실제 OfficeCLI view/set/save/discovery를 검증한다. `.hwp`/`.hml`은
-   기존 dump-reader 바이너리에 남긴다.
+1. P6에서 현재 두 역할 바이너리의 공개 문서·보안/자원 회귀와 native CI 범위를 먼저
+   정리한다. `.cell`/`.show` 바이너리를 요구하는 설치 매트릭스 항목은 R2 이후 확장한다.
 2. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
 3. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
    runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.

@@ -1,13 +1,13 @@
-# officecli-hancom-hwp
+# OfficeCLI Hancom plugins
 
-[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 **한글 문서 dump-reader
-플러그인**. `.hwpx`·`.owpml` ZIP과 legacy `.hml` 단일 XML은 직접 읽고,
-바이너리 `.hwp`는 선택적 RHWP 변환기를 거쳐 OfficeCLI의 docx 명령(JSONL)으로
-변환한다.
+[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 한글 문서 플러그인 모음이다.
+역할과 쓰기 권한이 다른 두 바이너리를 제공한다.
 
-Rust 단일 바이너리이며 HWPX/OWPML/HWPML 경로에는 런타임 의존성이 없다.
-바이너리 HWP만 선택적으로 [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를
-변환기로 사용한다.
+- `officecli-hancom-hwpx`: `.hwpx`·`.owpml`을 직접 여는 `format-handler`.
+  조회와 strict editable subset의 텍스트 수정·저장을 지원한다.
+- `officecli-hancom-hwp`: `.hwp`·legacy `.hml`을 DOCX 명령으로 옮기는
+  `dump-reader`. 바이너리 HWP만 선택적으로
+  [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
 
 ## 한컴 공개 문서 표기
 
@@ -20,30 +20,38 @@ Rust 단일 바이너리이며 HWPX/OWPML/HWPML 경로에는 런타임 의존성
 ## 무엇을 하는가
 
 ```
-.hwpx/.owpml ──[이 플러그인]──▶ BatchItem JSONL ──[officecli]──▶ .docx
-.hml          ──[이 플러그인]──▶ BatchItem JSONL ──[officecli]──▶ .docx
-.hwp          ──[RHWP, 선택]──▶ 임시 .hwpx ──[이 플러그인]──────▶ .docx
+.hwpx/.owpml ──[format-handler]──▶ view/get/query + text set/save
+.hml          ──[dump-reader]────▶ BatchItem JSONL ──[officecli]──▶ .docx
+.hwp          ──[RHWP, 선택]────▶ 임시 .hwpx ──[dump-reader]────▶ .docx
 ```
 
-OfficeCLI가 `.hwpx`, `.owpml`, `.hml`, 또는 `.hwp` 파일을 열면 이 플러그인을 `dump`로
-실행하고, 표준출력의 명령을 재생해 원본 옆에 `.docx` 형제 파일을
-만든다. 편집은 그 `.docx`에 대해 이뤄지며 원본 한글 문서는 읽기
-전용으로 취급한다.
+`.hwpx`와 `.owpml`은 형제 DOCX를 만들지 않고 원본 패키지를 직접 연다. 저장 가능한
+범위는 plain `hp:p/hp:run/hp:t` 텍스트 노드의 치환이다. 저장은 같은 디렉터리의
+copy-on-write 임시 파일에서 G0~G3 검증을 마친 뒤 원자 교체하며, 바뀌지 않은 ZIP
+entry와 metadata는 그대로 보존한다. `.hwp`와 `.hml`은 읽기 전용 변환 경로다.
 
 ## 설치
 
-설치 스크립트는 `.hwpx`·`.hwp`·`.owpml`·`.hml` 네 OfficeCLI 사용자 경로를 한
-트랜잭션으로 관리한다. 기존 HWPX 경로만 설치된 환경도 같은 명령으로 네 경로
-구성으로 마이그레이션되며, 실패하면 기존 설치본을 복원한다.
+설치 스크립트는 다음 네 활성 경로와 두 폐기 경로를 하나의 rollback domain으로
+관리한다.
+
+| 확장자 | kind | 바이너리 |
+|---|---|---|
+| `.hwp`, `.hml` | `dump-reader` | `officecli-hancom-hwp` |
+| `.hwpx`, `.owpml` | `format-handler` | `officecli-hancom-hwpx` |
+
+새 활성 경로 네 곳을 모두 검증·커밋한 뒤에만 이전
+`dump-reader/{hwpx,owpml}` 경로를 폐기한다. 어느 단계든 실패하면 기존 여섯
+관리 대상의 상태를 복원하며, unrelated 플러그인은 건드리지 않는다.
 
 ```bash
 scripts/install.sh
 ```
 
-Unix에서는 `~/.officecli/plugins/dump-reader/hwpx/plugin`에 실제 바이너리를
-설치하고 `hwp`·`owpml`·`hml` 경로에는 각각 `../hwpx/plugin` 상대 심볼릭 링크를
-만든다(프로토콜 §3 탐색 순서 2순위). 네 확장자 경로를 항상 함께 설치·제거하며
-별도의 포맷 선택 옵션은 없다.
+Unix에서는 `dump-reader/hwp/plugin`과 `format-handler/hwpx/plugin`에 실제
+바이너리를 설치한다. `dump-reader/hml/plugin`은 `../hwp/plugin`,
+`format-handler/owpml/plugin`은 `../hwpx/plugin` 상대 심볼릭 링크다. 네 활성
+경로를 항상 함께 설치·제거하며 별도의 포맷 선택 옵션은 없다.
 
 ```bash
 scripts/install.sh --no-build    # 이미 빌드된 바이너리 사용
@@ -51,10 +59,14 @@ scripts/install.sh --uninstall   # 제거
 scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 ```
 
-`--print-env`는 같은 바이너리를 가리키는
-`OFFICECLI_PLUGIN_DUMP_READER_HWPX`, `OFFICECLI_PLUGIN_DUMP_READER_HWP`,
-`OFFICECLI_PLUGIN_DUMP_READER_OWPML`, `OFFICECLI_PLUGIN_DUMP_READER_HML` 네
-설정을 출력한다.
+`--print-env`는 역할별 바이너리를 가리키는 다음 네 설정을 출력한다.
+
+```bash
+OFFICECLI_PLUGIN_DUMP_READER_HWP
+OFFICECLI_PLUGIN_DUMP_READER_HML
+OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX
+OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML
+```
 
 확인:
 
@@ -84,25 +96,25 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 설치 위치는 다음 네 곳이다.
 
 ```text
-$HOME\.officecli\plugins\dump-reader\hwpx\plugin.exe
 $HOME\.officecli\plugins\dump-reader\hwp\plugin.exe
-$HOME\.officecli\plugins\dump-reader\owpml\plugin.exe
 $HOME\.officecli\plugins\dump-reader\hml\plugin.exe
+$HOME\.officecli\plugins\format-handler\hwpx\plugin.exe
+$HOME\.officecli\plugins\format-handler\owpml\plugin.exe
 ```
 
-Windows에서는 심볼릭 링크 권한에 의존하지 않고 같은 바이너리를 네 경로에
-복사한다. 네 임시 복사본의 SHA-256과 `--info`를 먼저 검증한 뒤 교체하고,
-중간 실패 시 확장자별 커밋 상태를 역순으로 되돌려 기존 파일을 복원한다. 경로를
-순차 교체하므로 프로세스 강제 종료까지 포함한 완전한 다중 경로 원자성을
-보장하지는 않는다.
+Windows에서는 심볼릭 링크 권한에 의존하지 않고 역할별 바이너리를 해당 두 경로에
+각각 복사한다. 네 임시 복사본의 SHA-256과 `--info`의 name/protocol/kind/
+extensions/target을 먼저 검증한 뒤 교체하고, 중간 실패 시 확장자별 커밋 상태를
+역순으로 되돌린다. 경로를 순차 교체하므로 프로세스 강제 종료까지 포함한 완전한
+다중 경로 원자성을 보장하지는 않는다.
 
 두 설치기는 절대 `HOME` 아래 `.officecli`부터 기존 관리 경로 조상을 먼저 검사하고,
 symlink/junction/reparse point 또는 디렉터리가 아닌 component가 있으면 설치와
 제거를 모두 중단한다. 같은 권한의 프로세스가 검사 직후 경로를 바꾸는 경쟁까지
 없애는 handle 기반 설치기는 아니므로, 설치 중에는 `HOME`을 신뢰 경계로 둔다.
-Unix 재설치의 각 target 복원은 앞선 정리 실패와 무관하게 끝까지 시도한다. 새
-설치 검증이 끝난 뒤 이전 버전 백업만 지우지 못하면 유효한 설치는 성공으로
-유지하고, 복구용 백업 위치를 경고로 남긴다.
+각 target 복원은 앞선 정리 실패와 무관하게 끝까지 시도한다. rollback 전에 현재
+파일의 hash/형태가 installer가 둔 값인지 다시 확인하므로, 동시 외부 변경을
+덮어쓰지 않는다. 이 경우 복구용 백업 위치를 경고로 남긴다.
 
 ## 포맷 판별
 
@@ -159,21 +171,32 @@ cargo run --release --example detect -- 문서1.hwp 문서2.hwpx
 ## 직접 실행
 
 ```bash
-# 매니페스트
+# dump-reader 매니페스트와 format-handler 매니페스트
 officecli-hancom-hwp --info
+officecli-hancom-hwpx --info
 
-# 변환 결과 보기
-officecli-hancom-hwp dump /path/to/문서.hwpx
+# dump-reader 변환 결과 보기
+officecli-hancom-hwp dump /path/to/문서.hwp
 officecli-hancom-hwp dump /path/to/문서.hml
 
-# 조용히 (진단 출력 없이)
+# HWPX parser/emit 경로를 직접 진단할 때만 명시 실행
 officecli-hancom-hwp dump 문서.hwpx --quiet
 
-# 진단을 파일로
-officecli-hancom-hwp dump 문서.hwpx --log-file /tmp/plugin.log
+# 설치된 format-handler를 통한 직접 조회·텍스트 편집
+officecli view 문서.hwpx text
+officecli get 문서.hwpx '/document/section[1]/paragraph[1]/text[1]'
+officecli set 문서.hwpx '/document/section[1]/paragraph[1]/text[1]' --prop 'text=새 텍스트'
+officecli save 문서.hwpx
+officecli close 문서.hwpx
+officecli validate 문서.hwpx
 ```
 
-표준출력은 JSONL 전용이다. 진단은 stderr 또는 `--log-file`로 나간다.
+`set`은 자동 resident 세션에 반영될 수 있다. 다른 프로그램이 디스크 파일을 즉시 읽어야
+하면 `save`로 flush하고, 새 세션 재열기까지 확인하려면 위처럼 `close`한 뒤 다시 `view`한다.
+
+두 플러그인의 표준출력은 각 프로토콜의 JSONL 전용이다. 진단은 stderr로 나간다.
+`dump-reader`의 직접 HWPX 입력은 RHWP 브리지와 DOCX projection을 시험하기 위한
+명시적 진단 경로일 뿐, 매니페스트에는 `.hwpx`/`.owpml`을 광고하지 않는다.
 
 ## 커버리지
 
@@ -272,7 +295,8 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
   hyperlink·caption 등 검증되지 않은 도형 profile
 - caption/TOP_AND_BOTTOM, 관계·외부 데이터·embedded workbook이 있는 차트와 검증되지
   않은 차트 배치
-- HWPX **쓰기** (그래서 `format-handler`가 아니라 `dump-reader`다 — `docs/01-protocol-contract.md` ADR-1)
+- plain 텍스트 치환을 넘는 HWPX 구조 편집(`add/remove/move/copy/raw-set/add-part`)
+- 편집 gate를 통과하지 못한 비정규·불완전 HWPX의 저장(조회는 별도 관대한 경계)
 
 ## 개발
 
@@ -281,6 +305,8 @@ cargo test --workspace --locked --all-targets       # 공용 core + 플랫폼별
 cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 107개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
 cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 64개
+cargo test -p officecli-hwpx --test hwpx_format_handler
+cargo test -p officecli-hwpx --test install_contract
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo build --workspace --locked --release
@@ -302,12 +328,14 @@ HWPX_CORPUS=~/hwpx-corpus scripts/verify-corpus.py            # 회귀 검증
 ### 실제 officecli로 왕복 검증
 
 ```bash
-scripts/verify-roundtrip.sh --download   # 공식 릴리즈 받아서 검증 (SHA256 대조)
-scripts/verify-roundtrip.sh              # PATH/캐시의 officecli 사용
+scripts/verify-roundtrip.sh                         # PATH의 current host 사용
+OFFICECLI=/absolute/path/to/officecli scripts/verify-roundtrip.sh
 ```
 
-디스커버리 → `plugins lint` → 변환 → 서식·표·병합·이미지·체크박스·내어쓰기 왕복까지 43개 항목을
-실제 `officecli` 바이너리로 확인한다. officecli는 .NET 없이 도는 단일 바이너리다.
+두 kind의 디스커버리, format-handler 조회·텍스트 저장·재열기·검증과
+dump-reader의 `plugins lint` → JSONL → DOCX replay → 서식·표·병합·이미지·
+체크박스·내어쓰기를 실제 current `officecli` 호스트로 확인한다. 승격 전
+v1.0.145 릴리스는 필요한 format-handler lifecycle 계약이 없어 지원하지 않는다.
 
 `plugins lint`는 우리가 emit한 모든 prop을 **바이너리에 내장된 대상 포맷 스키마**로
 검사한다. 어휘 매핑을 기계적으로 보증하는 가장 강한 수단이므로, 어휘를 건드리면
@@ -333,15 +361,19 @@ crates/
     src/error.rs        공용 에러 → 종료코드 매핑
     tests/core_contract.rs 공용 경계 계약 테스트
   hancom-hwp/
-    src/bin/officecli-hancom-hwp.rs 통합 진입점
+    src/bin/officecli-hancom-hwp.rs HWP/HML dump-reader 진입점
+    src/bin/officecli-hancom-hwpx.rs HWPX/OWPML format-handler 진입점
     src/bin/officecli-dump-reader-hwpx.rs 하위 호환 진입점
+    src/format_handler.rs bounded JSONL 세션과 command vocabulary
     src/converter.rs    선택적 RHWP HWP→HWPX 변환 경계
     src/hwpml.rs        legacy HWPML 단일 XML 리더
     src/lib.rs          인자 파싱 + 명령 디스패치
-    src/manifest.rs     --info 매니페스트 (§4)
+    src/manifest.rs     dump-reader --info 매니페스트 (§4)
     src/{format,error,emit}/ 공용 core 임시 호환 re-export
     src/owpml/
       package.rs        ZIP 컨테이너, content.hpf spine, BinData 해석
+      conformance.rs    G0~G3 출력 패키지 검증
+      editor.rs         raw-entry COW + strict text mutation
       equation/         수식 스크립트의 엄격 파싱·LaTeX 변환
       styles.rs         header.xml 글자/문단 모양·이름 스타일 표
       section.rs        본문 파싱, 표/문단 구조 평탄화
@@ -349,10 +381,11 @@ crates/
       xml.rs            quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)
     tests/              파서·프로토콜·설치·골든·호환 회귀
 scripts/
-  install.sh            Unix의 HWPX 실파일 + HWP/OWPML/HML 상대 링크 설치
-  install.ps1           Windows 네 확장자 경로에 검증된 plugin.exe 복사
+  install.sh            Unix의 kind별 실파일 두 개 + 확장자 링크 설치
+  install.ps1           Windows 네 kind/확장자 경로에 검증된 바이너리 복사
+  generate-editable-fixture.py strict editable HWPX/OWPML smoke fixture
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
-  verify-roundtrip.sh   실제 officecli로 43개 항목 왕복 검증
+  verify-roundtrip.sh   두 프로토콜과 DOCX projection 실제 host 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증
   verify-hwp-pairs.py   HWP/HWPX 쌍 JSONL·OfficeCLI 구조 동등성 검증
   verify-large-file.py  합성 대용량 HWPX wall-time/RSS/watchdog 실측
