@@ -316,8 +316,11 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
       DOCX 변환 모델은 편집 subset이 완전히 표현될 때만 추가 oracle로 사용한다.
 - [ ] T3-2c · 제품이 특정 DVC 정책을 실제로 약속할 때만 R5 commit·OWPML model·정책 JSON
       SHA-256·fixture를 고정한 Windows semantic-policy smoke를 추가한다. 일반 P3 완료 조건은 아니다.
-- [ ] T3-3 · package-preserving OWPML editor 구현. no-op save는 모든 unchanged payload
-      byte hash가 동일해야 하며, 지원 편집은 검증된 최소 XML subtree만 바꾼다.
+- [x] T3-3 · package-preserving OWPML editor 구현. exact replacement hash/key set,
+      source TOCTOU, raw-entry COW, central `version made by` 복원, strict G0~G3를 한 경로로
+      묶고, paragraph ordinal(+선택적 id precondition)/text ordinal로 지정한 직접
+      `hp:p/hp:run/hp:t` inner bytes만 바꾸는 11개 회귀를 통과한다. 49-entry native
+      `exam_kor.hwpx`의 실제 한-node edit에서도 나머지 48개 entry snapshot 동일을 확인했다.
 - [ ] T3-4 · format-handler 프로토콜 구현: open 핸드셰이크, vocabulary 스냅샷,
       get/query/set/add/remove/move/copy/raw/raw_set/save/close, **정규적 `save` durability**
 - [ ] T3-5 · `.hwpx`/`.owpml`의 dump-reader 선언 제거와 format-handler 전환을 **같은 커밋**으로
@@ -490,18 +493,21 @@ strict candidate 재열기, preserved ZIP metadata, exact known-semantic expecta
 49-entry `exam_kor.hwpx` no-op raw copy도 모든 snapshot 동일성을 통과했다. unrelated polygon이
 DOCX 변환 모델에 없다는 이유로 안전한 no-op을 막지 않도록 full conversion reader는 표현 가능한
 mutation의 추가 semantic oracle로만 사용한다.
+T3-3은 source snapshot TOCTOU와 exact part hash를 강제하는 raw-entry COW, 반복되는 Hancom
+paragraph id를 ordinal로 분리하는 namespace/parent-chain aware `hp:t` patch, scoped text oracle을
+11개 회귀로 구현했다. 네이티브 49-entry package의 한-node edit도 G0~G3를 통과했다. 공개 ZIP
+API가 낮추는 central `version made by`는 원본 두 바이트로 복원하며, 재현할 수 없는 ZIP extra
+field가 있는 mutation은 fail-closed 한다.
 호스트 선행 조건은 커밋 `0429890a`에서 canonical open/save lifecycle 및 fail-closed capability로
-수정했고 46개 host contract를 통과했다. 실제 COW 저장은 아직 완료되지 않았다.
+수정했고 46개 host contract를 통과했다. 원본 경로의 atomic durable replacement는 아직 완료되지 않았다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T3-3에서 raw-entry COW와 최소 subtree mutation을 순서대로 구현한다. 전체 header/section
-   재직렬화 또는 미입증 topology 변경이 필요하면 fail-closed 한다.
-2. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
+1. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
    각 mutation verb를 실제 지원 범위와 동시에 광고한다. 성공 no-op은 허용하지 않는다.
-3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-4. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
+2. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
+3. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
    runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.
-5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
+4. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.

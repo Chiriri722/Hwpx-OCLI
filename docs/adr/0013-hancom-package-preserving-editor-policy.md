@@ -44,7 +44,10 @@ evidence.
    permit it.
 3. Edits patch the smallest independently verified XML subtree. Unknown elements,
    attributes, namespaces, child order, and unrelated package parts remain
-   untouched. If a requested mutation requires whole-part reconstruction,
+   untouched. The initial text subset addresses a direct `hp:p/hp:run/hp:t`
+   child by paragraph XML ordinal, optional source-id precondition, and text
+   ordinal, then replaces only the text element's inner byte range. If a
+   requested mutation requires whole-part reconstruction,
    unresolved ID/reference allocation, unsupported active content, or an
    unproved topology change, it fails with `unsupported_feature` before writing.
 4. Every candidate save passes the following named layers. Each layer reports
@@ -101,6 +104,9 @@ evidence.
 - Some permissively readable third-party HWPX files will not be editable. The
   ordinary reader keeps its compatibility fallbacks, while writer output follows
   the stricter profile and fails before source replacement.
+- Mutating a package whose ZIP extra fields cannot be reproduced byte-for-byte
+  is currently unsupported. No-op raw archive copies remain available because
+  they preserve those entries without reconstruction.
 - DVC remains useful for an explicitly promised institutional policy without
   blocking portable Rust development or lending a false standards claim.
 - The format-handler can grow verb by verb, but unsupported verbs cannot return a
@@ -133,11 +139,20 @@ evidence.
   A retained 49-entry native Hancom
   package also passed a one-off raw-copy G0-G3 no-op probe without requiring its
   unrelated polygon to be representable by the DOCX conversion model.
+- Raw-entry COW and surgical text mutation are implemented behind one verified
+  candidate path. Eleven regressions cover exact replacement hashes, source
+  TOCTOU detection, key-set closure, namespace and parent-chain checks, repeated
+  Hancom paragraph ids, XML escaping and forbidden characters, non-plain target
+  rejection, ZIP extra-field failure closure, and restoration of the source
+  central-directory `version made by` bytes. A one-off edit of retained native
+  `exam_kor.hwpx` changed one `hp:t` in `Contents/section0.xml`; all other 48
+  entries retained their compressed/decompressed fingerprints and ZIP metadata,
+  and the candidate passed G0-G3 while its unrelated polygon stayed opaque.
 - The host lifecycle prerequisite is commit `0429890a`: canonical top-level
   `open`, lifecycle `save`, and fail-closed save capability enforcement pass 46
   host contract tests.
-- Surgical mutation, changed-entry COW, and atomic replacement remain explicit
-  P3 implementation tasks; this ADR does not mark them complete.
+- Atomic durable replacement remains an explicit P3 implementation task; this
+  ADR does not mark it complete.
 
 This ADR is indexed into codebase-memory after changes to these decisions so
 future graph searches can recover the boundary and its source files.
