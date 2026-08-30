@@ -514,6 +514,31 @@ mod tests {
     }
 
     #[test]
+    fn rejects_cfb_directory_child_cycle() {
+        let mut bytes = cfb_bytes(HWP5_SIGNATURE, [0, 0, 0, 5], 0);
+
+        // The first directory-sector ID is at header offset 48; the root
+        // directory entry's child ID is at entry offset 76. Sector size comes
+        // from the header so the mutation remains valid for both CFB v3
+        // (512-byte) and v4 (4096-byte) fixtures. Pointing the child back to
+        // the root creates a one-node directory cycle. The shared detector
+        // must reject it before any HWP/.cell/.show parser can traverse it.
+        let sector_shift = u16::from_le_bytes([bytes[30], bytes[31]]);
+        assert!(matches!(sector_shift, 9 | 12));
+        let sector_size = 1usize << sector_shift;
+        let directory_sector = u32::from_le_bytes(bytes[48..52].try_into().unwrap()) as usize;
+        let directory_offset = (directory_sector + 1) * sector_size;
+        bytes[directory_offset + 76..directory_offset + 80].copy_from_slice(&0u32.to_le_bytes());
+
+        let error = detect_reader(Cursor::new(bytes)).expect_err("CFB cycle must reject");
+        assert!(
+            error.message.contains("readable CFB") && error.message.contains("loop"),
+            "got: {}",
+            error.message
+        );
+    }
+
+    #[test]
     fn rejects_cfb_with_wrong_signature() {
         let b = cfb_bytes(b"SOMETHING ELSE", [0, 0, 0, 5], 0);
         let e = detect_reader(Cursor::new(b)).expect_err("must reject");

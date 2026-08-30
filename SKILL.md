@@ -1,11 +1,12 @@
 ---
 name: officecli
-description: Create, analyze, proofread, and modify Office documents (.docx, .xlsx, .pptx) using the officecli CLI tool. Use when the user wants to create, inspect, check formatting, find issues, add charts, or modify Office documents.
+description: Create, analyze, proofread, and modify Office documents (.docx, .xlsx, .pptx), and inspect supported Hancom documents through optional plugins, using the officecli CLI tool. Use when the user wants to create, inspect, check formatting, find issues, add charts, or modify Office documents.
 ---
 
 # officecli
 
-AI-friendly CLI for .docx, .xlsx, .pptx. Single binary, no dependencies, no Office installation needed.
+AI-friendly CLI for .docx, .xlsx, .pptx. Core OOXML support is a single binary
+with no Office installation needed; optional plugins add explicitly bounded formats.
 
 ## Install
 
@@ -61,6 +62,29 @@ officecli close report.docx      # save and release
 Opt out of auto-start: `OFFICECLI_NO_AUTO_RESIDENT=1`.
 
 **Flush only at the non-officecli boundary.** officecli's own reads (`get`/`query`/`view`/`dump`) always see your latest edits, so you never need to save mid-workflow. Run `save` (keeps the resident) or `close` (flush + release) only **before a non-officecli program reads the file** — python-docx/openpyxl, Word, a renderer, delivery/upload. (Idle sessions auto-flush within seconds; `OFFICECLI_RESIDENT_FLUSH=each` makes every mutation flush before returning.)
+
+---
+
+## Optional Hancom Formats
+
+Run `officecli plugins list` before promising Hancom support. With the
+[Hancom plugin](plugins/hancom/README.md) installed:
+
+- `.hwp` and `.hml` are read-only dump-reader inputs projected to a sibling
+  DOCX. Do not claim source editing or creation.
+- `.hwpx` and `.owpml` open directly for `view`, `get`, `query`, `validate`,
+  and replacement of existing plain text nodes. Structural `add`, `remove`,
+  `move`, `copy`, raw mutation, and creation are unsupported.
+- Address editable text with paths such as
+  `/document/section[1]/paragraph[1]/text[1]`. After `set`, run `save` before
+  an external reader or `close` before proving a fresh-session reopen.
+
+```bash
+officecli view report.hwpx text
+officecli set report.hwpx '/document/section[1]/paragraph[1]/text[1]' --prop 'text=Revised'
+officecli save report.hwpx
+officecli close report.hwpx
+```
 
 ---
 
@@ -325,7 +349,7 @@ When using `--after` or `--before`, `--to` can be omitted — the target contain
 
 **Atomic by default (v1.0.137+):** every item still runs and is reported (so `N succeeded, M failed` stays meaningful and every failure surfaces), but if *any* item fails the whole batch rolls back — the file on disk is left byte-identical to before the batch ran (confirmed live in both standalone and resident mode). Use `--best-effort` to restore the old apply-what-succeeds behavior (useful for lossy `dump→batch` replays where losing the whole thing over one unsupported item is worse than a partial result). `--stop-on-error` only changes how early the run stops (remaining items are `skipped`), not whether what ran gets kept — combine it with `--best-effort` if you want "stop at first failure but keep what already succeeded." `--force` is unrelated — it's only the docx-protection bypass. Failed items carry a machine-readable `code` field (same list as `error.code`); a rolled-back batch's JSON summary carries `"atomicRolledBack": true`.
 
-`officecli dump <file> [<path>]` emits a replayable batch JSON for round-trip — `.docx` (full coverage), `.pptx` (text/tables/pictures/charts/notes/theme + OLE/3D/video/audio/SmartArt/morph/p15 transitions via raw-set passthrough), and `.xlsx` (cells/formulas/styles + tables, conditional formatting, validations, comments, charts, sparklines, pictures, shapes, pivot tables; slicers/chartEx/OLE via verbatim carrier). Path defaults to `/` (whole document); pass a subtree path (docx: `/body`, `/body/p[N]`, `/body/tbl[N]`, `/theme`, `/settings`, `/numbering`, `/styles`; xlsx: `/SheetName`, `/sheet[N]`) to scope the dump. `officecli refresh <file.docx>` recalculates TOC page numbers / PAGE / cross-references after replay (Word backend on Windows; headless-HTML fallback elsewhere). `officecli plugins list` extends support to `.doc`, `.hwpx`, `.pdf` export.
+`officecli dump <file> [<path>]` emits a replayable batch JSON for round-trip — `.docx` (full coverage), `.pptx` (text/tables/pictures/charts/notes/theme + OLE/3D/video/audio/SmartArt/morph/p15 transitions via raw-set passthrough), and `.xlsx` (cells/formulas/styles + tables, conditional formatting, validations, comments, charts, sparklines, pictures, shapes, pivot tables; slicers/chartEx/OLE via verbatim carrier). Path defaults to `/` (whole document); pass a subtree path (docx: `/body`, `/body/p[N]`, `/body/tbl[N]`, `/theme`, `/settings`, `/numbering`, `/styles`; xlsx: `/SheetName`, `/sheet[N]`) to scope the dump. `officecli refresh <file.docx>` recalculates TOC page numbers / PAGE / cross-references after replay (Word backend on Windows; headless-HTML fallback elsewhere). `officecli plugins list` extends support to `.doc`, `.hwp`/`.hml`, `.hwpx`/`.owpml`, and `.pdf` export with kind-specific capabilities.
 
 ```bash
 echo '[

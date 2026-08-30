@@ -64,6 +64,10 @@ use crate::format::{self, SourceFormat};
 const CONVERTER_ENV: &str = "OFFICECLI_HWPX_CONVERTER";
 const CONVERTER_TIMEOUT: Duration = Duration::from_secs(120);
 const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(unix)]
+const CONVERTER_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
+#[cfg(unix)]
+const CONVERTER_SPAWN_ETXTBSY_RETRIES: usize = 10;
 #[cfg(windows)]
 const PROCESS_TREE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -555,7 +559,7 @@ fn run_converter(converter: &Path, source: &Path, output: &Path, timeout: Durati
         ))
     })?;
 
-    let mut child = command.spawn().map_err(|error| {
+    let mut child = spawn_converter(&mut command).map_err(|error| {
         PluginError::unsupported_feature(format!(
             "cannot start the configured HWP converter: {error}"
         ))
@@ -645,6 +649,29 @@ fn run_converter(converter: &Path, source: &Path, output: &Path, timeout: Durati
     }
 
     Ok(())
+}
+
+fn spawn_converter(command: &mut Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    {
+        let mut retries_remaining = CONVERTER_SPAWN_ETXTBSY_RETRIES;
+        loop {
+            match command.spawn() {
+                Err(error)
+                    if error.raw_os_error() == Some(libc::ETXTBSY) && retries_remaining > 0 =>
+                {
+                    retries_remaining -= 1;
+                    thread::sleep(CONVERTER_SPAWN_RETRY_DELAY);
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        command.spawn()
+    }
 }
 
 enum ChildWaitOutcome {
@@ -1225,6 +1252,45 @@ mod tests {
         .expect_err("converter must time out");
         assert!(error.message.contains("timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn converter_spawn_retries_transient_text_file_busy() {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let converter = dir.path().join("temporarily busy converter");
+        std::fs::write(&converter, "#!/bin/sh\nexit 0\n").expect("script");
+        let mut permissions = std::fs::metadata(&converter)
+            .expect("metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&converter, permissions).expect("chmod");
+
+        // Linux rejects execve with ETXTBSY while another process holds the
+        // executable open for writing. This models an atomic plugin upgrade
+        // or a just-created CI fixture without depending on scheduler luck.
+        let writer = OpenOptions::new()
+            .write(true)
+            .open(&converter)
+            .expect("busy writer");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(75));
+            drop(writer);
+        });
+
+        let result = run_converter(
+            &converter,
+            &dir.path().join("source.hwp"),
+            &dir.path().join("output.hwpx"),
+            Duration::from_secs(1),
+        );
+        release.join().expect("writer release");
+        if let Err(error) = result {
+            panic!("transient ETXTBSY was not retried: {error}");
+        }
     }
 
     #[cfg(unix)]

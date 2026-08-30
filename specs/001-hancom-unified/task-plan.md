@@ -377,9 +377,14 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 - [ ] T6-2 · Linux/Windows/macOS 네이티브 CI에서 확장자별 실제 `officecli` 디스커버리 검증.
       `plugins list` 행 수는 경로별 열거 때문에 신뢰하지 말고 `view`로 실해석 확인(기존 교훈)
 - [ ] T6-3 · 대용량·자원예산 실측을 계열별로 (기존 48MiB HWPX 실측 방식 재사용)
-- [ ] T6-4 · 보안 회귀 통합: ZIP 폭탄, XML 폭탄, 경로 탈출, 하드링크/심볼릭 링크,
-      CFB 순환참조(신규 — `.hwp`/`.cell`/`.show` 공통 위험)
-- [ ] T6-5 · 공개 문서: 루트 README 포맷 표 갱신, SKILL.md, 플러그인 README
+- [x] T6-4 · 보안 회귀 통합: deflate된 oversized HWPX/XML 및 누적 expanded-byte 예산,
+      DTD·외부/미선언 entity, ZIP entry traversal/collision/symlink, source-log
+      hardlink/symlink alias, 설치 경로 symlink/junction/reparse를 fail-closed로 고정했다.
+      공용 CFB detector에는 root directory child 자기순환 회귀를 추가해 향후
+      `.cell`/`.show`도 HWP와 같은 pre-parser 경계를 재사용하게 했다.
+- [x] T6-5 · 공개 문서: 루트 README 포맷 표와 SKILL.md에 HWP/HML read-only
+      dump-reader, HWPX/OWPML package-preserving plain-text subset, 명시적 save/close
+      경계를 추가하고 플러그인 README·개발/인수인계 문서를 갱신했다.
 
 ### P7 — 업스트림 프로토콜 제안 (선택)
 

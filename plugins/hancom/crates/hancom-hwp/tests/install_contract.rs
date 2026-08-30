@@ -1326,7 +1326,7 @@ fn unix_install_places_two_executables_and_relative_links_for_their_aliases() {
             "plugin",
         );
         let directory = target.parent().expect("active target parent");
-        let leftovers: Vec<_> = std::fs::read_dir(&directory)
+        let leftovers: Vec<_> = std::fs::read_dir(directory)
             .expect("read install directory")
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name() != "plugin")
@@ -1417,7 +1417,7 @@ fn unix_install_migrates_a_legacy_hwpx_only_layout_idempotently() {
                 "plugin",
             );
             let directory = target.parent().expect("active target parent");
-            let leftovers: Vec<_> = std::fs::read_dir(&directory)
+            let leftovers: Vec<_> = std::fs::read_dir(directory)
                 .expect("read extension directory")
                 .filter_map(Result::ok)
                 .filter(|entry| entry.file_name() != "plugin")

@@ -36,6 +36,8 @@ jobs:
             os: ubuntu-latest
           - name: Windows x64
             os: windows-latest
+          - name: macOS arm64
+            os: macos-latest
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
@@ -59,6 +61,8 @@ jobs:
             os: ubuntu-latest
           - name: Windows x64
             os: windows-latest
+          - name: macOS arm64
+            os: macos-latest
     defaults:
       run:
         working-directory: plugins/hancom
@@ -87,6 +91,10 @@ jobs:
             os: windows-latest
             rhwp_asset: rhwp-v0.8.4-windows-x86_64.zip
             rhwp_sha256: 'e65b3e220573b18e1588768c5a16684eb89b2daf2488768575444cb83cd1b8c6'
+          - name: macOS arm64
+            os: macos-latest
+            rhwp_asset: rhwp-v0.8.4-macos-aarch64.tar.gz
+            rhwp_sha256: '6a5e6a7104a2ce40fd4235d1c95cc86b0291652f30f6d1bf1efd3708419ac176'
 
     env:
       RHWP_VERSION: v0.8.4
@@ -135,8 +143,8 @@ jobs:
       - name: Smoke large-file verifier
         run: python scripts/verify-large-file.py --skip-officecli --sections 1 --text-mib 1
 
-      - name: Verify Linux native Hancom discovery and view
-        if: runner.os == 'Linux'
+      - name: Verify Unix native Hancom discovery and view
+        if: runner.os != 'Windows'
         shell: bash
         env:
           RHWP_ASSET: ${{ matrix.rhwp_asset }}
@@ -160,7 +168,7 @@ jobs:
 
           verify_sha256() {
             local label="$1" expected="$2" path="$3" actual
-            actual="$(sha256sum "${path}" | awk '{print $1}')"
+            actual="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${path}")"
             if [[ "${actual}" != "${expected}" ]]; then
               echo "${label} checksum mismatch: expected ${expected}, got ${actual}" >&2
               return 1
@@ -193,9 +201,9 @@ jobs:
           done
           [[ ! -e "${legacy_hwpx}" && ! -L "${legacy_hwpx}" ]]
           [[ ! -e "${HOME}/.officecli/plugins/dump-reader/owpml/plugin" ]]
-          cmp --silent ./target/release/officecli-hancom-hwp \
+          cmp -s ./target/release/officecli-hancom-hwp \
             "${HOME}/.officecli/plugins/dump-reader/hwp/plugin"
-          cmp --silent ./target/release/officecli-hancom-hwpx \
+          cmp -s ./target/release/officecli-hancom-hwpx \
             "${HOME}/.officecli/plugins/format-handler/hwpx/plugin"
 
           unset OFFICECLI_PLUGIN_DUMP_READER_HWP \
@@ -229,7 +237,7 @@ jobs:
           ), plugins
           '
 
-          before_hash="$(sha256sum "${fixture}" | awk '{print $1}')"
+          before_hash="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${fixture}")"
           before_mtime="$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${fixture}")"
           export OFFICECLI_HWPX_CONVERTER="${rhwp}"
           view_output="$("${officecli}" view "${fixture}" text)"
@@ -242,7 +250,7 @@ jobs:
             echo "HWP conversion left an intermediate HWPX beside the source" >&2
             exit 1
           fi
-          [[ "$(sha256sum "${fixture}" | awk '{print $1}')" == "${before_hash}" ]]
+          [[ "$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${fixture}")" == "${before_hash}" ]]
           [[ "$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${fixture}")" == "${before_mtime}" ]]
 
           direct_hwpx="${smoke_dir}/english-direct.hwpx"
@@ -266,7 +274,7 @@ jobs:
 
           editable="${smoke_dir}/editable.hwpx"
           python3 scripts/generate-editable-fixture.py "${editable}" --text before
-          editable_before="$(sha256sum "${editable}" | awk '{print $1}')"
+          editable_before="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${editable}")"
           "${officecli}" set "${editable}" \
             '/document/section[1]/paragraph[1]/text[1]' \
             --prop 'text=after & saved'
@@ -275,7 +283,7 @@ jobs:
           edited_output="$("${officecli}" view "${editable}" text)"
           [[ "${edited_output}" == *"after & saved"* ]]
           "${officecli}" validate "${editable}" >/dev/null
-          [[ "$(sha256sum "${editable}" | awk '{print $1}')" != "${editable_before}" ]]
+          [[ "$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${editable}")" != "${editable_before}" ]]
           python3 - "${editable}" <<'PY'
           import sys
           import zipfile
@@ -576,8 +584,8 @@ jobs:
             throw "OfficeCLI HML view did not create a non-empty sibling DOCX"
           }
 
-      - name: Uninstall Hancom plugin on Linux
-        if: ${{ always() && runner.os == 'Linux' }}
+      - name: Uninstall Hancom plugin on Unix
+        if: ${{ always() && runner.os != 'Windows' }}
         shell: bash
         run: |
           if [[ -x ./scripts/install.sh ]]; then

@@ -322,10 +322,25 @@ fn validate_protocol(request: &Value) -> std::result::Result<(), WireError> {
 }
 
 fn string_field<'a>(value: &'a Value, name: &str) -> std::result::Result<&'a str, WireError> {
-    value
-        .get(name)
-        .and_then(Value::as_str)
-        .ok_or_else(|| WireError::invalid_request(format!("{name} must be a string")))
+    match value.get(name) {
+        Some(Value::String(value)) => Ok(value),
+        received => Err(WireError::invalid_request(format!(
+            "{name} must be a string (received {})",
+            json_value_kind(received)
+        ))),
+    }
+}
+
+fn json_value_kind(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "missing",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "boolean",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
+    }
 }
 
 fn object_field<'a>(
@@ -1649,6 +1664,22 @@ mod tests {
         let error = read_request(&mut Cursor::new([0xff, b'\n']))
             .expect_err("invalid UTF-8 protocol frame");
         assert_eq!(error.code.as_str(), "invalid_argument");
+    }
+
+    #[test]
+    fn string_fields_report_the_received_json_kind() {
+        for (value, expected) in [
+            (json!({}), "missing"),
+            (json!({ "path": null }), "null"),
+            (json!({ "path": { "value": "x" } }), "object"),
+        ] {
+            let error = string_field(&value, "path").expect_err("non-string path");
+            assert!(
+                error.message.contains(expected),
+                "expected {expected:?} in {:?}",
+                error.message
+            );
+        }
     }
 
     #[test]
