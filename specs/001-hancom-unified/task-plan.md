@@ -309,8 +309,11 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
 - [x] T3-2a · 필수 G0~G2 출력 게이트 도입: ZIP/CRC·예산·경로·alias·link,
       byte-exact first/stored mimetype, UTF-8/XML 안전성, container/HPF/header/section
       토폴로지와 참조 무결성을 `validate_output_package` 및 14개 회귀로 검증한다.
-- [ ] T3-2b · G3 저장 검증 도입: 별도 reader 재열기, 요청한 semantic delta,
-      예상 밖 known-semantic 변화 없음, 모든 unchanged-part payload hash 동일을 검사한다.
+- [x] T3-2b · G3 저장 검증 도입: strict package reader 재열기, ordered entry snapshot,
+      압축 전/후 SHA-256·ZIP metadata, explicit mutation plan, requested exact semantic delta,
+      모든 unchanged-part 동일성과 changed-part의 비내용 metadata 보존을 6개 회귀와
+      49-entry native no-op probe로 검증한다.
+      DOCX 변환 모델은 편집 subset이 완전히 표현될 때만 추가 oracle로 사용한다.
 - [ ] T3-2c · 제품이 특정 DVC 정책을 실제로 약속할 때만 R5 commit·OWPML model·정책 JSON
       SHA-256·fixture를 고정한 Windows semantic-policy smoke를 추가한다. 일반 P3 완료 조건은 아니다.
 - [ ] T3-3 · package-preserving OWPML editor 구현. no-op save는 모든 unchanged payload
@@ -481,20 +484,24 @@ ADR-0011로 경계를 고정했다. T2-8은 PUA 대응표와 30파일 전수 분
 T3-1은 R6/R8 writer와 R5 DVC를 고정 commit에서 대조해 ADR-0013의 package-preserving
 closed-subset 설계로 닫았다. DVC는 정책 checker로 재범위화했다. T3-2a는 writer 전용
 G0~G2 `validate_output_package`와 14개 회귀를 구현했으며, 관대한 기존 reader 계약과 분리했다.
+T3-2b는 ordered package snapshot과 압축 전/후 SHA-256, explicit changed-part plan,
+strict candidate 재열기, preserved ZIP metadata, exact known-semantic expectation을 6개 회귀로
+고정했다. 네이티브
+49-entry `exam_kor.hwpx` no-op raw copy도 모든 snapshot 동일성을 통과했다. unrelated polygon이
+DOCX 변환 모델에 없다는 이유로 안전한 no-op을 막지 않도록 full conversion reader는 표현 가능한
+mutation의 추가 semantic oracle로만 사용한다.
 호스트 선행 조건은 커밋 `0429890a`에서 canonical open/save lifecycle 및 fail-closed capability로
-수정했고 46개 host contract를 통과했다. G3와 실제 COW 저장은 아직 완료되지 않았다.
+수정했고 46개 host contract를 통과했다. 실제 COW 저장은 아직 완료되지 않았다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T3-2b/G3를 package snapshot과 함께 구현해 no-op candidate를 별도 reader로 재열고,
-   unchanged-part hash와 semantic fingerprint가 동일함을 먼저 증명한다.
-2. T3-3에서 raw-entry COW와 최소 subtree mutation을 순서대로 구현한다. 전체 header/section
+1. T3-3에서 raw-entry COW와 최소 subtree mutation을 순서대로 구현한다. 전체 header/section
    재직렬화 또는 미입증 topology 변경이 필요하면 fail-closed 한다.
-3. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
+2. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
    각 mutation verb를 실제 지원 범위와 동시에 광고한다. 성공 no-op은 허용하지 않는다.
-4. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-5. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
+3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
+4. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
    runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.
-6. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
+5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.

@@ -62,8 +62,13 @@ evidence.
      header, and contiguous section parts exist; container rootfiles and HPF
      manifest/spine references resolve; IDs, section sets, and `secCnt` agree.
    - **G3 save verification**: reopen the completed temporary package through a
-     fresh Rust reader, verify the requested semantic delta, reject unexpected
-     known-semantic changes, and compare every unchanged payload fingerprint.
+     fresh strict Rust package reader, verify the requested semantic delta,
+     reject unexpected known-semantic changes, and compare every unchanged
+     payload fingerprint. A no-op proves this through exact ordered snapshot
+     equality; mutations additionally require an explicit scoped semantic
+     expectation. The lossy DOCX conversion reader is used only when the edited
+     subset is fully representable in that model, never as a prerequisite for
+     preserving unrelated active HWPX objects.
 
 5. Independent tools are compatibility or policy oracles, not substitutes for
    G0-G3. A pinned official OWPML-model open smoke and a version-recorded native
@@ -120,11 +125,19 @@ evidence.
   symlinks, CRC, UTF-8/XML safety, canonical topology parentage, container
   rootfiles, HPF references, contiguous sections, spine equality, and header
   section count.
+- `owpml::editor` captures ordered decompressed and compressed SHA-256 payload
+  fingerprints plus relevant ZIP metadata, requires an explicit mutation plan,
+  and reopens candidates for G3. Six regressions cover raw no-op equality,
+  unplanned payload/recompression changes, required planned changes, preserved
+  metadata on changed parts, and exact known-semantic delta acceptance/rejection.
+  A retained 49-entry native Hancom
+  package also passed a one-off raw-copy G0-G3 no-op probe without requiring its
+  unrelated polygon to be representable by the DOCX conversion model.
 - The host lifecycle prerequisite is commit `0429890a`: canonical top-level
   `open`, lifecycle `save`, and fail-closed save capability enforcement pass 46
   host contract tests.
-- G3, package snapshot/copy-on-write, surgical mutation, and atomic replacement
-  remain explicit P3 implementation tasks; this ADR does not mark them complete.
+- Surgical mutation, changed-entry COW, and atomic replacement remain explicit
+  P3 implementation tasks; this ADR does not mark them complete.
 
 This ADR is indexed into codebase-memory after changes to these decisions so
 future graph searches can recover the boundary and its source files.
