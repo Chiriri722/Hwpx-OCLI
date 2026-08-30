@@ -1,5 +1,6 @@
 //! HWPX(OWPML) 판독.
 
+pub mod conformance;
 mod equation;
 pub mod model;
 mod numbering;

@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-hancom-unified`
 **Created**: 2026-08-28
-**Status**: P1 진행 중 — T1-1 workspace 이동과 T1-2 공용 core 추출 양 OS 게이트 완료, T1-3 다음
+**Status**: P3 진행 중 — P0~P2 완료, package-preserving HWPX editor와 출력 검증 게이트 구현 중
 **Task Plan**: `./task-plan.md` (정본 작업 목록)
 **Research**: `../../.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록)
 **Official Sources**: `../../docs/spec-sources.md` (한컴 원문 URL·리비전·바이트·SHA-256)
@@ -35,7 +35,10 @@ OfficeCLI는 `.docx`/`.xlsx`/`.pptx`만 네이티브로 다룬다. 한국 공공
 1. **Given** 각주·수식·머리말이 있는 `.hwpx`, **When** `officecli view ... annotated`,
    **Then** 각주·수식·머리말이 모두 출력에 나타난다 (현재는 누락).
 2. **Given** `.hwp` 바이너리 문서, **When** 변환기 없이 열기, **Then** exit 3과 원인 명시.
-3. **Given** `.hwpx`, **When** 편집 후 `save`, **Then** 한컴 공식 검증기(`dvc`)를 통과한다.
+3. **Given** `.hwpx`, **When** 지원 편집 후 `save`, **Then** package 안전·보존,
+   UTF-8/XML 안전성, container/HPF topology, 별도 reader 재열기, semantic delta,
+   unchanged-part hash, durable replacement 게이트를 모두 통과한다. 특정 DVC 정책을
+   제품이 채택한 경우에만 그 이름·commit·정책 SHA에 대한 별도 smoke를 통과한다.
 
 ---
 
@@ -91,11 +94,16 @@ GitHub 검색 0건. 비용·불확실성이 P1보다 훨씬 크므로 뒤에 둔
 - **NFR-2** 대용량 입력에서 스트리밍 출력 + 10초 heartbeat로 호스트 watchdog 준수.
 - **NFR-3** ZIP/XML 폭탄, 경로 탈출, 심볼릭/하드 링크, CFB 순환참조에 대한 회귀 테스트.
 - **NFR-4** Linux/Windows/macOS 네이티브 CI 검증.
+- **NFR-5** 편집은 source package를 보존하는 COW와 검증된 최소 XML subtree patch만 사용한다.
+  전체 semantic model 역직렬화, 미입증 topology 변경, 성공 no-op mutation은 금지한다.
+- **NFR-6** writer 검증 결과는 실제 범위대로 명명한다. KS X 6101/XSD 원문 없이
+  `표준 적합`, `schema-valid`, `공식 validator`, `무손실 round-trip`을 주장하지 않는다.
 
 ## 성공 기준
 
 1. 한글 계열 4개 확장자가 각주·수식·머리말·번호·스타일까지 docx로 왕복한다.
-2. `.hwpx` 편집 결과가 한컴 공식 `dvc` 검증기를 통과한다.
+2. `.hwpx` 편집 결과가 ADR-0013의 필수 G0~G3와 `save` durability를 통과하고,
+   독립 OWPML/native oracle에서 상호운용된다. DVC는 채택한 named policy에만 적용한다.
 3. `.cell`/`.show`가 최소한 정직하게 실패하거나, 변환기 경유로 열린다.
 4. `plugins lint`에서 미지원 prop 0건.
 5. 3개 OS 네이티브 러너에서 전 확장자 디스커버리 성공.

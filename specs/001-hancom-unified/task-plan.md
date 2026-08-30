@@ -102,12 +102,12 @@ format-handler로 전환한다. 제약 2 때문에 전환은 dump-reader 선언 
 | R2 | **실제 `.cell`/`.show` 표본 + 한컴오피스(또는 뷰어)** | 미공개 포맷의 유일한 ground truth. 컨테이너 판별·회귀 기준 | 사용자 제공 필요 | 한컴오피스 라이선스 | **없음 — 최대 블로커** |
 | R3 | **Rust 1.88+**, **.NET 10 SDK** | 플러그인 빌드 / 호스트 빌드 | `scripts/bootstrap-dev.sh`, rustup | 무료 | 설치됨 |
 | R4 | **`edwardkim/rhwp`** v0.8.4+ | `.hwp`(바이너리) → HWPX 변환기 | GitHub Releases (SHA-256 대조) | MIT | 통합됨 |
-| R5 | **`hancom-io/dvc`** (HWPX Document Validation Checker, C++) | HWPX **쓰기** 산출물의 공식 적합성 검증. P3 게이트 | <https://github.com/hancom-io/dvc> | 한컴 공식 | 미도입 |
 
 ### 조건부 필요
 
 | # | 항목 | 용도 | 라이선스 | 판단 |
 |---|---|---|---|---|
+| R5 | **`hancom-io/dvc`** (HWPX Document Validation Checker, C++) | 이름·해시를 고정한 JSON 정책의 선택적 의미 smoke | 한컴 공식 | 범용 ZIP/XSD/KS 적합성 검증기가 아니다. 정책을 실제 제품 계약으로 채택할 때만 Windows 선택 게이트로 도입 |
 | R6 | **`neolord0/hwpxlib`** | HWPX 쓰기 시맨틱 **참조 구현**. 쓰기+암호화 지원 확인됨 | Apache-2.0 (호환) | 참조용으로만. JVM 의존을 런타임에 넣지 않는다 |
 | R7 | **`neolord0/hwplib`** | HWP 바이너리 쓰기/레코드 구조 참조 (Apache POI로 CFB 파싱) | Apache-2.0 (호환) | 참조용. RHWP 대체 후보 |
 | R8 | **`hancom-io/hwpx-owpml-model`** | 한컴 **공식** OWPML 모델. 요소·속성 정본 교차검증 | Apache-2.0 (호환) | 강력 권장 |
@@ -304,9 +304,17 @@ R1 스펙 확보 후 착수. 현재 미지원 목록이 곧 작업 목록이다.
 
 ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록한다.
 
-- [ ] T3-1 · R6/R8을 참조해 OWPML 쓰기 시맨틱 조사 → 설계 문서
-- [ ] T3-2 · R5 `hancom-io/dvc`를 CI에 도입. **쓰기 산출물이 공식 검증기를 통과해야 한다**
-- [ ] T3-3 · OWPML writer 구현 (읽기 왕복 무손실이 최소 기준)
+- [x] T3-1 · R6/R8 writer 의미, R5 실제 범위, 호스트 `save` 계약을 조사하고
+      package-preserving closed-subset 설계를 ADR-0013으로 확정했다.
+- [x] T3-2a · 필수 G0~G2 출력 게이트 도입: ZIP/CRC·예산·경로·alias·link,
+      byte-exact first/stored mimetype, UTF-8/XML 안전성, container/HPF/header/section
+      토폴로지와 참조 무결성을 `validate_output_package` 및 14개 회귀로 검증한다.
+- [ ] T3-2b · G3 저장 검증 도입: 별도 reader 재열기, 요청한 semantic delta,
+      예상 밖 known-semantic 변화 없음, 모든 unchanged-part payload hash 동일을 검사한다.
+- [ ] T3-2c · 제품이 특정 DVC 정책을 실제로 약속할 때만 R5 commit·OWPML model·정책 JSON
+      SHA-256·fixture를 고정한 Windows semantic-policy smoke를 추가한다. 일반 P3 완료 조건은 아니다.
+- [ ] T3-3 · package-preserving OWPML editor 구현. no-op save는 모든 unchanged payload
+      byte hash가 동일해야 하며, 지원 편집은 검증된 최소 XML subtree만 바꾼다.
 - [ ] T3-4 · format-handler 프로토콜 구현: open 핸드셰이크, vocabulary 스냅샷,
       get/query/set/add/remove/move/copy/raw/raw_set/save/close, **정규적 `save` durability**
 - [ ] T3-5 · `.hwpx`/`.owpml`의 dump-reader 선언 제거와 format-handler 전환을 **같은 커밋**으로
@@ -367,8 +375,6 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 2. **Q2** `.cell` 2010세대와 2014세대를 어떻게 구분하는가? 헤더 버전 필드가 있는가?
 3. **Q3** 사용자는 한셀/한쇼를 **읽기만** 원하는가, 아니면 편집까지 원하는가? 읽기만이면
    A4 외부 변환기로 대부분 해결되고 P4-5/P5-4 이후를 미룰 수 있다.
-4. **Q4** KS X 6101(R9, 유료) 구매가 필요한가? P3 쓰기 적합성에만 필요하다고 판단하나
-   R5 `dvc` 검증기로 대체 가능할 수 있다.
 5. **Q5** JVM 의존(R6/R7)을 런타임에 허용할 것인가? 현재 판단은 **참조용만**이나, HWPX 쓰기를
    빨리 원하면 `hwpxlib` 사이드카가 가장 빠른 길이다. 단일 바이너리 원칙과 충돌한다.
 7. **Q7** 한글 계열이 format-handler로 승격되면 `.hwp`/`.hml`은 별도 바이너리로 분리해야
@@ -385,6 +391,8 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 | 2014 구조 변경으로 표본 편향 | 특정 세대만 동작 | T4-2 세대 판별을 파서보다 먼저 |
 | workspace 재편 중 회귀 | 기존 기능 손상 | T1-1은 "동작 변화 0" + 전체 테스트 통과를 게이트로 |
 | 스펙 파생물 권리 조항 | 배타적 권리 주장 금지 | 스펙 재배포 안 함, URL+해시만, 표기 유지 |
+| 불완전 semantic model의 역직렬화 | 조용한 OWPML 요소·서식·확장 손실 | 전체 문서 재생성 금지, source-preserving COW + 최소 subtree patch, 모르면 `unsupported_feature` |
+| DVC/한컴 open을 표준 적합성으로 오인 | 검증 범위 과장과 잘못된 안전 보장 | 결과를 named policy/interoperability smoke로만 표기, KS/XSD 근거와 분리(ADR-0013) |
 
 ## Acceptance Gates (Phase 완료 판정)
 
@@ -393,7 +401,11 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
 - **어휘를 건드린 모든 변경**: 실제 `officecli` 바이너리로 `plugins lint` — 미지원 prop 0건.
   (호스트 내장 대상 포맷 스키마 검증이므로 어휘 매핑의 기계적 보증 수단)
 - **P2 이후**: `HWPX_CORPUS` 실문서 회귀 + 골든파일 무변경(의도적 변경은 diff 육안 검토).
-- **P3**: R5 `dvc` 공식 검증기 통과 + 왕복 무손실 + `save` durability(재열기 확인).
+- **P3 필수 G0~G3**: package 안전/보존 hash + XML well-formedness/비활성 파싱 +
+  project package-topology profile v1 + 별도 reader 재열기/semantic delta + `save` durability.
+- **P3 독립 oracle**: 고정 OWPML model 및 버전 기록 native 한글 open/render/save/reopen은
+  상호운용성 증거다. R5 DVC는 채택한 named policy가 있을 때만 해당 정책 smoke다.
+  어느 결과도 KS/XSD 적합성으로 표현하지 않는다.
 - **P4/P5**: 표본 대비 셀·슬라이드 수와 텍스트 일치, 원본 파일 mtime·해시 불변.
 - **P6**: Linux/Windows/macOS 네이티브 러너에서 확장자별 `officecli view` 실해석 성공.
 
@@ -423,10 +435,16 @@ P4의 컨테이너 판별 결과를 재사용한다(같은 시대 코드베이�
     세부 경계는 ADR-0011을 따른다.
 13. G6 PUA는 한컴 native DOCX와 같이 무변경 보존한다. 글꼴 한정 표를 전역 적용하지 않으며,
     정확한 source font slot과 allowlist oracle 없이는 치환하지 않는다(ADR-0012).
+14. R5 DVC는 사용자 JSON 정책의 제한된 의미 checker이며 범용 HWPX/OWPML validator가 아니다.
+    필수 P3 게이트에서 제외하고, 이름·commit·정책 SHA·fixture가 고정된 선택 smoke로만 허용한다.
+15. Q4는 해소했다. KS X 6101/XSD는 standards claim에 필요하고 DVC로 대체할 수 없다.
+    구매 전에도 project profile로 편집기 구현은 진행하되 `schema-valid`/`KS 적합`을 주장하지 않는다.
+16. HWPX 쓰기는 불완전 semantic model의 전체 직렬화가 아니라 source package를 보존하는
+    closed-subset COW 편집기로 구현한다. 상세 게이트와 중단 조건은 ADR-0013을 따른다.
 
 ## Status
 
-**P0·P1·P2 완료 · P3 다음.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
+**P0·P1·P2 완료 · P3 진행 중.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
 T1-1은 기존 Cargo target surface와 lockfile을 보존한 workspace 이동으로 구현했고, 로컬과
 원격 양 OS 회귀·MSRV·host·공급망·설치 검증을 모두 통과했다.
@@ -460,16 +478,23 @@ T2-7은 커밋 `cd110588`에서 28개 자체완결 chart part를 raw carrier로 
 ADR-0011로 경계를 고정했다. T2-8은 PUA 대응표와 30파일 전수 분포, 한컴 native
 `exam_kor` DOCX를 재검토한 결과 native도 BMP 44회·supplementary 83회를 무변경 보존하므로
 현행 보존+진단을 최종 정책으로 확정했다(ADR-0012). T2-9 lint는 unknown prop 0이다.
+T3-1은 R6/R8 writer와 R5 DVC를 고정 commit에서 대조해 ADR-0013의 package-preserving
+closed-subset 설계로 닫았다. DVC는 정책 checker로 재범위화했다. T3-2a는 writer 전용
+G0~G2 `validate_output_package`와 14개 회귀를 구현했으며, 관대한 기존 reader 계약과 분리했다.
+호스트 선행 조건은 커밋 `0429890a`에서 canonical open/save lifecycle 및 fail-closed capability로
+수정했고 46개 host contract를 통과했다. G3와 실제 COW 저장은 아직 완료되지 않았다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T3-1에서 R6/R8의 writer 의미와 현재 format-handler/save 계약을 대조해 쓰기 설계를
-   먼저 닫고, ADR-1을 뒤집는 별도 ADR을 작성한다.
-2. T3-2에서 공식 R5 `hancom-io/dvc`를 재현 가능하게 고정해 writer 산출물의 CI 게이트로
-   도입하고, R9 구매 필요 여부를 실제 검증 범위로 판단한다.
-3. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
-4. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
+1. T3-2b/G3를 package snapshot과 함께 구현해 no-op candidate를 별도 reader로 재열고,
+   unchanged-part hash와 semantic fingerprint가 동일함을 먼저 증명한다.
+2. T3-3에서 raw-entry COW와 최소 subtree mutation을 순서대로 구현한다. 전체 header/section
+   재직렬화 또는 미입증 topology 변경이 필요하면 fail-closed 한다.
+3. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
+   각 mutation verb를 실제 지원 범위와 동시에 광고한다. 성공 no-op은 허용하지 않는다.
+4. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
+5. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
    runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.
-5. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
+6. R2가 확보되면 T4-1 컨테이너 판별 스파이크를 최우선으로 돌려 Q1을 해소하고,
    그 결과로 P4/P5의 실제 규모를 재산정한다.

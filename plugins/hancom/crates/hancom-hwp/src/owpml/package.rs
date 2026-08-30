@@ -28,16 +28,16 @@ pub const HEADER_ENTRY: &str = "Contents/header.xml";
 pub const BINDATA_PREFIX: &str = "BinData/";
 pub const CHART_PREFIX: &str = "Chart/";
 
-const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
+pub(super) const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHART_XML_DEPTH: usize = 256;
 const MAX_BINARY_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TOTAL_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 4096;
-const MAX_MANIFEST_ITEMS: usize = 4096;
-const MAX_SPINE_ITEMS: usize = 2048;
-const MAX_SECTION_COUNT: usize = 1024;
+pub(super) const MAX_MANIFEST_ITEMS: usize = 4096;
+pub(super) const MAX_SPINE_ITEMS: usize = 2048;
+pub(super) const MAX_SECTION_COUNT: usize = 1024;
 const MAX_COMPRESSION_RATIO: u64 = 1000;
 
 pub struct Package<R: Read + Seek> {
@@ -497,7 +497,7 @@ fn read_entry_bytes_limited<R: Read + Seek>(
     Ok(Some(buf))
 }
 
-fn validate_archive<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> Result<()> {
+pub(super) fn validate_archive<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> Result<()> {
     if archive.len() > MAX_ARCHIVE_ENTRIES {
         return Err(resource_limit(format!(
             "archive entry count {} exceeds maximum {MAX_ARCHIVE_ENTRIES}",
