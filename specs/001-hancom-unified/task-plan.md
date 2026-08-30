@@ -321,11 +321,18 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
       묶고, paragraph ordinal(+선택적 id precondition)/text ordinal로 지정한 직접
       `hp:p/hp:run/hp:t` inner bytes만 바꾸는 11개 회귀를 통과한다. 49-entry native
       `exam_kor.hwpx`의 실제 한-node edit에서도 나머지 48개 entry snapshot 동일을 확인했다.
-- [ ] T3-4 · format-handler 프로토콜 구현: open 핸드셰이크, vocabulary 스냅샷,
-      get/query/set/add/remove/move/copy/raw/raw_set/save/close, **정규적 `save` durability**
+- [x] T3-4 · format-handler 프로토콜 구현. 분리된 `officecli-hancom-hwpx`가 bounded JSONL
+      open 핸드셰이크와 vocabulary/capability 스냅샷, view/get/query/validate/raw,
+      직접 plain `hp:p/hp:run/hp:t` set, 정규적 save/close를 구현한다. add/remove/move/
+      copy/raw_set/add_part는 광고하지 않고 `unsupported_command`로 실패해 성공 no-op을
+      만들지 않는다. 관대한 읽기 세션과 strict editable gate도 분리했다.
 - [ ] T3-5 · `.hwpx`/`.owpml`의 dump-reader 선언 제거와 format-handler 전환을 **같은 커밋**으로
       (제약 2). `.hwp`/`.hml`은 dump-reader 유지 → 바이너리 분리 필요 여부 재확인
-- [ ] T3-6 · 원본 손상 방지: 원자적 저장, 실패 시 롤백, 사전 백업 정책
+- [x] T3-6 · 원본 손상 방지. 같은 디렉터리 임시 파일에 COW하고 G0~G3·별도 재열기·
+      file flush/sync와 권한 복사를 모두 마친 뒤 Unix rename+directory sync 또는 Windows
+      ReplaceFileW(WRITE_DAC 거부 시 이름이 그대로라는 조건에서 MoveFileExW write-through)
+      로 한 번에 교체한다. 검증/TOCTOU/교체 실패는 원본을 건드리지 않으며 임시 파일을
+      회수한다. 기본 사전 백업은 만들거나 보존하지 않는 정책으로 확정했다.
 
 ### P4 — 한셀 `.cell` (target=xlsx) · A3 단계 적용
 
@@ -499,13 +506,20 @@ paragraph id를 ordinal로 분리하는 namespace/parent-chain aware `hp:t` patc
 API가 낮추는 central `version made by`는 원본 두 바이트로 복원하며, 재현할 수 없는 ZIP extra
 field가 있는 mutation은 fail-closed 한다.
 호스트 선행 조건은 커밋 `0429890a`에서 canonical open/save lifecycle 및 fail-closed capability로
-수정했고 46개 host contract를 통과했다. 원본 경로의 atomic durable replacement는 아직 완료되지 않았다.
+수정했다. T3-4/T3-6은 별도 HWPX format-handler에서 읽기 전용 호환성과 strict editable gate를
+분리하고, direct plain text set을 multi-target semantic expectation으로 검증한 뒤 sibling-temp
+durable atomic replacement에 연결했다. 1 MiB JSONL 입력 상한은 초과 프레임을 추가 대용량
+할당 없이 배수하고 다음 요청 경계를 보존한다. 프로토콜의 `max_lines`와 기존 호스트 철자도
+호환하며,
+호스트 자체는 규격 키로 수정했다. 580개 workspace Rust 테스트, Clippy, release 3-bin build와
+47개 host contract가 통과했다.
 P4/P5는 별도로 R2(실제 `.cell`/`.show` 표본)가 들어오기 전까지 착수할 수 없다.
 
 ## Next Action Plan
 
-1. T3-4 format-handler는 먼저 no-op/open/get/query/raw/save/close durability를 연결한 뒤,
-   각 mutation verb를 실제 지원 범위와 동시에 광고한다. 성공 no-op은 허용하지 않는다.
+1. T3-5에서 dump-reader의 `.hwpx`/`.owpml` 선언 제거와 새 format-handler 설치를 같은
+   커밋으로 전환하고 실제 OfficeCLI view/set/save/discovery를 검증한다. `.hwp`/`.hml`은
+   기존 dump-reader 바이너리에 남긴다.
 2. 현재 브랜치의 upstream 지연은 기능 변경과 섞지 않고 별도 통합 변경으로 처리한다.
 3. P4/P5는 R2 표본과 Q3가 해소될 때까지 중단한다. Q5 JVM은 참조 구현 조사에만 허용하고
    runtime에는 넣지 않는 기존 단일 바이너리 결정을 유지한다.

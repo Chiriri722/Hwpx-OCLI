@@ -300,6 +300,43 @@ impl PackageBaseline {
                 }
                 None
             }
+            SemanticExpectation::ExactTexts(expectations) => {
+                if expectations.is_empty() {
+                    return Err(PluginError::invalid_argument(
+                        "an exact text set must contain at least one expectation",
+                    ));
+                }
+                let expected_parts = expectations
+                    .iter()
+                    .map(|expectation| expectation.part.to_owned())
+                    .collect::<BTreeSet<_>>();
+                if expected_parts != plan.changed_parts {
+                    return Err(PluginError::invalid_argument(
+                        "exact text expectation parts must match the mutation plan",
+                    ));
+                }
+                for expectation in expectations {
+                    candidate.rewind()?;
+                    let actual = read_text_target_from_package(
+                        &mut candidate,
+                        expectation.part,
+                        expectation.selector,
+                    )
+                    .map_err(|error| {
+                        verification_error(format!(
+                            "cannot resolve exact text target in candidate: {}",
+                            error.message
+                        ))
+                    })?;
+                    if actual != expectation.expected {
+                        return Err(verification_error(format!(
+                            "candidate text target is {actual:?}, expected {:?}",
+                            expectation.expected
+                        )));
+                    }
+                }
+                None
+            }
         };
         Ok(VerifiedCandidate { snapshot, document })
     }
@@ -322,6 +359,17 @@ pub enum SemanticExpectation<'a> {
         selector: &'a TextNodeSelector,
         expected: &'a str,
     },
+    /// Independently resolve every surgical text target. The set of named
+    /// parts must exactly match the mutation plan, so an unverified changed
+    /// part cannot hide behind a valid expectation elsewhere.
+    ExactTexts(&'a [ExactTextExpectation<'a>]),
+}
+
+/// One member of a multi-target scoped semantic expectation.
+pub struct ExactTextExpectation<'a> {
+    pub part: &'a str,
+    pub selector: &'a TextNodeSelector,
+    pub expected: &'a str,
 }
 
 /// Parts that a single candidate save is required to replace.

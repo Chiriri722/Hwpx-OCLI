@@ -183,6 +183,7 @@ var tests = new (string Name, Action Run)[]
     ("plugins info rejects a changed name snapshot and probes an explicit path once", PluginInfoRejectsChangedSnapshot),
     ("host watchdog accepts heartbeats throughout a slow plugin run", HostWatchdogAcceptsHeartbeats),
     ("format-handler lifecycle frames match protocol v1", FormatHandlerLifecycleFramesMatchProtocolV1),
+    ("format-handler view uses the protocol max_lines key", FormatHandlerViewUsesProtocolMaxLinesKey),
     ("format-handler save cannot report false durability", FormatHandlerSaveCannotReportFalseDurability),
     ("dump-reader surfaces only bounded structured success warnings", DumpReaderStructuredWarningsAreFilteredAndBounded),
     ("field schema accepts emitted character formatting", FieldSchemaAcceptsEmittedCharacterFormatting),
@@ -248,6 +249,39 @@ static void FormatHandlerLifecycleFramesMatchProtocolV1()
 
         using var close = JsonDocument.Parse(frames[2]);
         Assert(close.RootElement.GetProperty("msg_type").GetString() == "close", "third frame is not close");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", originalLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", originalCommands);
+        File.Delete(documentPath);
+        File.Delete(wireLog);
+    }
+}
+
+static void FormatHandlerViewUsesProtocolMaxLinesKey()
+{
+    var documentPath = Path.Combine(Path.GetTempPath(), $"officecli-format-view-{Guid.NewGuid():N}.wire");
+    var wireLog = Path.Combine(Path.GetTempPath(), $"officecli-format-view-{Guid.NewGuid():N}.jsonl");
+    var originalLog = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG");
+    var originalCommands = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS");
+    try
+    {
+        File.WriteAllText(documentPath, "wire contract");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG", wireLog);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS", "[\"view\"]");
+
+        using (var handler = OpenContractFormatHandler(documentPath))
+            _ = handler.ViewAsText(maxLines: 1);
+
+        var frames = File.ReadAllLines(wireLog);
+        Assert(frames.Length == 3, $"expected open/view/close frames, got {frames.Length}");
+        using var view = JsonDocument.Parse(frames[1]);
+        var args = view.RootElement.GetProperty("args");
+        Assert(args.GetProperty("max_lines").GetInt32() == 1,
+            "view frame did not use protocol max_lines");
+        Assert(!args.TryGetProperty("max-lines", out _),
+            "view frame leaked the CLI-only --max-lines spelling into the plugin protocol");
     }
     finally
     {

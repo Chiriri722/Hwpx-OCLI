@@ -17,6 +17,10 @@ path = "src/bin/officecli-hancom-hwp.rs"
 name = "officecli-dump-reader-hwpx"
 path = "src/bin/officecli-dump-reader-hwpx.rs"
 
+[[bin]]
+name = "officecli-hancom-hwpx"
+path = "src/bin/officecli-hancom-hwpx.rs"
+
 [lib]
 name = "officecli_hwpx"
 path = "src/lib.rs"

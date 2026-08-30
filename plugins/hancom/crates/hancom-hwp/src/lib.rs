@@ -7,6 +7,7 @@ mod converter;
 pub mod emit;
 pub mod error;
 pub mod format;
+pub mod format_handler;
 pub mod hwpml;
 pub mod manifest;
 pub mod owpml;

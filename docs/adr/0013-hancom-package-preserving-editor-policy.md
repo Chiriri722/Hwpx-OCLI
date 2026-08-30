@@ -149,10 +149,17 @@ evidence.
   entries retained their compressed/decompressed fingerprints and ZIP metadata,
   and the candidate passed G0-G3 while its unrelated polygon stayed opaque.
 - The host lifecycle prerequisite is commit `0429890a`: canonical top-level
-  `open`, lifecycle `save`, and fail-closed save capability enforcement pass 46
-  host contract tests.
-- Atomic durable replacement remains an explicit P3 implementation task; this
-  ADR does not mark it complete.
+  `open`, lifecycle `save`, fail-closed save capability enforcement, and the
+  canonical `max_lines` wire key pass 47 host contract tests.
+- The split `officecli-hancom-hwpx` entry point implements bounded protocol-v1
+  JSONL and the closed direct-text mutation subset. Its save path writes and
+  verifies a sibling candidate, flushes it, copies source permissions, and then
+  uses same-directory atomic replacement. Unix synchronizes directory metadata;
+  Windows prefers `ReplaceFileW` and uses write-through `MoveFileExW` only after
+  `ERROR_ACCESS_DENIED`, for which the platform contract leaves both names
+  unchanged. Successful and rejected saves retain no implicit backup. Nine
+  protocol integration regressions and the 580-test workspace suite cover the
+  current boundary.
 
 This ADR is indexed into codebase-memory after changes to these decisions so
 future graph searches can recover the boundary and its source files.

@@ -130,9 +130,9 @@
 - Codex Windows 제한 토큰은 일반 사용자 SID 외에 sandbox SID의 ACL 교집합도 요구해 `%TEMP%`의 새 디렉터리를 즉시 다시 열지 못할 수 있다. 이 현상은 샌드박스 밖의 동일 DACL 테스트가 통과하는 것으로 환경 문제임을 확인했으며 제품 ACL 변경 사유로 사용하지 않는다.
 
 ## Status
-**Phase 6 / H1, Phase 7, P0·P1·P2 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 T2-1~T2-9도 완료했으며 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T2-6 구현 커밋 `b379b4d3`은 검증된 rect/textbox/ellipse만 보존하고 active 미지원 도형을 명시적으로 거부한다. T2-7 구현 커밋 `cd110588`은 28개 자체완결 차트를 보존하고 관계·caption·미검증 frame을 거부하며, T2-8은 PUA 무변경 보존을 ADR-0012로 확정했다.
+**Phase 6 / H1, Phase 7, P0·P1·P2 complete · P3 T3-1~T3-4/T3-6 complete** - 커밋 `e77fb77c`의 원격 run `33157787880`에서 정확한 SDK 10.0.302 host 계약과 OfficeCLI 1.0.145/RHWP 0.8.4 실제 HWP 경로가 양 OS에서 모두 성공했다. 후속 통합 계획의 현재 정본 상태는 `specs/001-hancom-unified/task-plan.md`를 따른다. T3-4/T3-6은 분리된 HWPX format-handler, strict G0~G3 direct-text edit, bounded JSONL, sibling-temp durable atomic save를 구현했으며 580개 workspace Rust 테스트와 47개 host 계약을 통과했다.
 
 ## Next Action Plan
-1. `specs/001-hancom-unified/task-plan.md`의 T3-1에 따라 R6/R8 writer 의미와 host format-handler/save 계약을 대조해 쓰기 설계와 ADR을 확정한다.
-2. T3-2에서 R5 `hancom-io/dvc`를 고정·도입해 향후 writer 산출물의 공식 검증 게이트를 만든다.
+1. T3-5에서 `.hwpx`/`.owpml`을 새 format-handler 설치로 전환하는 동시에 기존 dump-reader 선언에서 제거한다.
+2. 실제 OfficeCLI discovery/view/set/save와 설치 rollback을 양 OS에서 검증한다.
 3. upstream 동기화는 기능 변경과 섞지 않고 별도 통합 변경으로 진행한다.

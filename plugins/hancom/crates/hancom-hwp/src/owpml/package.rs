@@ -29,7 +29,7 @@ pub const BINDATA_PREFIX: &str = "BinData/";
 pub const CHART_PREFIX: &str = "Chart/";
 
 pub(super) const MAX_HPF_BYTES: u64 = 4 * 1024 * 1024;
-pub(super) const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_XML_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHART_XML_DEPTH: usize = 256;
 const MAX_BINARY_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;

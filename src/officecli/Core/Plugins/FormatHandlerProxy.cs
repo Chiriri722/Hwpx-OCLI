@@ -307,7 +307,7 @@ internal sealed class FormatHandlerProxy : IDocumentHandler
         var args = new JsonObject { ["mode"] = mode };
         if (startLine.HasValue) args["start"] = startLine.Value;
         if (endLine.HasValue) args["end"] = endLine.Value;
-        if (maxLines.HasValue) args["max-lines"] = maxLines.Value;
+        if (maxLines.HasValue) args["max_lines"] = maxLines.Value;
         if (cols != null && cols.Count > 0) args["cols"] = string.Join(",", cols);
         return args;
     }
