@@ -344,8 +344,17 @@ jobs:
           cell_seed="${smoke_dir}/seed-cell.xlsx"
           show_seed="${smoke_dir}/seed-show.pptx"
           "${officecli}" create "${cell_seed}" >/dev/null
+          "${officecli}" set "${cell_seed}" '/Sheet1/A1' \
+            --prop 'value=Cell carrier smoke' >/dev/null
+          "${officecli}" save "${cell_seed}" >/dev/null
           "${officecli}" close "${cell_seed}" >/dev/null
           "${officecli}" create "${show_seed}" >/dev/null
+          "${officecli}" add "${show_seed}" / --type slide >/dev/null
+          "${officecli}" add "${show_seed}" '/slide[1]' --type shape \
+            --prop 'text=Show carrier smoke' \
+            --prop 'x=1in' --prop 'y=1in' \
+            --prop 'width=4in' --prop 'height=1in' >/dev/null
+          "${officecli}" save "${show_seed}" >/dev/null
           "${officecli}" close "${show_seed}" >/dev/null
 
           cell_fixture="${smoke_dir}/synthetic.cell"
@@ -355,8 +364,14 @@ jobs:
 
           cell_before_hash="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${cell_fixture}")"
           cell_before_mtime="$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${cell_fixture}")"
-          cell_output="$("${officecli}" view "${cell_fixture}" text 2>&1)"
-          [[ "${cell_output}" != *"will be blank"* ]]
+          if ! cell_output="$("${officecli}" view "${cell_fixture}" text 2>&1)"; then
+            echo "OfficeCLI Cell carrier view failed: ${cell_output}" >&2
+            exit 1
+          fi
+          if [[ "${cell_output}" != *"Cell carrier smoke"* ]]; then
+            echo "OfficeCLI Cell carrier view did not preserve seeded content: ${cell_output}" >&2
+            exit 1
+          fi
           "${officecli}" close "${cell_fixture}" >/dev/null
           [[ -s "${smoke_dir}/synthetic.xlsx" ]]
           cmp -s "${cell_fixture}" "${smoke_dir}/synthetic.xlsx"
@@ -365,8 +380,14 @@ jobs:
 
           show_before_hash="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${show_fixture}")"
           show_before_mtime="$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "${show_fixture}")"
-          show_output="$("${officecli}" view "${show_fixture}" text 2>&1)"
-          [[ "${show_output}" != *"will be blank"* ]]
+          if ! show_output="$("${officecli}" view "${show_fixture}" text 2>&1)"; then
+            echo "OfficeCLI Show carrier view failed: ${show_output}" >&2
+            exit 1
+          fi
+          if [[ "${show_output}" != *"Show carrier smoke"* ]]; then
+            echo "OfficeCLI Show carrier view did not preserve seeded content: ${show_output}" >&2
+            exit 1
+          fi
           "${officecli}" close "${show_fixture}" >/dev/null
           [[ -s "${smoke_dir}/synthetic.pptx" ]]
           cmp -s "${show_fixture}" "${smoke_dir}/synthetic.pptx"
@@ -656,6 +677,34 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "failed to create native $Family seed"
             }
+
+            if ($Family -eq 'cell') {
+              $expectedText = 'Cell carrier smoke'
+              & $officecli set $seed '/Sheet1/A1' --prop "value=$expectedText" | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                throw "failed to seed native Cell content"
+              }
+            } elseif ($Family -eq 'show') {
+              $expectedText = 'Show carrier smoke'
+              & $officecli add $seed '/' --type slide | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                throw "failed to add the native Show seed slide"
+              }
+              & $officecli add $seed '/slide[1]' --type shape `
+                --prop "text=$expectedText" `
+                --prop 'x=1in' --prop 'y=1in' `
+                --prop 'width=4in' --prop 'height=1in' | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                throw "failed to seed native Show content"
+              }
+            } else {
+              throw "unsupported carrier test family: $Family"
+            }
+
+            & $officecli save $seed | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "failed to save native $Family seed"
+            }
             & $officecli close $seed | Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "failed to close native $Family seed"
@@ -673,8 +722,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "OfficeCLI $Family carrier view failed: $viewOutput"
             }
-            if ($viewOutput.Contains('will be blank')) {
-              throw "OfficeCLI misreported direct-native $Family output as blank"
+            if (-not $viewOutput.Contains($expectedText)) {
+              throw "OfficeCLI $Family carrier view did not preserve seeded content: $viewOutput"
             }
             & $officecli close $carrier | Out-Null
             if ($LASTEXITCODE -ne 0) {
