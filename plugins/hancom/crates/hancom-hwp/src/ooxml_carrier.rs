@@ -41,9 +41,11 @@ const THUMBNAIL_REL: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail";
 const HYPERLINK_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const APP_NS: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
 const DOCUMENT_REL_NS: &[u8] =
     b"http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const DRAWING_NS: &[u8] = b"http://schemas.openxmlformats.org/drawingml/2006/main";
 const SPREADSHEET_NS: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const PRESENTATION_NS: &[u8] = b"http://schemas.openxmlformats.org/presentationml/2006/main";
 const HANCOM_SPREADSHEET_NS: &[u8] = b"http://schemas.haansoft.com/office/spreadsheet/8.0";
@@ -71,6 +73,13 @@ const HANCOM_PUBLIC_SPEC_NOTICE: &str =
 pub enum CarrierFamily {
     Cell,
     Show,
+}
+
+#[derive(Debug)]
+struct InternalRelationship {
+    id: String,
+    relationship_type: String,
+    target: String,
 }
 
 impl CarrierFamily {
@@ -1316,7 +1325,7 @@ fn validate_opc_relationships<R: Read + Seek>(
             )));
         }
         let bytes = read_xml_part(archive, &relationship_part)?;
-        let targets = validate_relationship_part(
+        let relationships = validate_relationship_part(
             &bytes,
             &relationship_part,
             source_part.as_deref(),
@@ -1324,7 +1333,7 @@ fn validate_opc_relationships<R: Read + Seek>(
             family,
         )?;
         relationship_parts_by_source.insert(source_part.clone(), relationship_part);
-        targets_by_source.insert(source_part, targets);
+        targets_by_source.insert(source_part, relationships);
     }
 
     let mut reachable = HashSet::from([CONTENT_TYPES.to_string()]);
@@ -1333,10 +1342,10 @@ fn validate_opc_relationships<R: Read + Seek>(
         if let Some(relationship_part) = relationship_parts_by_source.get(&source) {
             reachable.insert(relationship_part.clone());
         }
-        if let Some(targets) = targets_by_source.get(&source) {
-            for target in targets {
-                if reachable.insert(target.clone()) {
-                    pending.push_back(Some(target.clone()));
+        if let Some(relationships) = targets_by_source.get(&source) {
+            for relationship in relationships {
+                if reachable.insert(relationship.target.clone()) {
+                    pending.push_back(Some(relationship.target.clone()));
                 }
             }
         }
@@ -1352,7 +1361,161 @@ fn validate_opc_relationships<R: Read + Seek>(
             "OOXML package contains parts outside the root relationship closure: {unreachable:?}"
         )));
     }
+    if family == CarrierFamily::Show {
+        validate_show_gif_parts(archive, names, &targets_by_source)?;
+    }
     Ok(())
+}
+
+fn validate_show_gif_parts<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    names: &HashSet<String>,
+    relationships_by_source: &HashMap<Option<String>, Vec<InternalRelationship>>,
+) -> Result<()> {
+    let mut gif_parts = names
+        .iter()
+        .filter(|name| part_has_extension(name, "gif"))
+        .cloned()
+        .collect::<Vec<_>>();
+    gif_parts.sort_unstable();
+    if gif_parts.is_empty() {
+        return Ok(());
+    }
+    if let Some(name) = gif_parts.iter().find(|name| !is_show_gif_media_part(name)) {
+        return Err(PluginError::unsupported_feature(format!(
+            "Show GIF part {name:?} is outside the verified ppt/media role"
+        )));
+    }
+
+    let gif_part_set = gif_parts.iter().cloned().collect::<HashSet<_>>();
+    let mut references_by_slide: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for (source, relationships) in relationships_by_source {
+        for relationship in relationships {
+            if !gif_part_set.contains(&relationship.target) {
+                continue;
+            }
+            let Some(source) = source.as_deref() else {
+                return Err(PluginError::unsupported_feature(
+                    "Show GIF parts must not be package-level relationship targets",
+                ));
+            };
+            if relationship.relationship_type != IMAGE_REL || !is_show_slide_part(source) {
+                return Err(PluginError::unsupported_feature(format!(
+                    "Show GIF part {:?} must be an internal image target of a slide",
+                    relationship.target
+                )));
+            }
+            references_by_slide
+                .entry(source.to_string())
+                .or_default()
+                .push((relationship.id.clone(), relationship.target.clone()));
+        }
+    }
+
+    let mut referenced_parts = HashSet::new();
+    let mut slides = references_by_slide.keys().cloned().collect::<Vec<_>>();
+    slides.sort_unstable();
+    for slide in slides {
+        let bytes = read_xml_part(archive, &slide)?;
+        let embedded_ids = collect_embedded_relationship_ids(&bytes)?;
+        let references = references_by_slide.remove(&slide).unwrap_or_default();
+        for (id, target) in references {
+            if !embedded_ids.contains(&id) {
+                return Err(PluginError::unsupported_feature(format!(
+                    "Show slide {slide:?} does not embed GIF relationship {id:?}"
+                )));
+            }
+            referenced_parts.insert(target);
+        }
+    }
+
+    for gif_part in gif_parts {
+        if !referenced_parts.contains(&gif_part) {
+            return Err(PluginError::unsupported_feature(format!(
+                "Show GIF part {gif_part:?} is not embedded by a slide image relationship"
+            )));
+        }
+        let relationship_part = relationship_part_for_source(&gif_part)?;
+        if names.contains(&relationship_part) {
+            return Err(PluginError::unsupported_feature(format!(
+                "Show GIF part {gif_part:?} has an unsupported outgoing relationship part"
+            )));
+        }
+        let mut entry = archive.by_name(&gif_part).map_err(|error| {
+            PluginError::corrupt(format!("cannot read Show GIF part {gif_part:?}: {error}"))
+        })?;
+        let mut header = [0_u8; 6];
+        if entry.size() < u64::try_from(header.len()).unwrap_or(u64::MAX) {
+            return Err(PluginError::unsupported_feature(format!(
+                "Show GIF part {gif_part:?} is shorter than a GIF signature"
+            )));
+        }
+        entry.read_exact(&mut header).map_err(|error| {
+            PluginError::corrupt(format!(
+                "cannot read the signature of Show GIF part {gif_part:?}: {error}"
+            ))
+        })?;
+        if header != *b"GIF87a" && header != *b"GIF89a" {
+            return Err(PluginError::unsupported_feature(format!(
+                "Show GIF part {gif_part:?} lacks a verified GIF87a/GIF89a signature"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn part_has_extension(name: &str, extension: &str) -> bool {
+    name.rsplit('/')
+        .next()
+        .and_then(|leaf| leaf.rsplit_once('.').map(|(_, value)| value))
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+}
+
+fn is_show_gif_media_part(name: &str) -> bool {
+    name.strip_prefix("ppt/media/")
+        .and_then(|leaf| leaf.strip_suffix(".gif"))
+        .is_some_and(|stem| !stem.is_empty() && !stem.contains('/'))
+}
+
+fn is_show_slide_part(name: &str) -> bool {
+    name.strip_prefix("ppt/slides/slide")
+        .and_then(|rest| rest.strip_suffix(".xml"))
+        .is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|value| value.is_ascii_digit())
+        })
+}
+
+fn relationship_part_for_source(source: &str) -> Result<String> {
+    let Some((parent, leaf)) = source.rsplit_once('/') else {
+        return Err(PluginError::corrupt(format!(
+            "OOXML part {source:?} has no relationship-part parent"
+        )));
+    };
+    Ok(format!("{parent}/_rels/{leaf}.rels"))
+}
+
+fn collect_embedded_relationship_ids(bytes: &[u8]) -> Result<HashSet<String>> {
+    let mut reader = NsReader::from_reader(bytes);
+    let mut ids = HashSet::new();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(event) | Event::Empty(event)
+                if event.local_name().as_ref() == b"blip"
+                    && element_namespace_matches(&reader, &event, DRAWING_NS)? =>
+            {
+                if let Some(id) =
+                    namespaced_attribute_value(&reader, &event, b"embed", DOCUMENT_REL_NS)?
+                {
+                    ids.insert(id);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(ids)
 }
 
 fn relationship_source_part(relationship_part: &str) -> Result<Option<String>> {
@@ -1383,13 +1546,13 @@ fn validate_relationship_part(
     source_part: Option<&str>,
     names: &HashSet<String>,
     family: CarrierFamily,
-) -> Result<Vec<String>> {
+) -> Result<Vec<InternalRelationship>> {
     let mut reader = NsReader::from_reader(bytes);
     let mut depth = 0_usize;
     let mut root_seen = false;
     let mut ids = HashSet::new();
     let mut package_relationship_types = HashSet::new();
-    let mut internal_targets = Vec::new();
+    let mut internal_relationships = Vec::new();
     let mut buffer = Vec::new();
     loop {
         match reader.read_event_into(&mut buffer)? {
@@ -1443,7 +1606,7 @@ fn validate_relationship_part(
                     family,
                     &mut ids,
                     &mut package_relationship_types,
-                    &mut internal_targets,
+                    &mut internal_relationships,
                 )?;
             }
             Event::Empty(_) => {
@@ -1478,7 +1641,7 @@ fn validate_relationship_part(
             "relationship part {relationship_part:?} has no complete root"
         )));
     }
-    Ok(internal_targets)
+    Ok(internal_relationships)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1491,7 +1654,7 @@ fn validate_relationship_entry(
     family: CarrierFamily,
     ids: &mut HashSet<String>,
     package_relationship_types: &mut HashSet<String>,
-    internal_targets: &mut Vec<String>,
+    internal_relationships: &mut Vec<InternalRelationship>,
 ) -> Result<()> {
     let id = attribute(reader, event, b"Id")?
         .ok_or_else(|| PluginError::corrupt("relationship omits Id"))?;
@@ -1536,7 +1699,11 @@ fn validate_relationship_entry(
                     "relationship target {target:?} from {relationship_part:?} resolves to missing part {resolved:?}"
                 )));
             }
-            internal_targets.push(resolved);
+            internal_relationships.push(InternalRelationship {
+                id,
+                relationship_type,
+                target: resolved,
+            });
         }
         Some("External")
             if family == CarrierFamily::Show
@@ -1567,7 +1734,7 @@ fn is_supported_relationship_type(family: CarrierFamily, relationship_type: &str
         CarrierFamily::Cell => matches!(
             relationship_type,
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
-                | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+                | IMAGE_REL
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings"
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
@@ -1577,7 +1744,7 @@ fn is_supported_relationship_type(family: CarrierFamily, relationship_type: &str
             relationship_type,
             HYPERLINK_REL
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio"
-                | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+                | IMAGE_REL
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster"
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"
                 | "http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps"
@@ -1734,6 +1901,11 @@ fn validate_supported_content_types(
                             "OOXML Override names a missing or invalid part {part_name:?}"
                         )));
                     }
+                    if part_has_extension(part, "gif") {
+                        return Err(PluginError::unsupported_feature(format!(
+                            "OOXML GIF part {part_name:?} must use the verified Show default mapping"
+                        )));
+                    }
                     if !is_supported_content_type(family, &content_type) {
                         return Err(PluginError::unsupported_feature(format!(
                             "OOXML content type {content_type:?} is outside the verified carrier subset"
@@ -1817,7 +1989,11 @@ fn is_supported_default_content_type(
         ) | ("xml", "application/xml")
             | ("jpeg", "image/jpeg")
             | ("png", "image/png")
-    ) || (family == CarrierFamily::Show && (extension, content_type) == ("wav", "audio/wav"))
+    ) || (family == CarrierFamily::Show
+        && matches!(
+            (extension, content_type),
+            ("gif", "image/gif") | ("wav", "audio/wav")
+        ))
 }
 
 fn is_supported_content_type(family: CarrierFamily, content_type: &str) -> bool {

@@ -16,26 +16,47 @@ bytes are intentionally not stored or redistributed in this repository.
 
 ## Public Cell and Show interoperability samples
 
-Verified on 2026-08-30 from Korean government publication pages. These files
+Verified on 2026-08-31 from Korean government publication pages. These files
 are interoperability evidence, not format specifications, and are not
-redistributed in this repository. The exact attachment URLs, byte lengths, and
-digests make the observations reproducible without treating a filename as
-provenance.
+redistributed in this repository. The corpus contains two Cell and thirteen
+Show attachments, plus one separately published XLSX. One Cell and eight Show
+attachments fit the supported profiles. The other Cell and five Show
+attachments are negative-boundary evidence. The exact attachment URLs, byte
+lengths, and digests make the observations reproducible without treating a
+filename as provenance.
 
-| Family | Official attachment | Bytes | SHA-256 | Publication |
-|---|---|---:|---|---|
-| Cell | [`직종별사업체노동력조사_조사표(2026상반기).cell`](https://www.moel.go.kr/local/seoul/common/downloadFile.do?file_seq=20260401245&bbs_seq=20260400662&bbs_id=LOCAL5) | 1,242,079 | `874f35e3091f12f322405357a603d66fc38179da99ad1fea80b9a9d999071c75` | [Seoul Regional Employment and Labor Administration](https://www.moel.go.kr/local/seoul/info/dataroom/view.do?bbs_seq=20260400662) |
-| Paired XLSX | [`직종별사업체노동력조사_조사표(2026상반기).xlsx`](https://www.moel.go.kr/local/seoul/common/downloadFile.do?file_seq=20260401248&bbs_seq=20260400662&bbs_id=LOCAL5) | 1,282,392 | `e103a07de69a8521fcb66144a0326055440e3a866ca91090e708c915cadc1760` | same publication as the Cell sample |
-| Show | [`16-재난) 집중호우가 오면 이렇게 지켜요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=f186ad14e1e9a7179bd045dc54283c1f) | 1,693,635 | `60daebffd61afb16e2a9f284d08678134aa6a19cc3ccc5d7c3b23167165191a1` | [Gyeonggi Provincial Office of Education](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=1006126) |
-| Show | [`17-직업) 안전장비를 입고 안전하게 일해요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=c18e998cca038980bab6b0479dd8347a) | 6,097,986 | `01559ad550e0449de53faa9a9dd3e9741e55bcdbfac9a4e5fc50d809c01ce5b3` | same Gyeonggi publication |
-| Show | [`18-직업) 안전하게 배달해주세요(한쇼).show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=a49892ca6b68d7d1e60e030f27d93324) | 8,013,886 | `ebe0612ac63a809ac7d90f0c1a5606d3ac0e9dd23e1488c3e20b576bb0cb2e8d` | same Gyeonggi publication |
+### Supported-profile evidence
+
+| Family | Official attachment | Bytes | SHA-256 | Publication | Observation |
+|---|---|---:|---|---|---|
+| Cell | [`직종별사업체노동력조사_조사표(2026상반기).cell`](https://www.moel.go.kr/local/seoul/common/downloadFile.do?file_seq=20260401245&bbs_seq=20260400662&bbs_id=LOCAL5) | 1,242,079 | `874f35e3091f12f322405357a603d66fc38179da99ad1fea80b9a9d999071c75` | [Seoul Regional Employment and Labor Administration](https://www.moel.go.kr/local/seoul/info/dataroom/view.do?bbs_seq=20260400662) | Cell 12.0300 profile |
+| Paired XLSX | [`직종별사업체노동력조사_조사표(2026상반기).xlsx`](https://www.moel.go.kr/local/seoul/common/downloadFile.do?file_seq=20260401248&bbs_seq=20260400662&bbs_id=LOCAL5) | 1,282,392 | `e103a07de69a8521fcb66144a0326055440e3a866ca91090e708c915cadc1760` | same publication as the Cell sample | independent read oracle |
+| Show | [`16-재난) 집중호우가 오면 이렇게 지켜요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=f186ad14e1e9a7179bd045dc54283c1f) | 1,693,635 | `60daebffd61afb16e2a9f284d08678134aa6a19cc3ccc5d7c3b23167165191a1` | [Gyeonggi Provincial Office of Education](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=1006126) | Show 12.0000 profile |
+| Show | [`17-직업) 안전장비를 입고 안전하게 일해요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=c18e998cca038980bab6b0479dd8347a) | 6,097,986 | `01559ad550e0449de53faa9a9dd3e9741e55bcdbfac9a4e5fc50d809c01ce5b3` | same Gyeonggi publication | Show 12.0000 profile |
+| Show | [`18-직업) 안전하게 배달해주세요(한쇼).show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=a49892ca6b68d7d1e60e030f27d93324) | 8,013,886 | `ebe0612ac63a809ac7d90f0c1a5606d3ac0e9dd23e1488c3e20b576bb0cb2e8d` | same Gyeonggi publication | Show 12.0000 profile |
+| Show | [`21-응급) 앗 뜨거워! 조심하세요!.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=2631d6b37627bc059523fff5bcc9ccd7) | 18,550,489 | `3437797d2c8682c89576ae6719c81443cdbeb73a4e3f91a732b9dcf50b33c527` | [Gyeonggi kindergarten safety materials 19–21](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=1006128) | two slide-embedded GIF89a parts |
+| Show | [`22-응급) 응급처치가 필요해요!.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=41e809a9e3780ccdb4fe31df16193673) | 20,136,036 | `4724a42570b41dcd6f5c6cd68e53e3e5b3442385132537159ec3a0ec5a938f37` | [Gyeonggi kindergarten safety materials 22–24](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=1006129) | one slide-embedded GIF89a part |
+| Show | [`7-1)-138쪽 응급처치(영극을 통한 응급처치 중요성 방법 알기) 국어.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=d8fb450e0b44871422d4f64ce4f42f57) | 3,431,677 | `f0ca50f5bfa8f6a05bc35cdaad85eab282805054d25f9830b0a6729943c52301` | [Gyeonggi middle-school first-aid materials](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=989906) | Show 12.0000 profile |
+| Show | [`7-2)-142쪽 응급처치(나폴레옹 원정에서 배우는 동상예방) 역사.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=4c3e5c10ef1d452a0e9fa809ea7ea664) | 534,888 | `4f20f68faf714a56a9c1e293f9ec0066d5177d3be87eef93557df3b756e7e8ab` | same middle-school publication | Show 12.0000 profile |
+| Show | [`7-3)-143쪽 응급처치(응급처치 RICE) 체육.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=b787762fcbfcf36ac3f9581a6b603732) | 1,918,634 | `460476f51dc406526f2e16eb89e5fbf5f9cb9ffe59b846b2b8168354e8fbb708` | same middle-school publication | Show 12.0000 profile |
+
+### Negative-boundary evidence
+
+| Family | Official attachment | Bytes | SHA-256 | Publication | Rejected boundary |
+|---|---|---:|---|---|---|
+| Cell | [`2026 계약제교원 발령관리 자동화프로그램(초중고통합_20260420버전).cell`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=85ebce3d2aa97386b6c4a235ba825134) | 1,450,425 | `14e61d5db091195d7c17ec94db0f4bd8347014461d33842a2d72ff69480f3d74` | [Gyeonggi school-work automation materials](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?nttSn=2341820) | VBA project |
+| Show | [`교직원 및 학부모 심폐소생술 등 응급처치교육(한쇼 버전).show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=26f76e6bb7c5e0d6c73793a2966740e3) | 13,160,523 | `6b27154d4701ba64f2f0a94961f119f84ffd7712940fde45064e5efcefd04355` | [Gyeonggi first-aid instructor materials](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=977134) | OLE embedding |
+| Show | [`23-생명존중) 버려지는 강아지가 있어요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=a3dec2e98dc695c664af97c3c5f394f9) | 23,450,045 | `21d1ba7185cc7dfc95f1a3aebf1d589dfe519e7a523b49ff142c322e7365cc08` | [Gyeonggi kindergarten safety materials 22–24](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=1006129) | external HTTP hyperlink |
+| Show | [`24-생명존중) 소중한 바다를 지켜야 해요.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=9cb8b358afb8181851e6a30d59a1c010) | 9,249,456 | `efaeeb601cde635fa39fa5ec31b347d7ffe4ff44919d9735491a4dc555a5ae1c` | same kindergarten publication | Microsoft media relationship |
+| Show | [`2-1)-26쪽 교통안(자전거 탑승 안전) 국어.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=74563d41d9414fc136cea07063851a5a) | 2,204,711 | `eaab715e0482c33b6b24bd9a04fbac488a36f2890d5ff8d8bb492defacfc0b4f` | [Gyeonggi middle-school traffic-safety materials](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=989895) | video relationship |
+| Show | [`7-7) 4과학-응급처치-화상을 입었을 경우 대처법 알아보기-동영상 삭제한 파일.show`](https://www.goe.go.kr/goe/na/ntt/comm/nttFileDownload.do?fileKey=fdfe5d8ec830e21865788e8063abad7e) | 20,781,060 | `b8cee0bbe20e08260ea89bd5a678692f76110e439437d4594342ea21997aea31` | [Gyeonggi elementary first-aid materials](https://www.goe.go.kr/goe/na/ntt/selectNttInfo.do?mi=10139&nttSn=990170) | Microsoft media relationship |
 
 The separately published Cell and XLSX attachments are not byte-identical and
 do not have the same package topology. They are therefore an independent read
 oracle, not evidence that renaming every Cell file is a general conversion.
-The supported application-profile markers (classification, not producer
-authentication) and the exact observations drawn from these
-samples are recorded in
+The supported application-profile markers classify packages; they do not
+authenticate a producer. The exact observations and rejection policy are
+recorded in
 [ADR-0016](adr/0016-hancom-v12-ooxml-carrier-bridge.md).
 
 ## Verification procedure

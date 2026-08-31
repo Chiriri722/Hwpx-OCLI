@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Decision date: 2026-08-30
+- Last reviewed: 2026-08-31
 - Scope: read-only Cell/Show discovery, validation, native sibling creation,
   host integration, installation, and release evidence
 - Related: [ADR-0014](0014-hancom-format-handler-install-promotion.md),
@@ -12,11 +13,14 @@
 ## Context
 
 Hancom does not publish a Cell or Show binary-format specification suitable for
-implementing a proprietary parser. Four government attachments provide a
-narrower fact: one Cell 12.0300 sample is an OOXML spreadsheet package and three
-Show 12.0000 samples are OOXML presentation packages. This does not establish
-the representation used by older releases, `.nxl`, CFB containers, or every
-v12 build.
+implementing a proprietary parser. Fifteen government Cell/Show attachments
+provide a narrower fact: one Cell 12.0300 sample is inside the supported OOXML
+spreadsheet subset, and eight Show 12.0000 samples are inside the supported
+OOXML presentation subset. A second Cell and five more Show attachments carry
+the same application-profile versions but cross the VBA, OLE, external HTTP,
+video, or Microsoft media boundaries. This does not establish the
+representation used by older releases, `.nxl`, CFB containers, or every v12
+build.
 
 The Cell publication also provides a separately exported XLSX. Its digest,
 size, entry set, and many payloads differ from the Cell attachment, so the pair
@@ -26,14 +30,17 @@ text` is byte-for-byte equal at 40,401 characters, and `view stats` is exactly
 equal at 7 sheets, 4,082 total cells, 2,611 empty cells, 0 formula/error cells,
 2,625 numeric values, and 1,457 shared strings.
 
-The observed Cell package declares a macro-enabled spreadsheet main content
+The supported Cell package declares a macro-enabled spreadsheet main content
 type even though the publication's paired export uses an `.xlsx` filename. No
-VBA part was observed. The bridge permits that exact main type but rejects
-VBA/XLM macro parts, ActiveX, OLE/embedded packages, external data/media, and
-unapproved relationship/action classes outside the observed allowlists.
-The Show samples contain HTTPS hyperlink relationships; those exact external
-links are preserved, not followed or sanitized by the bridge. Consumers must
-not interpret the sibling extension as a general sanitization guarantee.
+VBA part was observed in that package. The second Cell package contains
+`xl/vbaProject.bin` and is rejected. The bridge permits the exact main type but
+rejects VBA/XLM macro parts, ActiveX, OLE/embedded packages, external
+data/media, and unapproved relationship/action classes outside the allowlists.
+Some supported Show samples contain HTTPS hyperlink relationships; those exact
+external links are preserved, not followed or sanitized by the bridge. HTTP
+hyperlinks, OLE embeddings, and video/media relationships seen in the negative
+samples remain unsupported. Consumers must not interpret the sibling extension
+as a general sanitization guarantee.
 
 ## Decision
 
@@ -103,14 +110,24 @@ not interpret the sibling extension as a general sanitization guarantee.
      sets (so `xml:base` is rejected), unique relationship IDs, case-folded
      canonical part identity, existing normalized internal targets, duplicate
      `Default`/`Override` rejection, one effective content type per part, exactly
-      one root `officeDocument` and extended-properties relationship, at most one
-      root core-properties and thumbnail relationship, and complete reachability
-      of every non-directory part from `_rels/.rels`. Show alone
-     permits bounded whitespace-free `https://` external hyperlinks; all other
-     external relationships are unsupported. The allowlists reject the active
-     classes enumerated above but do not certify arbitrary formulas, defined
-     names, or presentation actions as inert and do not replace consumer security
-     controls;
+     one root `officeDocument` and extended-properties relationship, at most one
+     root core-properties and thumbnail relationship, and complete reachability
+     of every non-directory part from `_rels/.rels`. Show alone permits the
+     exact `gif → image/gif` and `wav → audio/wav` default mappings and bounded
+     whitespace-free `https://` external hyperlinks. A GIF override is never
+     accepted. Every GIF part must have a non-empty filename under `ppt/media/`,
+     use the lowercase `.gif` suffix, and be the target of an internal image
+     relationship from `ppt/slides/slideN.xml`; that slide
+     must reference the relationship through DrawingML `a:blip r:embed`. The
+     GIF part may not own a relationship part and must begin with `GIF87a` or
+     `GIF89a`. This
+     six-byte check identifies the declared opaque payload; it is not a full
+     GIF parser, polyglot defense, decoder-safety guarantee, or sanitization.
+     Media payloads are copied, not decoded. GIF overrides, mismatched GIF
+     extension/content-type pairs, and all other external relationships are
+     unsupported. The allowlists reject the active classes enumerated above but
+     do not certify arbitrary formulas, defined names, or presentation actions
+     as inert and do not replace consumer security controls;
    - exact root relationships, main content type, application properties,
      family root, Cell markers, and sheet/slide collection relationship IDs.
 5. Three public Show files contain a malformed extended-timestamp field that
@@ -175,8 +192,8 @@ window; the retry is not permission bypass.
 
 ## Evidence and limits
 
-- The four public samples and exact digests are in `docs/spec-sources.md` and
-  remain outside the repository.
+- The fifteen public Cell/Show samples, paired XLSX, and exact digests are in
+  `docs/spec-sources.md` and remain outside the repository.
 - On 2026-08-31, after the retained-handle sharing change, the current Windows
   release host and release plugins rechecked the four exact digests. Every
   `view` produced a fresh byte-identical sibling, preserved source and sibling
@@ -187,6 +204,22 @@ window; the retry is not permission bypass.
   closure. Each denominator counts `[Content_Types].xml`, relationship parts,
   and ordinary internal parts; directory entries and external URIs are excluded.
   The stricter closure/content-type allowlists accepted all four.
+- An additional 2026-08-31 sweep covered one Cell and ten Show attachments.
+  Release plugins accepted five Show packages byte-for-byte and rejected the
+  other Cell plus five Show packages at the intended VBA, OLE, external HTTP,
+  video, or Microsoft media boundary. Two accepted packages required only the
+  exact Show `gif → image/gif` mapping; no Cell or global MIME allowance was
+  added. The two GIF-bearing packages contained three `GIF89a` parts, all under
+  `ppt/media`, internally embedded from slides, and without outgoing
+  relationship parts. Every source retained its hash and modification time.
+  Successful runs created only a fresh byte-identical sibling; rejected runs
+  created no target.
+  The current Windows host, published with the locally available .NET 10.0.400
+  SDK, also read text from all five accepted packages and preserved the same
+  source, sibling, and two-file case-directory invariants. It rejected the
+  other six without creating a target or changing the one-file case directory.
+  The repository's pinned .NET 10.0.302 and three operating systems remain CI
+  gates.
 - The Cell source and independently published XLSX produced exactly equal
   OfficeCLI text and statistics, while their differing package topology proved
   they are not the same artifact.

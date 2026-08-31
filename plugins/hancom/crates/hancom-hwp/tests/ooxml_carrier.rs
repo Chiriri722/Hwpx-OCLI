@@ -1333,6 +1333,370 @@ fn https_hyperlinks_are_the_only_supported_external_relationships() {
 }
 
 #[test]
+fn show_gif_image_parts_are_supported() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (main_path, main_type, _) = main_part(CarrierFamily::Show);
+    let content_types = format!(
+        r#"<Types xmlns="{CONTENT_TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="gif" ContentType="image/gif"/><Override PartName="/{main_path}" ContentType="{main_type}"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#
+    );
+    let presentation = r#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+    let presentation_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#;
+    let image_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdGif" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.gif"/></Relationships>"#;
+    let slide = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rIdGif"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#;
+
+    for (label, version_byte) in [("87a", b'7'), ("89a", b'9')] {
+        let source = dir.path().join(format!("gif-image-{label}.show"));
+        let mut gif = [
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00,
+            0x3b,
+        ];
+        gif[4] = version_byte;
+        let extras = [
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                slide.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                image_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/media/image1.gif",
+                gif.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+        ];
+        let bytes = build_fixture(
+            Fixture {
+                main_xml: Some(presentation),
+                content_types_xml: Some(&content_types),
+                ..Fixture::valid(CarrierFamily::Show)
+            },
+            &extras,
+        );
+        fs::write(&source, &bytes).expect("write GIF image fixture");
+
+        let target = bridge_ooxml(&source, CarrierFamily::Show).expect("GIF image carrier");
+
+        assert_eq!(fs::read(target).expect("read target"), bytes);
+    }
+}
+
+#[test]
+fn cell_gif_default_mapping_remains_unsupported() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("gif-mapping.cell");
+    let (main_path, main_type, _) = main_part(CarrierFamily::Cell);
+    let content_types = format!(
+        r#"<Types xmlns="{CONTENT_TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="gif" ContentType="image/gif"/><Override PartName="/{main_path}" ContentType="{main_type}"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#
+    );
+    fs::write(
+        &source,
+        build_fixture(
+            Fixture {
+                content_types_xml: Some(&content_types),
+                ..Fixture::valid(CarrierFamily::Cell)
+            },
+            &[],
+        ),
+    )
+    .expect("write Cell GIF mapping fixture");
+
+    let error = bridge_ooxml(&source, CarrierFamily::Cell)
+        .expect_err("Cell GIF mapping must stay outside the verified profile");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+    assert!(!dir.path().join("gif-mapping.xlsx").exists());
+}
+
+#[test]
+fn show_gif_override_remains_unsupported() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (main_path, main_type, _) = main_part(CarrierFamily::Show);
+    let presentation = r#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+    let presentation_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#;
+    let image_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdGif" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.gif"/></Relationships>"#;
+    let slide = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rIdGif"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#;
+    let gif = [
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+    ];
+    for (label, override_type) in [("gif", "image/gif"), ("png", "image/png")] {
+        let source = dir.path().join(format!("gif-{label}-override.show"));
+        let content_types = format!(
+            r#"<Types xmlns="{CONTENT_TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/{main_path}" ContentType="{main_type}"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/><Override PartName="/ppt/media/image1.gif" ContentType="{override_type}"/></Types>"#
+        );
+        let extras = [
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                slide.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                image_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/media/image1.gif",
+                gif.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+        ];
+        fs::write(
+            &source,
+            build_fixture(
+                Fixture {
+                    main_xml: Some(presentation),
+                    content_types_xml: Some(&content_types),
+                    ..Fixture::valid(CarrierFamily::Show)
+                },
+                &extras,
+            ),
+        )
+        .expect("write Show GIF override fixture");
+
+        let error = bridge_ooxml(&source, CarrierFamily::Show)
+            .expect_err("Show GIF override must stay outside the verified profile");
+
+        assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+        assert!(!source.with_extension("pptx").exists());
+    }
+}
+
+#[test]
+fn show_gif_parts_require_a_verified_payload_and_relationship_role() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (main_path, main_type, _) = main_part(CarrierFamily::Show);
+    let content_types = format!(
+        r#"<Types xmlns="{CONTENT_TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="gif" ContentType="image/gif"/><Override PartName="/{main_path}" ContentType="{main_type}"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#
+    );
+    let presentation = r#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+    let presentation_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#;
+    let referenced_slide = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rIdGif"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#;
+    let unreferenced_slide =
+        br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#;
+    let misplaced_reference = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:extLst r:embed="rIdGif"/></p:sld>"#;
+    let valid_gif = [
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+    ];
+    let invalid_gif = b"not-a-gif";
+    let empty_relationships =
+        br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+    for (label, slide, relationship_type, gif_part, gif_target, gif, outgoing_relationships) in [
+        (
+            "invalid-payload",
+            referenced_slide.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "ppt/media/image1.gif",
+            "../media/image1.gif",
+            invalid_gif.as_slice(),
+            false,
+        ),
+        (
+            "unreferenced",
+            unreferenced_slide.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "ppt/media/image1.gif",
+            "../media/image1.gif",
+            valid_gif.as_slice(),
+            false,
+        ),
+        (
+            "audio-relationship",
+            referenced_slide.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio",
+            "ppt/media/image1.gif",
+            "../media/image1.gif",
+            valid_gif.as_slice(),
+            false,
+        ),
+        (
+            "misplaced-reference",
+            misplaced_reference.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "ppt/media/image1.gif",
+            "../media/image1.gif",
+            valid_gif.as_slice(),
+            false,
+        ),
+        (
+            "outgoing-relationships",
+            referenced_slide.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "ppt/media/image1.gif",
+            "../media/image1.gif",
+            valid_gif.as_slice(),
+            true,
+        ),
+        (
+            "empty-media-stem",
+            referenced_slide.as_slice(),
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "ppt/media/.gif",
+            "../media/.gif",
+            valid_gif.as_slice(),
+            false,
+        ),
+    ] {
+        let source = dir.path().join(format!("gif-{label}.show"));
+        let image_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_RELS_NS}"><Relationship Id="rIdGif" Type="{relationship_type}" Target="{gif_target}"/></Relationships>"#
+        );
+        let mut extras = vec![
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                slide,
+                CompressionMethod::Stored,
+                None,
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                image_relationships.as_bytes(),
+                CompressionMethod::Stored,
+                None,
+            ),
+            (gif_part, gif, CompressionMethod::Stored, None),
+        ];
+        if outgoing_relationships {
+            extras.push((
+                "ppt/media/_rels/image1.gif.rels",
+                empty_relationships.as_slice(),
+                CompressionMethod::Stored,
+                None,
+            ));
+        }
+        fs::write(
+            &source,
+            build_fixture(
+                Fixture {
+                    main_xml: Some(presentation),
+                    content_types_xml: Some(&content_types),
+                    ..Fixture::valid(CarrierFamily::Show)
+                },
+                &extras,
+            ),
+        )
+        .expect("write Show GIF boundary fixture");
+
+        let error = bridge_ooxml(&source, CarrierFamily::Show)
+            .expect_err("unverified Show GIF part must be rejected");
+
+        assert_eq!(error.code, ErrorCode::UnsupportedFeature, "{label}");
+        assert!(!source.with_extension("pptx").exists(), "{label}");
+    }
+}
+
+#[test]
+fn show_gif_parts_require_a_slide_relationship_source() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("gif-from-layout.show");
+    let (main_path, main_type, _) = main_part(CarrierFamily::Show);
+    let content_types = format!(
+        r#"<Types xmlns="{CONTENT_TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="gif" ContentType="image/gif"/><Override PartName="/{main_path}" ContentType="{main_type}"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#
+    );
+    let presentation = r#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+    let presentation_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#;
+    let slide_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdLayout" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#;
+    let layout_relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdGif" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.gif"/></Relationships>"#;
+    let layout = br#"<p:sldLayout xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rIdGif"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sldLayout>"#;
+    let gif = [
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+    ];
+    let extras = [
+        (
+            "ppt/_rels/presentation.xml.rels",
+            presentation_relationships.as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+        (
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#
+                .as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+        (
+            "ppt/slides/_rels/slide1.xml.rels",
+            slide_relationships.as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+        (
+            "ppt/slideLayouts/slideLayout1.xml",
+            layout.as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            layout_relationships.as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+        (
+            "ppt/media/image1.gif",
+            gif.as_slice(),
+            CompressionMethod::Stored,
+            None,
+        ),
+    ];
+    fs::write(
+        &source,
+        build_fixture(
+            Fixture {
+                main_xml: Some(presentation),
+                content_types_xml: Some(&content_types),
+                ..Fixture::valid(CarrierFamily::Show)
+            },
+            &extras,
+        ),
+    )
+    .expect("write non-slide GIF source fixture");
+
+    let error = bridge_ooxml(&source, CarrierFamily::Show)
+        .expect_err("GIF image relationships from a layout remain unsupported");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+    assert!(!source.with_extension("pptx").exists());
+}
+
+#[test]
 fn validated_cell_is_copied_byte_for_byte_to_xlsx_sibling() {
     let dir = tempfile::tempdir().expect("tempdir");
     let source = dir.path().join("survey.cell");

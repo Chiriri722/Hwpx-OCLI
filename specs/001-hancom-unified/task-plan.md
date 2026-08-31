@@ -1,6 +1,6 @@
 # Task Plan: 한컴오피스 통합 호환 플러그인 (HWP·HWPX·한셀·한쇼)
 
-작성 2026-08-28 · 최근 갱신 2026-08-30 · P0 완료 커밋 `e77fb77c`
+작성 2026-08-28 · 최근 갱신 2026-08-31 · P0 완료 커밋 `e77fb77c`
 (`feat/hwpx-plugin`) · spec-kit feature `001-hancom-unified`
 근거 문서: `.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록),
 `docs/spec-sources.md` (한컴 공식 원문 URL·리비전·바이트·SHA-256)
@@ -106,7 +106,7 @@ ADR-0014에 고정한다.
 | # | 항목 | 용도 | 획득 | 라이선스/비용 | 현재 |
 |---|---|---|---|---|---|
 | R1 | **한컴 공식 파일형식 스펙 5종** (HWP 5.0 r1.3, HWP3.0/HWPML r1.2, 배포용 r1.2, 수식 r1.3, 차트 r1.2) | 한글 계열 정본. 수식·차트 갭 해소의 유일한 근거 | `cdn.hancom.com/link/docs/...` (HTTP 200 검증) | 무료·열람자유, **표기의무 있음(T0-1)** | URL·SHA 고정 완료, PDF 미보관 |
-| R2 | **실제 `.cell`/`.show` 표본 + 한컴오피스(또는 뷰어)** | 미공개 포맷의 ground truth. 컨테이너 판별·회귀 기준 | 정부기관 공개 첨부 + 향후 native oracle | 표본 무료; 한컴오피스 라이선스 | **Cell 12.0300 1개 + Show 12.0000 3개 및 paired XLSX 확보. legacy/다세대/native app oracle은 없음** |
+| R2 | **실제 `.cell`/`.show` 표본 + 한컴오피스(또는 뷰어)** | 미공개 포맷의 ground truth. 컨테이너 판별·회귀 기준 | 정부기관 공개 첨부 + 향후 native oracle | 표본 무료; 한컴오피스 라이선스 | **Cell 12.0300 2개 + Show 12.0000 13개 및 paired XLSX 확보. 지원 profile은 Cell 1개 + Show 8개이고, 나머지 6개는 negative-boundary 근거다. legacy/다세대/native app oracle은 없음** |
 | R3 | **Rust 1.88+**, **.NET 10 SDK** | 플러그인 빌드 / 호스트 빌드 | `scripts/bootstrap-dev.sh`, rustup | 무료 | 설치됨 |
 | R4 | **`edwardkim/rhwp`** v0.8.4+ | `.hwp`(바이너리) → HWPX 변환기 | GitHub Releases (SHA-256 대조) | MIT | 통합됨 |
 
@@ -354,12 +354,17 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
 - [x] T4-1 · **스파이크: 컨테이너 판별.** 고용노동부 공개 Cell 12.0300
       (`874f…71c75`)이 ZIP/OOXML spreadsheet임을 확인했다. 같은 게시물의 별도 XLSX
       (`e103…1760`)와는 크기·ZIP topology·payload가 달라 일반 rename 근거로 쓰지 않는다.
+      경기도교육청의 두 번째 Cell 12.0300(`14e6…3d74`)도 ZIP/OOXML이지만
+      `xl/vbaProject.bin`을 포함해 의도적으로 거부된다. 같은 profile version만으로 package
+      보안 경계를 우회하지 않는다.
 - [ ] T4-2 · `.cell` 세대 판별 (넥셀 `.nxl` / 한셀 2010 / 한셀 2014 — 최소 2개
-      비호환 구조). **deferred/evidence-gated:** 현재 한 세대 표본만 있으며 `.nxl`을 광고하지 않는다.
+      비호환 구조). **deferred/evidence-gated:** 현재 같은 12.0300 세대 표본만 있으며
+      `.nxl`을 광고하지 않는다.
 - [x] T4-3 · 판별보다 강한 bounded direct bridge를 구현했다. 정확한 Cell 12.0300
       application/main-part marker와 전체 ZIP/XML/CRC/OPC closure/관계·content-type allowlist를
       검증한 뒤 byte-identical `.xlsx` sibling을 no-clobber 원자 커밋한다. marker는 생산자
-      인증이 아니다. CFB/unknown/unobserved build는 exit 3, 손상 입력은 exit 2다.
+      인증이 아니다. 같은 marker라도 VBA를 포함하면 거부한다. CFB/unknown/unobserved
+      build는 exit 3, 손상 입력은 exit 2다.
 - [ ] T4-4 · A4 외부 변환기 경계(`OFFICECLI_HANCOM_CELL_CONVERTER`).
       **deferred/evidence-gated:** 구체적인 지원 converter CLI와 legacy 표본 없이 호출 규약을
       추측하지 않는다. 검증된 Cell 12.0300 carrier에는 외부 변환기가 필요 없다.
@@ -376,16 +381,25 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
 
 ### P5 — 한쇼 `.show` (target=pptx) · A3 단계 적용
 
-경기도교육청의 세 공개 표본이 같은 Show 12.0000 OOXML profile을 증명했다. 다른 세대가
-같은 구조라고 일반화하지 않는다.
+경기도교육청의 열세 공개 표본이 같은 Show 12.0000 marker를 갖는다. 그중 여덟 개만
+지원 package 경계 안에 있고 다섯 개는 active/external 관계 때문에 거부된다. 다른 세대나
+같은 marker의 모든 package가 지원된다고 일반화하지 않는다.
 
-- [x] T5-1 · 세 `.show`가 ZIP/OOXML presentation이고 `Application=Show`,
+- [x] T5-1 · 열세 `.show`가 ZIP/OOXML presentation이고 `Application=Show`,
       `AppVersion=12.0000`, `ppt/presentation.xml`을 갖는 것을 확인했다.
 - [x] T5-2 · 정확한 profile과 전체 package를 검증해 byte-identical `.pptx` sibling을
       만드는 bounded direct bridge를 구현했다. 공개 표본의 잘못된 `0x5455` timestamp는
       flags=2/길이13/동일 timestamp 3회의 정확한 모양만 익명 검증 복사본에서 허용한다.
-      세 표본의 HTTPS hyperlink만 external 예외로 보존하고 다른 external/active surface와
-      root 관계에서 도달하지 않는 part는 거부한다.
+      Show에만 정확한 `gif → image/gif` default mapping을 추가해 두 표본을 더 수용했다.
+      GIF override는 허용하지 않는다. GIF part는 `ppt/media/` 아래 비어 있지 않은 파일명과
+      소문자 `.gif` suffix, slide의 internal image relationship 및 DrawingML `a:blip r:embed`,
+      outgoing relationship 부재,
+      `GIF87a|GIF89a` 식별자까지 결합 검증한다. 6-byte 식별은 완전한
+      GIF/polyglot/decoder 안전성 검사가 아니며 media
+      bytes는 해석하거나 정화하지 않는다. 여덟 표본은 byte-identical하게 통과했고,
+      나머지 다섯 표본은 OLE, HTTP hyperlink, video 또는 Microsoft media 관계에서 거부됐다.
+      HTTPS hyperlink만 external 예외로 보존하고 다른 external/active surface와 root
+      관계에서 도달하지 않는 part는 거부한다.
 - [ ] T5-3 · A4 외부 변환기 경계(`OFFICECLI_HANCOM_SHOW_CONVERTER`).
       **deferred/evidence-gated:** 지원 converter CLI와 non-OOXML 표본이 없다.
 - [ ] T5-4 · proprietary 자체 파서: 슬라이드/도형/텍스트프레임 → pptx 어휘.
@@ -393,8 +407,10 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
 - [ ] T5-5 · proprietary 이미지·표·차트, 마스터/레이아웃 projection. 같은 근거까지 deferred.
 - [x] T5-6 · 현대 carrier는 애니메이션·전환을 해석/실행하지 않고 원본 package bytes로
       보존한다. proprietary projection과 렌더링은 명시적 비목표다.
-- [x] T5-7 · emit 어휘가 없으므로 `plugins lint` 대신 세 실제 `.show view`, source
-      hash/mtime 불변, fresh byte-identical PPTX sibling, synthetic 골든/보안 회귀를 고정했다.
+- [x] T5-7 · emit 어휘가 없으므로 `plugins lint` 대신 열세 실제 `.show`를 분류했다.
+      지원되는 여덟 표본은 실제 `view`, source hash/mtime 불변, fresh byte-identical PPTX
+      sibling을 통과했다. 거부된 다섯 표본은 source 불변·target 부재를 확인했다. synthetic
+      골든/보안 회귀도 함께 고정했다.
 
 ### P6 — 통합 배포·CI
 
@@ -430,7 +446,9 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
       source handle은 read sharing만 허용해 path 기반 metadata 검사 중 write/delete sharing과
       rename/replacement를 막으며 실제 rename RED→GREEN 회귀로 고정했다. retained descriptor에서
       읽은 process-visible Linux/macOS xattr 및 macOS ACL 보존 회귀를 추가했다. 호스트는 raw stdout 0-byte와
-      동시 callback 오류 격리를 검증한다.
+      동시 callback 오류 격리를 검증한다. Show 전용 GIF mapping의 성공과 Cell에서 같은
+      mapping의 거부, GIF override·오표기·서명·관계 source/role/reference·outgoing rels
+      거부를 family-scoped 회귀로 고정했다.
 - [x] T6-5 · 공개 문서: 루트 README 포맷 표와 SKILL.md에 HWP/HML read-only
       dump-reader, HWPX/OWPML package-preserving plain-text subset, Cell 12.0300/Show
       12.0000 direct-native read boundary와 명시적 save/close를 추가했다. 플러그인 README,
@@ -539,9 +557,10 @@ Q5는 JVM runtime 미도입으로, Q7은 역할별 바이너리 분리로 각각
 ## Status
 
 **2026-08-31 독립 감사 결론: 기능 구현 건강 · 위생 1건 즉시 수정 완료.**
-`cargo test --locked --workspace` 22개 바이너리 **0 실패**. 진행률 42/52이며 남은 10건은
-전부 의도적 evidence-gated deferred다. 감사에서 발견한 A-1(1.6 GB untracked 노출)은
-즉시 수정했고 A-2~A-5는 위 감사 절에 과제로 등록했다. 라이선스 재검토 결과
+`cargo test --locked --workspace` 22개 바이너리 **0 실패**. 제품 계획 진행률은
+**43/52**이며 남은 9건은 전부 의도적 evidence-gated deferred다. 별도 감사 항목은
+A-1·A-2·A-3·A-5를 완료했고 A-4만 위 조건에 따라 structure-gated로 남겼다.
+라이선스 재검토 결과
 **한셀/한쇼 carrier는 OOXML(ISO 29500)이라 법적 쟁점이 없으며**, 위험은 legacy 세대에만
 남는다(아래 라이선스 절 참조).
 
@@ -609,15 +628,21 @@ Windows/Unix 설치 계약 18/26개, clean Linux current-host exact discovery �
 HWPX/OWPML `set → save → close → reopen → validate`, source hash/escaped XML delta가
 통과했으며 형제 DOCX는 생성되지 않았다. GitHub-hosted Linux/Windows workflow도 같은
 current-host 검증을 수행하도록 갱신했다.
-P4/P5의 modern carrier slice는 공개 Cell 1개·Show 3개와 별도 공식 XLSX를 근거로
-구현했다. Cell 12.0300/Show 12.0000 exact profile, local/central ZIP·실제 expanded length,
+P4/P5의 modern carrier slice는 공개 Cell 2개·Show 13개와 별도 공식 XLSX를 근거로
+검증했다. 지원 경계에는 Cell 1개·Show 8개가 들어오고, Cell 1개·Show 5개는 의도적으로
+거부된다. Cell 12.0300/Show 12.0000 exact profile, local/central ZIP·실제 expanded length,
 strict XML, 전체 OPC 관계 closure와 allowlist, 열거된 macro/embedded/external 경계,
 retained-candidate TOCTOU, Windows source의 no-write/delete-share path binding, 열거된 filesystem metadata,
 no-clobber sibling, exclusive direct-native host 계약과 serialized
-installer 경계는 ADR-0016에 고정했다. 네 공개 표본의 39/95/82/83 parts가 전부 root에서
+installer 경계는 ADR-0016에 고정했다. 최초 네 공개 표본의 39/95/82/83 parts가 전부 root에서
 도달함을 확인했고 stricter validator도 통과했다. retained-handle 변경 뒤 current Windows
-release host/plugin으로 네 고정 SHA 파일을 다시 `view`했으며 fresh sibling, source/sibling
-hash·mtime, validator exit 0/stdout 0-byte, 케이스별 예상 두 파일 외 무잔재를 확인했다.
+release host/plugin으로 최초 네 고정 SHA 파일을 다시 `view`했으며 fresh sibling,
+source/sibling hash·mtime, validator exit 0/stdout 0-byte, 케이스별 예상 두 파일 외 무잔재를
+확인했다. 2026-08-31 추가 11개 표본 sweep에서는 Show 5개가 통과하고 Cell 1개·Show 5개가
+각각 VBA/OLE/HTTP/video/Microsoft media 경계에서 거부됐다. 새 성공 5개도 current Windows
+host에서 실제 text view, source 불변, byte-identical sibling과 케이스별 두 파일만 남는
+조건을 통과했다. 거부된 6개도 같은 host에서 source 불변, target 부재, 케이스별 원본 한
+파일만 남는 조건을 통과했다. 이 중 두 Show에 필요한 `gif → image/gif`만 family-scoped로 허용했다.
 공통 plugin process는 자식 종료 뒤에도 stdout/stderr reader가 완료될 때까지 같은 idle
 예산을 적용하며, 느린 callback 회귀로 부분 JSONL 성공이 불가능함을 확인했다.
 Cell은 독립 공식 XLSX와 text/stats가 정확히
@@ -636,7 +661,7 @@ P7은 구현이 아니라 `docs/proposals/plugin-multi-target-routing-and-export
 ### 검증된 상태 (증거 있음)
 
 - `cargo test --locked --workspace --all-targets` 전체 **0 실패**
-  (`hancom-hwp` lib 205, install_contract 22, ooxml_carrier 41 등).
+  (`hancom-hwp` lib 205, install_contract 22, ooxml_carrier 46 등).
 - `plugins/hancom/` workspace = `hancom-core` + `hancom-hwp`. 바이너리 5개:
   `officecli-hancom-hwp`, `-hwpx`, `-cell`, `-show`, `officecli-dump-reader-hwpx`(레거시 별칭).
 - `NOTICE`에 필수 한컴 표기 문구가 존재한다 → **T0-1 컴플라이언스 해소 확인**.
@@ -663,8 +688,10 @@ P7은 구현이 아니라 `docs/proposals/plugin-multi-target-routing-and-export
       경계를 원자 기능 커밋 `7e179d5b`로 고정했다.
 - [ ] **A-4 🟡 cell/show 바이너리가 `hancom-hwp` 크레이트 안에 있다.** A1 설계는
       `hancom-cell`/`hancom-show` 별도 크레이트였다. 현재는 `.cell`/`.show` 코드가
-      한글 크레이트에 얹혀 있어 의존 경계가 흐리다. carrier가 커지면 분리한다.
-      (지금은 carrier가 얇아 실해는 없다 — 부채로 기록만 한다.)
+      한글 크레이트에 얹혀 있어 의존 경계가 흐리다. **deferred/structure-gated:** 현재 두
+      실행 파일은 같은 bounded OOXML validator를 호출하는 얇은 진입점이므로 지금 분리하면
+      검증기를 중복하거나 공용 carrier 크레이트를 하나 더 만드는 재배치가 된다. Cell/Show
+      전용 proprietary parser나 서로 다른 의존성이 처음 들어올 때 별도 크레이트로 분리한다.
 - [x] **A-5 🟡 프로토콜 fork divergence.** `plugins/plugin-protocol.md`에 dump-reader
       `direct-native`/`byte-preserving` 모드를 추가했다(+62행). 업스트림에 없는 확장이므로
       `docs/proposals/`의 제안과 상호 연결하고, fork-local 예외이며 upstream sync마다
@@ -752,9 +779,10 @@ sibling을 만든다. 이 기술적 사실만으로 모든 표본의 권리 관�
    [`33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)와 action pin
    [`33349242344`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242344)이 모두 통과해
    T6-2와 ADR-0015의 release evidence를 닫았다.
-6. **외부 근거 유입 시 재개.** provenance와 사용 권한이 확인된 추가 `.cell`/`.show`
-   표본으로 carrier allowlist를 확장한다. 다른 `12.*` build나 legacy 세대 표본이 들어오면
-   T4-2 세대 판별이 열린다.
+6. ~~**외부 근거 유입 시 재개.**~~ · **이번 표본 batch 완료.** provenance가 확인된
+   Cell 1개와 Show 10개를 추가 분류했다. 두 Show가 요구한 정확한 GIF mapping만 열었고,
+   active/external 표본 6개는 기존 경계에서 거부했다. 같은 12.0300/12.0000 세대이므로
+   T4-2는 열리지 않았다. 이후 다른 `12.*` build나 legacy 세대 표본이 들어오면 재개한다.
 7. **최종 인계 절차.** 이 문서 커밋 뒤 codebase-memory를 최종 HEAD로 재색인하고 요구사항별
    완료 감사를 수행한다. legacy/다세대/native Hancom oracle 항목은 새 외부 근거가 생기기
    전까지 deferred로 남긴다.
