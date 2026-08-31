@@ -11,6 +11,44 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core;
 using OfficeCli.Core.Plugins;
 
+if (args is ["--probe-plugin-stdout", var probeLine])
+{
+    Console.Out.WriteLine(probeLine);
+    return 0;
+}
+
+if (args is ["dump", var directSource]
+    && Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET") is { Length: > 0 } directTarget)
+{
+    var directSibling = Path.ChangeExtension(directSource, directTarget);
+    var directMode = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE");
+    if (directMode != "no-sibling")
+    {
+        File.Copy(directSource, directSibling, overwrite: true);
+        File.SetLastWriteTimeUtc(directSibling, File.GetLastWriteTimeUtc(directSource));
+    }
+    switch (directMode)
+    {
+        case "whitespace":
+            Console.Out.Write(" ");
+            Console.Out.Flush();
+            return 0;
+        case "bom-only":
+            Console.OpenStandardOutput().Write(new byte[] { 0xEF, 0xBB, 0xBF });
+            return 0;
+        case "json-and-sibling":
+            Console.Out.WriteLine("{}");
+            return 0;
+        case "fail-after-sibling":
+            return 2;
+        case "foreign-sibling-on-failure":
+            File.WriteAllText(directSibling, "independently published native file");
+            return 2;
+        default:
+            return 0;
+    }
+}
+
 if (args is ["--probe-infinite-worker"])
 {
     Environment.SetEnvironmentVariable("OFFICECLI_TEST_INFO_MODE", "infinite-flood");
@@ -182,9 +220,17 @@ var tests = new (string Name, Action Run)[]
     ("plugins list and info enforce conflict policy end to end", PluginCommandsEnforceConflictPolicyEndToEnd),
     ("plugins info rejects a changed name snapshot and probes an explicit path once", PluginInfoRejectsChangedSnapshot),
     ("host watchdog accepts heartbeats throughout a slow plugin run", HostWatchdogAcceptsHeartbeats),
+    ("plugin process callback errors remain isolated per concurrent run", PluginProcessCallbackErrorsArePerRun),
+    ("plugin process never reports success before output readers drain", PluginProcessWaitsForOutputReaders),
     ("format-handler lifecycle frames match protocol v1", FormatHandlerLifecycleFramesMatchProtocolV1),
     ("format-handler view uses the protocol max_lines key", FormatHandlerViewUsesProtocolMaxLinesKey),
     ("format-handler save cannot report false durability", FormatHandlerSaveCannotReportFalseDurability),
+    ("dump-reader accepts direct native output without a blank warning", DumpReaderDirectNativeOutputIsNotWarned),
+    ("dump-reader direct native mode is exclusive", DumpReaderDirectNativeProtocolIsExclusive),
+    ("dump-reader failure never deletes a matching published sibling", DumpReaderDirectNativeFailurePreservesMatchingSibling),
+    ("dump-reader failure preserves an unowned concurrent sibling", DumpReaderDirectNativeFailurePreservesUnownedSibling),
+    ("dump-reader rejects a different preexisting direct-native sibling before launch", DumpReaderDirectNativePreexistingConflictIsPreserved),
+    ("dump-reader detects mutation of an identical preexisting direct-native sibling", DumpReaderDirectNativePreexistingMutationIsRejected),
     ("dump-reader surfaces only bounded structured success warnings", DumpReaderStructuredWarningsAreFilteredAndBounded),
     ("field schema accepts emitted character formatting", FieldSchemaAcceptsEmittedCharacterFormatting),
     ("style schema accepts emitted paragraph indents", StyleSchemaAcceptsEmittedParagraphIndents),
@@ -212,6 +258,90 @@ foreach (var (name, run) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static void PluginProcessCallbackErrorsArePerRun()
+{
+    using var firstEntered = new ManualResetEventSlim();
+    using var secondEntered = new ManualResetEventSlim();
+    using var allowFirstFailure = new ManualResetEventSlim();
+    using var allowSecondCompletion = new ManualResetEventSlim();
+
+    var firstTask = Task.Run(() => PluginProcess.Run(new PluginProcess.RunOptions
+    {
+        ExecutablePath = TestAppHostPath(),
+        Arguments = new[] { "--probe-plugin-stdout", "first" },
+        IdleTimeoutSeconds = 5,
+        OnStdoutLine = _ =>
+        {
+            firstEntered.Set();
+            Assert(allowFirstFailure.Wait(TimeSpan.FromSeconds(5)), "first callback release timed out");
+            throw new InvalidOperationException("first callback failed");
+        },
+    }));
+    Assert(firstEntered.Wait(TimeSpan.FromSeconds(5)), "first callback did not start");
+
+    var secondTask = Task.Run(() => PluginProcess.Run(new PluginProcess.RunOptions
+    {
+        ExecutablePath = TestAppHostPath(),
+        Arguments = new[] { "--probe-plugin-stdout", "second" },
+        IdleTimeoutSeconds = 5,
+        OnStdoutLine = _ =>
+        {
+            secondEntered.Set();
+            Assert(allowSecondCompletion.Wait(TimeSpan.FromSeconds(5)), "second callback release timed out");
+        },
+    }));
+    Assert(secondEntered.Wait(TimeSpan.FromSeconds(5)), "second callback did not start");
+
+    allowFirstFailure.Set();
+    Assert(firstTask.Wait(TimeSpan.FromSeconds(5)), "first plugin run did not finish");
+    allowSecondCompletion.Set();
+    Assert(secondTask.Wait(TimeSpan.FromSeconds(5)), "second plugin run did not finish");
+
+    var first = firstTask.Result;
+    var second = secondTask.Result;
+    Assert(first.StdoutObserved && second.StdoutObserved, "raw stdout activity was not observed");
+    Assert(first.StdoutCallbackError?.Message == "first callback failed",
+        "first callback error was lost or replaced");
+    Assert(second.StdoutCallbackError is null,
+        $"second run inherited another run's callback error: {second.StdoutCallbackError}");
+}
+
+static void PluginProcessWaitsForOutputReaders()
+{
+    using var callbackEntered = new ManualResetEventSlim();
+    using var releaseCallback = new ManualResetEventSlim();
+    Task<PluginProcess.RunResult>? runTask = null;
+
+    try
+    {
+        runTask = Task.Run(() => PluginProcess.Run(new PluginProcess.RunOptions
+        {
+            ExecutablePath = TestAppHostPath(),
+            Arguments = new[] { "--probe-plugin-stdout", "slow-reader" },
+            IdleTimeoutSeconds = 1,
+            OnStdoutLine = _ =>
+            {
+                callbackEntered.Set();
+                releaseCallback.Wait();
+            },
+        }));
+
+        Assert(callbackEntered.Wait(TimeSpan.FromSeconds(5)),
+            "slow stdout callback did not start");
+        Assert(runTask.Wait(TimeSpan.FromSeconds(5)),
+            "plugin runner did not apply its idle budget to an incomplete output reader");
+        Assert(runTask.Result.IdleTimedOut,
+            "plugin runner reported success while its stdout callback was still incomplete");
+    }
+    finally
+    {
+        releaseCallback.Set();
+        if (runTask is not null)
+            Assert(runTask.Wait(TimeSpan.FromSeconds(5)),
+                "plugin runner did not finish after the callback was released");
+    }
+}
 
 static void FormatHandlerLifecycleFramesMatchProtocolV1()
 {
@@ -2032,6 +2162,299 @@ static void DumpReaderStructuredWarningsAreFilteredAndBounded()
 
     Assert(warnings.Count == 1, $"expected one accepted warning, got {warnings.Count}");
     Assert(warnings[0] == expected, "structured warning JSON was not surfaced unchanged");
+}
+
+static void DumpReaderDirectNativeOutputIsNotWarned()
+{
+    var token = Guid.NewGuid().ToString("N");
+    var extension = ".direct" + token;
+    var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-" + token + extension);
+    var sibling = Path.ChangeExtension(source, ".xlsx");
+    var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+    var originalRegistration = Environment.GetEnvironmentVariable(registration);
+    var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+    var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+    var originalMode = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE");
+    var originalError = Console.Error;
+    DumpReaderInvoker.DumpResult? result = null;
+
+    try
+    {
+        var sourceBytes = Encoding.UTF8.GetBytes("direct native output contract");
+        File.WriteAllBytes(source, sourceBytes);
+        Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+        Environment.SetEnvironmentVariable(
+            "OFFICECLI_TEST_MANIFEST_JSON",
+            "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+            "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+            "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", null);
+        PluginRegistry.InvalidateCache();
+
+        using var capturedError = new StringWriter();
+        Console.SetError(capturedError);
+        result = DumpReaderInvoker.Run(source, extension);
+        Console.SetError(originalError);
+
+        Assert(File.Exists(sibling), "direct-native plugin did not create its sibling");
+        Assert(File.ReadAllBytes(sibling).SequenceEqual(sourceBytes),
+            "host altered the plugin's direct-native sibling");
+        Assert(!capturedError.ToString().Contains("will be blank", StringComparison.Ordinal),
+            "host reported a direct-native output as a blank JSONL conversion");
+    }
+    finally
+    {
+        Console.SetError(originalError);
+        Environment.SetEnvironmentVariable(registration, originalRegistration);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", originalMode);
+        PluginRegistry.InvalidateCache();
+        if (result is not null) File.Delete(result.ConvertedPath);
+        File.Delete(source);
+        File.Delete(sibling);
+    }
+}
+
+static void DumpReaderDirectNativeProtocolIsExclusive()
+{
+    foreach (var (mode, expectedCode) in new[]
+    {
+        ("whitespace", "plugin_contract_violation"),
+        ("bom-only", "plugin_contract_violation"),
+        ("json-and-sibling", "plugin_contract_violation"),
+        ("no-sibling", "plugin_contract_violation"),
+        ("fail-after-sibling", "corrupt_input"),
+    })
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var extension = ".direct" + token;
+        var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-contract-" + token + extension);
+        var sibling = Path.ChangeExtension(source, ".xlsx");
+        var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+        var originalRegistration = Environment.GetEnvironmentVariable(registration);
+        var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+        var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+        var originalMode = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE");
+        try
+        {
+            File.WriteAllText(source, "direct native contract failure");
+            Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+            Environment.SetEnvironmentVariable(
+                "OFFICECLI_TEST_MANIFEST_JSON",
+                "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+                "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+                "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+            Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+            Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", mode);
+            PluginRegistry.InvalidateCache();
+
+            CliException? failure = null;
+            try { _ = DumpReaderInvoker.Run(source, extension); }
+            catch (CliException ex) { failure = ex; }
+
+            Assert(failure is not null, $"direct-native mode {mode} unexpectedly succeeded");
+            Assert(failure!.Code == expectedCode,
+                $"direct-native mode {mode} returned {failure.Code}, expected {expectedCode}");
+            if (mode == "no-sibling")
+                Assert(!File.Exists(sibling), "no-sibling mode unexpectedly created output");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(registration, originalRegistration);
+            Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+            Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+            Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", originalMode);
+            PluginRegistry.InvalidateCache();
+            File.Delete(source);
+            File.Delete(sibling);
+        }
+    }
+}
+
+static void DumpReaderDirectNativeFailurePreservesMatchingSibling()
+{
+    var token = Guid.NewGuid().ToString("N");
+    var extension = ".direct" + token;
+    var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-matching-race-" + token + extension);
+    var sibling = Path.ChangeExtension(source, ".xlsx");
+    var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+    var originalRegistration = Environment.GetEnvironmentVariable(registration);
+    var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+    var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+    var originalMode = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE");
+    try
+    {
+        var sourceBytes = Encoding.UTF8.GetBytes("matching direct native source");
+        File.WriteAllBytes(source, sourceBytes);
+        Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+        Environment.SetEnvironmentVariable(
+            "OFFICECLI_TEST_MANIFEST_JSON",
+            "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+            "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+            "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", "fail-after-sibling");
+        PluginRegistry.InvalidateCache();
+
+        CliException? failure = null;
+        try { _ = DumpReaderInvoker.Run(source, extension); }
+        catch (CliException ex) { failure = ex; }
+
+        Assert(failure?.Code == "corrupt_input",
+            $"failed direct-native run returned {failure?.Code ?? "success"}");
+        Assert(File.Exists(sibling), "host deleted a matching sibling path after plugin failure");
+        Assert(File.ReadAllBytes(sibling).SequenceEqual(sourceBytes),
+            "host altered the matching sibling after plugin failure");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(registration, originalRegistration);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", originalMode);
+        PluginRegistry.InvalidateCache();
+        File.Delete(source);
+        File.Delete(sibling);
+    }
+}
+
+static void DumpReaderDirectNativeFailurePreservesUnownedSibling()
+{
+    var token = Guid.NewGuid().ToString("N");
+    var extension = ".direct" + token;
+    var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-race-" + token + extension);
+    var sibling = Path.ChangeExtension(source, ".xlsx");
+    var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+    var originalRegistration = Environment.GetEnvironmentVariable(registration);
+    var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+    var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+    var originalMode = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE");
+    var independentlyPublished = Encoding.UTF8.GetBytes("independently published native file");
+    try
+    {
+        File.WriteAllText(source, "direct native source");
+        Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+        Environment.SetEnvironmentVariable(
+            "OFFICECLI_TEST_MANIFEST_JSON",
+            "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+            "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+            "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", "foreign-sibling-on-failure");
+        PluginRegistry.InvalidateCache();
+
+        CliException? failure = null;
+        try { _ = DumpReaderInvoker.Run(source, extension); }
+        catch (CliException ex) { failure = ex; }
+
+        Assert(failure?.Code == "corrupt_input",
+            $"failed direct-native run returned {failure?.Code ?? "success"}");
+        Assert(File.Exists(sibling), "host deleted a sibling it could not attribute to the failed plugin");
+        Assert(File.ReadAllBytes(sibling).SequenceEqual(independentlyPublished),
+            "host altered the unowned sibling after plugin failure");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(registration, originalRegistration);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_MODE", originalMode);
+        PluginRegistry.InvalidateCache();
+        File.Delete(source);
+        File.Delete(sibling);
+    }
+}
+
+static void DumpReaderDirectNativePreexistingConflictIsPreserved()
+{
+    var token = Guid.NewGuid().ToString("N");
+    var extension = ".direct" + token;
+    var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-conflict-" + token + extension);
+    var sibling = Path.ChangeExtension(source, ".xlsx");
+    var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+    var originalRegistration = Environment.GetEnvironmentVariable(registration);
+    var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+    var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+    try
+    {
+        File.WriteAllText(source, "foreign source");
+        var existingBytes = Encoding.UTF8.GetBytes("independently published native file");
+        File.WriteAllBytes(sibling, existingBytes);
+        Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+        Environment.SetEnvironmentVariable(
+            "OFFICECLI_TEST_MANIFEST_JSON",
+            "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+            "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+            "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+        PluginRegistry.InvalidateCache();
+
+        CliException? failure = null;
+        try { _ = DumpReaderInvoker.Run(source, extension); }
+        catch (CliException ex) { failure = ex; }
+
+        Assert(failure?.Code == "plugin_output_conflict",
+            $"preexisting sibling conflict returned {failure?.Code ?? "success"}");
+        Assert(File.ReadAllBytes(sibling).SequenceEqual(existingBytes),
+            "host launched the plugin and changed a different preexisting sibling");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(registration, originalRegistration);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+        PluginRegistry.InvalidateCache();
+        File.Delete(source);
+        File.Delete(sibling);
+    }
+}
+
+static void DumpReaderDirectNativePreexistingMutationIsRejected()
+{
+    var token = Guid.NewGuid().ToString("N");
+    var extension = ".direct" + token;
+    var source = Path.Combine(Path.GetTempPath(), "officecli-direct-native-existing-" + token + extension);
+    var sibling = Path.ChangeExtension(source, ".xlsx");
+    var registration = "OFFICECLI_PLUGIN_DUMP_READER_" + extension.TrimStart('.').ToUpperInvariant();
+    var originalRegistration = Environment.GetEnvironmentVariable(registration);
+    var originalManifest = Environment.GetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON");
+    var originalTarget = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET");
+    try
+    {
+        var bytes = Encoding.UTF8.GetBytes("identical direct native cache");
+        File.WriteAllBytes(source, bytes);
+        File.WriteAllBytes(sibling, bytes);
+        File.SetLastWriteTimeUtc(source, DateTime.UtcNow.AddMinutes(-1));
+        File.SetLastWriteTimeUtc(sibling, DateTime.UtcNow.AddHours(-1));
+        Assert(File.GetLastWriteTimeUtc(source) != File.GetLastWriteTimeUtc(sibling),
+            "test setup requires distinct source and sibling mtimes");
+        Environment.SetEnvironmentVariable(registration, TestAppHostPath());
+        Environment.SetEnvironmentVariable(
+            "OFFICECLI_TEST_MANIFEST_JSON",
+            "{\"name\":\"officecli-direct-native\",\"version\":\"1.0.0\",\"protocol\":1," +
+            "\"kinds\":[\"dump-reader\"],\"extensions\":[\"" + extension + "\"],\"target\":\"xlsx\"," +
+            "\"supports\":[\"direct-native\",\"byte-preserving\"]}");
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", ".xlsx");
+        PluginRegistry.InvalidateCache();
+
+        CliException? failure = null;
+        try { _ = DumpReaderInvoker.Run(source, extension); }
+        catch (CliException ex) { failure = ex; }
+
+        Assert(failure?.Code == "plugin_contract_violation",
+            $"preexisting sibling mutation returned {failure?.Code ?? "success"}");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(registration, originalRegistration);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_MANIFEST_JSON", originalManifest);
+        Environment.SetEnvironmentVariable("OFFICECLI_TEST_DIRECT_NATIVE_TARGET", originalTarget);
+        PluginRegistry.InvalidateCache();
+        File.Delete(source);
+        File.Delete(sibling);
+    }
 }
 
 static void FieldSchemaAcceptsEmittedCharacterFormatting()

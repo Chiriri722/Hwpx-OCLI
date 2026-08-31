@@ -12,7 +12,7 @@ struct ActiveTarget {
     binary: &'static str,
 }
 
-const ACTIVE_TARGETS: [ActiveTarget; 4] = [
+const ACTIVE_TARGETS: [ActiveTarget; 6] = [
     ActiveTarget {
         kind: "dump-reader",
         extension: "hwp",
@@ -37,13 +37,27 @@ const ACTIVE_TARGETS: [ActiveTarget; 4] = [
         environment_variable: "OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML",
         binary: "officecli-hancom-hwpx",
     },
+    ActiveTarget {
+        kind: "dump-reader",
+        extension: "cell",
+        environment_variable: "OFFICECLI_PLUGIN_DUMP_READER_CELL",
+        binary: "officecli-hancom-cell",
+    },
+    ActiveTarget {
+        kind: "dump-reader",
+        extension: "show",
+        environment_variable: "OFFICECLI_PLUGIN_DUMP_READER_SHOW",
+        binary: "officecli-hancom-show",
+    },
 ];
 
-const MANAGED_TARGETS: [(&str, &str); 6] = [
+const MANAGED_TARGETS: [(&str, &str); 8] = [
     ("dump-reader", "hwp"),
     ("dump-reader", "hml"),
     ("format-handler", "hwpx"),
     ("format-handler", "owpml"),
+    ("dump-reader", "cell"),
+    ("dump-reader", "show"),
     ("dump-reader", "hwpx"),
     ("dump-reader", "owpml"),
 ];
@@ -84,7 +98,7 @@ fn windows_installer_manages_every_extension_directory() {
 }
 
 #[test]
-fn installers_use_both_canonical_binary_names() {
+fn installers_use_all_canonical_binary_names() {
     assert!(
         WINDOWS_INSTALLER.contains("$hwpBinaryName = \"officecli-hancom-hwp.exe\""),
         "install.ps1 must install the canonical HWP/HML binary"
@@ -92,6 +106,14 @@ fn installers_use_both_canonical_binary_names() {
     assert!(
         WINDOWS_INSTALLER.contains("$hwpxBinaryName = \"officecli-hancom-hwpx.exe\""),
         "install.ps1 must install the canonical HWPX/OWPML binary"
+    );
+    assert!(
+        WINDOWS_INSTALLER.contains("$cellBinaryName = \"officecli-hancom-cell.exe\""),
+        "install.ps1 must install the canonical Cell binary"
+    );
+    assert!(
+        WINDOWS_INSTALLER.contains("$showBinaryName = \"officecli-hancom-show.exe\""),
+        "install.ps1 must install the canonical Show binary"
     );
     assert!(
         !WINDOWS_INSTALLER.contains("$binaryName = \"officecli-dump-reader-hwpx.exe\""),
@@ -103,10 +125,16 @@ fn installers_use_both_canonical_binary_names() {
             UNIX_INSTALLER.contains("BIN_NAMES=(\"officecli-hancom-hwp\""),
             "install.sh must install the canonical HWP/HML binary"
         );
-        assert!(
-            UNIX_INSTALLER.contains("\"officecli-hancom-hwpx\")"),
-            "install.sh must install the canonical HWPX/OWPML binary"
-        );
+        for binary in [
+            "officecli-hancom-hwpx",
+            "officecli-hancom-cell",
+            "officecli-hancom-show",
+        ] {
+            assert!(
+                UNIX_INSTALLER.contains(binary),
+                "install.sh must install the canonical {binary} binary"
+            );
+        }
         assert!(
             !UNIX_INSTALLER.contains("BIN_NAME=\"officecli-dump-reader-hwpx\""),
             "install.sh must not source the legacy compatibility entry point"
@@ -119,10 +147,14 @@ fn installers_split_dump_reader_and_format_handler_discovery() {
     for expected in [
         "$hwpBinaryName = \"officecli-hancom-hwp.exe\"",
         "$hwpxBinaryName = \"officecli-hancom-hwpx.exe\"",
+        "$cellBinaryName = \"officecli-hancom-cell.exe\"",
+        "$showBinaryName = \"officecli-hancom-show.exe\"",
         "EnvironmentVariable = \"OFFICECLI_PLUGIN_DUMP_READER_HWP\"",
         "EnvironmentVariable = \"OFFICECLI_PLUGIN_DUMP_READER_HML\"",
         "EnvironmentVariable = \"OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX\"",
         "EnvironmentVariable = \"OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML\"",
+        "EnvironmentVariable = \"OFFICECLI_PLUGIN_DUMP_READER_CELL\"",
+        "EnvironmentVariable = \"OFFICECLI_PLUGIN_DUMP_READER_SHOW\"",
         "Kind = \"format-handler\"",
         "Install = $false",
     ] {
@@ -135,11 +167,15 @@ fn installers_split_dump_reader_and_format_handler_discovery() {
     #[cfg(unix)]
     for expected in [
         "BIN_NAMES=(\"officecli-hancom-hwp\"",
-        "\"officecli-hancom-hwpx\")",
+        "officecli-hancom-hwpx",
+        "officecli-hancom-cell",
+        "officecli-hancom-show",
         "KINDS=(\"dump-reader\"",
-        "\"format-handler\")",
+        "KINDS=(\"dump-reader\" \"dump-reader\" \"format-handler\" \"format-handler\" \"dump-reader\" \"dump-reader\")",
         "OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX",
         "OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML",
+        "OFFICECLI_PLUGIN_DUMP_READER_CELL",
+        "OFFICECLI_PLUGIN_DUMP_READER_SHOW",
         "OBSOLETE_KINDS=(\"dump-reader\" \"dump-reader\")",
         "OBSOLETE_EXTENSIONS=(\"hwpx\" \"owpml\")",
     ] {
@@ -148,6 +184,90 @@ fn installers_split_dump_reader_and_format_handler_discovery() {
             "install.sh must encode the promoted discovery contract: {expected}"
         );
     }
+}
+
+#[test]
+fn installers_preflight_every_physical_binary_and_exact_target() {
+    for expected in [
+        "ExpectedTarget = \"docx\"",
+        "ExpectedTarget = \"xlsx\"",
+        "ExpectedTarget = \"pptx\"",
+        "ExpectedExtensions = @(\".hwp\", \".hml\")",
+        "ExpectedExtensions = @(\".hwpx\", \".owpml\")",
+        "ExpectedExtensions = @(\".cell\")",
+        "ExpectedExtensions = @(\".show\")",
+        "$actualKinds.Count -ne 1",
+        "$actualExtensions.Count -ne $Target.ExpectedExtensions.Count",
+        "$manifest.target -ne $Target.ExpectedTarget",
+    ] {
+        assert!(
+            WINDOWS_INSTALLER.contains(expected),
+            "install.ps1 is missing exact target preflight: {expected}"
+        );
+    }
+
+    #[cfg(unix)]
+    for expected in [
+        "TARGETS=(\"docx\" \"docx\" \"\" \"\" \"xlsx\" \"pptx\")",
+        "EXPECTED_KINDS_JSON=(\"[\\\"dump-reader\\\"]\"",
+        "EXPECTED_EXTENSIONS_JSON=(\"[\\\".hwp\\\",\\\".hml\\\"]\"",
+        "\\\"kinds\\\":${EXPECTED_KINDS_JSON[$index]}",
+        "\\\"extensions\\\":${EXPECTED_EXTENSIONS_JSON[$index]}",
+        "for index in 0 2 4 5; do",
+        "\\\"target\\\":\\\"${TARGETS[$index]}\\\"",
+    ] {
+        assert!(
+            UNIX_INSTALLER.contains(expected),
+            "install.sh is missing exact target preflight: {expected}"
+        );
+    }
+}
+
+#[test]
+fn installers_serialize_mutations_and_require_one_suite_version() {
+    for expected in [
+        "New-InstallMutex $pluginsDirectory",
+        "another Hancom plugin install or uninstall is already running",
+        "$script:expectedSuiteVersion",
+        "$semverPattern = '^(0|[1-9][0-9]*)\\.",
+        "Assert-PluginManifest $target.BuiltBinary $target \"built\"",
+        "[PSCustomObject]@{ BinaryName = $cellBinaryName; Path = $cellBuiltBinary }",
+        "[PSCustomObject]@{ BinaryName = $showBinaryName; Path = $showBuiltBinary }",
+    ] {
+        assert!(
+            WINDOWS_INSTALLER.contains(expected),
+            "install.ps1 is missing serialized suite preflight: {expected}"
+        );
+    }
+
+    #[cfg(unix)]
+    for expected in [
+        "LOCK_DIR=\"${PLUGINS_DIR}/.hancom-install.lock\"",
+        "acquire_install_lock || exit 73",
+        "EXPECTED_SUITE_VERSION=\"\"",
+        "MANIFEST_VERSION_RESULT=\"${version_suffix%%\"*}\"",
+        "MANIFEST_VERSION_RESULT}\" =~ ^(0|[1-9][0-9]*)\\.",
+    ] {
+        assert!(
+            UNIX_INSTALLER.contains(expected),
+            "install.sh is missing serialized suite preflight: {expected}"
+        );
+    }
+}
+
+#[test]
+fn unix_installer_holds_its_lock_through_final_reporting() {
+    let installer = include_str!("../../../scripts/install.sh");
+    let reporting = installer
+        .find("manifests reported by the installed plugins:")
+        .expect("final manifest report");
+    let release = installer
+        .rfind("release_install_lock\ntrap - EXIT")
+        .expect("final lock release");
+    assert!(
+        release > reporting,
+        "install.sh releases its mutation lock before final installed-binary reporting"
+    );
 }
 
 #[cfg(unix)]
@@ -184,7 +304,7 @@ fn windows_uninstall_checks_reparse_directories_before_removing_targets() {
         .find("Assert-InstallDirectoryNotReparse $target.Directory")
         .expect("install.ps1 must call its reparse guard for each extension directory");
     let removal = uninstall_branch
-        .find("Remove-Item -LiteralPath $target.Path -Force")
+        .find("Remove-InstallTargetWithRetry $target")
         .expect("install.ps1 target removal");
     assert!(
         guard < removal,
@@ -288,6 +408,14 @@ fn fake_windows_installer_repo() -> tempfile::TempDir {
         (
             env!("CARGO_BIN_EXE_officecli-hancom-hwpx"),
             "officecli-hancom-hwpx",
+        ),
+        (
+            env!("CARGO_BIN_EXE_officecli-hancom-cell"),
+            "officecli-hancom-cell",
+        ),
+        (
+            env!("CARGO_BIN_EXE_officecli-hancom-show"),
+            "officecli-hancom-show",
         ),
     ] {
         std::fs::copy(source, release.join(format!("{binary}.exe")))
@@ -535,6 +663,40 @@ fn windows_uninstall_removes_every_extension_and_preserves_unrelated_plugins() {
         }
         assert!(unrelated.exists(), "unrelated plugin must remain");
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_uninstall_retries_a_transient_file_lock() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let home = tempfile::tempdir().expect("temporary Windows home");
+    let target = target_path(home.path(), "format-handler", "hwpx", "plugin.exe");
+    std::fs::create_dir_all(target.parent().expect("target parent"))
+        .expect("create target directory");
+    std::fs::write(&target, b"transiently locked plugin").expect("write plugin");
+
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&target)
+        .expect("lock plugin against removal");
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        drop(lock);
+    });
+    let output = run_windows_installer(home.path(), "-Uninstall");
+    release.join().expect("release lock thread");
+
+    assert!(
+        output.status.success(),
+        "uninstall did not outwait a transient plugin lock: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !target.exists(),
+        "transiently locked plugin was not removed"
+    );
 }
 
 #[cfg(windows)]
@@ -801,11 +963,19 @@ fn fake_installer_repo() -> tempfile::TempDir {
     for (binary_name, manifest) in [
         (
             "officecli-hancom-hwp",
-            r#"{"name":"officecli-hancom-hwp","protocol":1,"kinds":["dump-reader"],"extensions":[".hwp",".hml"],"target":"docx"}"#,
+            r#"{"name":"officecli-hancom-hwp","version":"0.1.0","protocol":1,"kinds":["dump-reader"],"extensions":[".hwp",".hml"],"target":"docx"}"#,
         ),
         (
             "officecli-hancom-hwpx",
-            r#"{"name":"officecli-hancom-hwpx","protocol":1,"kinds":["format-handler"],"extensions":[".hwpx",".owpml"]}"#,
+            r#"{"name":"officecli-hancom-hwpx","version":"0.1.0","protocol":1,"kinds":["format-handler"],"extensions":[".hwpx",".owpml"]}"#,
+        ),
+        (
+            "officecli-hancom-cell",
+            r#"{"name":"officecli-hancom-cell","version":"0.1.0","protocol":1,"kinds":["dump-reader"],"extensions":[".cell"],"target":"xlsx"}"#,
+        ),
+        (
+            "officecli-hancom-show",
+            r#"{"name":"officecli-hancom-show","version":"0.1.0","protocol":1,"kinds":["dump-reader"],"extensions":[".show"],"target":"pptx"}"#,
         ),
     ] {
         let binary = release.join(binary_name);
@@ -846,6 +1016,83 @@ fn unix_print_env_registers_each_kind_with_its_canonical_binary() {
             target.kind,
             target.extension,
             target.binary
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_installer_rejects_a_concurrent_transaction_lock() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let lock = home.path().join(".officecli/plugins/.hancom-install.lock");
+    std::fs::create_dir_all(&lock).expect("create held installer lock");
+
+    let output = run_unix_installer(home.path(), "--uninstall");
+
+    assert!(!output.status.success(), "held installer lock must fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already running"),
+        "lock failure was not diagnosed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(lock.is_dir(), "installer removed a lock it did not own");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_installer_rejects_mixed_binary_versions_before_staging() {
+    let repo = fake_installer_repo();
+    let installer = repo.path().join("scripts/install.sh");
+    let show = repo.path().join("target/release/officecli-hancom-show");
+    let script = std::fs::read_to_string(&show)
+        .expect("read fake Show plugin")
+        .replace("\"version\":\"0.1.0\"", "\"version\":\"0.2.0\"");
+    std::fs::write(&show, script).expect("write mixed-version Show plugin");
+    let home = tempfile::tempdir().expect("temporary home");
+
+    let output = run_unix_installer_at(&installer, home.path(), "--no-build");
+
+    assert!(!output.status.success(), "mixed suite versions must fail");
+    for target in ACTIVE_TARGETS {
+        assert!(
+            !target_path(home.path(), target.kind, target.extension, "plugin")
+                .parent()
+                .expect("target parent")
+                .exists(),
+            "mixed-version preflight created {}/{} staging directory",
+            target.kind,
+            target.extension
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_installer_rejects_a_malformed_suite_version_before_staging() {
+    let repo = fake_installer_repo();
+    let installer = repo.path().join("scripts/install.sh");
+    let show = repo.path().join("target/release/officecli-hancom-show");
+    let script = std::fs::read_to_string(&show)
+        .expect("read fake Show plugin")
+        .replace("\"version\":\"0.1.0\"", "\"version\":\"01.0.0\"");
+    std::fs::write(&show, script).expect("write malformed-version Show plugin");
+    let home = tempfile::tempdir().expect("temporary home");
+
+    let output = run_unix_installer_at(&installer, home.path(), "--no-build");
+
+    assert!(
+        !output.status.success(),
+        "malformed suite version must fail"
+    );
+    for target in ACTIVE_TARGETS {
+        assert!(
+            !target_path(home.path(), target.kind, target.extension, "plugin")
+                .parent()
+                .expect("target parent")
+                .exists(),
+            "malformed-version preflight created {}/{} staging directory",
+            target.kind,
+            target.extension
         );
     }
 }
@@ -1225,7 +1472,7 @@ fn unix_install_preflights_every_target_before_staging_or_backup() {
 
 #[cfg(unix)]
 #[test]
-fn unix_install_places_two_executables_and_relative_links_for_their_aliases() {
+fn unix_install_places_four_executables_and_two_relative_aliases() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = fake_installer_repo();
@@ -1238,7 +1485,12 @@ fn unix_install_places_two_executables_and_relative_links_for_their_aliases() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    for target_spec in [ACTIVE_TARGETS[0], ACTIVE_TARGETS[2]] {
+    for target_spec in [
+        ACTIVE_TARGETS[0],
+        ACTIVE_TARGETS[2],
+        ACTIVE_TARGETS[4],
+        ACTIVE_TARGETS[5],
+    ] {
         let canonical = target_path(
             home.path(),
             target_spec.kind,
@@ -1366,7 +1618,12 @@ fn unix_install_migrates_a_legacy_hwpx_only_layout_idempotently() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        for target_spec in [ACTIVE_TARGETS[0], ACTIVE_TARGETS[2]] {
+        for target_spec in [
+            ACTIVE_TARGETS[0],
+            ACTIVE_TARGETS[2],
+            ACTIVE_TARGETS[4],
+            ACTIVE_TARGETS[5],
+        ] {
             let canonical = target_path(
                 home.path(),
                 target_spec.kind,
@@ -1613,7 +1870,11 @@ fn unix_install_preserves_both_old_plugins_when_hwp_backup_move_fails() {
     )
     .expect("compose test PATH");
     let installer = repo.path().join("scripts/install.sh");
-    let output = std::process::Command::new(&installer)
+    // Invoke through bash rather than asking the kernel to exec a just-written
+    // temporary script. Overlay-backed Linux test filesystems can otherwise
+    // report a transient ETXTBSY before any installer code runs.
+    let output = std::process::Command::new("/bin/bash")
+        .arg(&installer)
         .arg("--no-build")
         .env("HOME", home.path())
         .env("PATH", test_path)

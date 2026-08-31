@@ -299,15 +299,13 @@ public static class DocumentHandlerFactory
     /// found, return a handler that delegates to it. Returns null when no
     /// plugin is installed — callers fall back to the unsupported-type error.
     ///
-    /// dump-reader: per plugins/plugin-protocol.md §2.1, the plugin emits a batch
-    /// of officecli commands describing the foreign source; main replays them
-    /// into a fresh native file whose extension comes from the plugin's
-    /// manifest <c>target</c> (docx/xlsx/pptx). The result is cached as a
-    /// sibling file <c>&lt;source-stem&gt;.&lt;target&gt;</c> next to the
-    /// source so subsequent invocations skip the plugin entirely (regenerated
-    /// when the source mtime is newer than the sibling's, or when the sibling
-    /// has been deleted). All edits target the sibling file, not the original
-    /// source.
+    /// dump-reader: per plugins/plugin-protocol.md §2.1, a JSONL plugin emits
+    /// officecli commands that main replays into the manifest's native target
+    /// (docx/xlsx/pptx); its sibling cache uses source/sibling modification
+    /// times. A plugin declaring both direct-native capabilities is invoked on
+    /// every open so it can validate the source and any existing sibling; main
+    /// accepts only the exact, byte-identical sibling it reports. All edits
+    /// target native output, never the foreign source.
     ///
     /// format-handler: starts a persistent protocol session and returns a
     /// <see cref="FormatHandlerProxy"/> backed by that session.
@@ -319,33 +317,37 @@ public static class DocumentHandlerFactory
         {
             var targetExt = dumpReader.Manifest.ResolveTargetExtension();
             var sibling = Path.ChangeExtension(filePath, targetExt);
-            var needRegen = !File.Exists(sibling)
+            var directNative = dumpReader.Manifest.Supports?.Contains(
+                "direct-native", StringComparer.Ordinal) == true
+                && dumpReader.Manifest.Supports.Contains(
+                    "byte-preserving", StringComparer.Ordinal);
+            var shouldInvoke = directNative
+                || !File.Exists(sibling)
                 || File.GetLastWriteTimeUtc(filePath) > File.GetLastWriteTimeUtc(sibling);
 
-            if (needRegen)
+            if (shouldInvoke)
             {
                 var converted = DumpReaderInvoker.Run(filePath, ext);
-
-                // Some plugins (e.g. Word interop on .doc) inherently write a
-                // converted native file in the source directory as a side
-                // effect of their conversion path. If the sibling now exists
-                // and is current, prefer it over the batch-replayed copy:
-                // it's the plugin's direct conversion, higher fidelity than
-                // going through batch round-trip serialization.
-                var siblingFresh = File.Exists(sibling)
-                    && File.GetLastWriteTimeUtc(sibling) >= File.GetLastWriteTimeUtc(filePath);
-
-                if (siblingFresh)
+                if (converted.DirectNative)
                 {
-                    try { File.Delete(converted.ConvertedPath); } catch { /* tmp will age out */ }
+                    if (!PathsEqual(converted.ConvertedPath, sibling))
+                        throw new CliException(
+                            $"Direct-native plugin '{converted.Plugin.Manifest.Name}' returned an unexpected output path.")
+                        { Code = "plugin_contract_violation" };
+                    Console.Error.WriteLine(
+                        $"[note] validated byte-identical {Path.GetFileName(sibling)} from {Path.GetFileName(filePath)}");
                 }
                 else
                 {
+                    if (File.Exists(sibling))
+                    {
+                        Console.Error.WriteLine(
+                            $"[note] sibling {Path.GetFileName(sibling)} already exists; preserving it and using a temporary conversion");
+                        return OpenHandlerWithRetry(converted.ConvertedPath, targetExt, editable);
+                    }
                     try
                     {
-                        var bytes = File.ReadAllBytes(converted.ConvertedPath);
-                        File.WriteAllBytes(sibling, bytes);
-                        try { File.Delete(converted.ConvertedPath); } catch { /* tmp will age out */ }
+                        File.Move(converted.ConvertedPath, sibling, overwrite: false);
                     }
                     catch (Exception ex)
                     {
@@ -353,9 +355,9 @@ public static class DocumentHandlerFactory
                             $"[note] could not write sibling {Path.GetFileName(sibling)} ({ex.Message}); falling back to temp file (will reconvert next run)");
                         return OpenHandlerWithRetry(converted.ConvertedPath, targetExt, editable);
                     }
+                    Console.Error.WriteLine(
+                        $"[note] generated {Path.GetFileName(sibling)} from {Path.GetFileName(filePath)}; reusing on future runs (delete or rename it to force reconversion)");
                 }
-                Console.Error.WriteLine(
-                    $"[note] generated {Path.GetFileName(sibling)} from {Path.GetFileName(filePath)}; reusing on future runs (delete or rename it to force reconversion)");
             }
 
             // The sibling file may be transiently locked right after a fresh
@@ -383,6 +385,14 @@ public static class DocumentHandlerFactory
 
         return null;
     }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
 
     private static IDocumentHandler OpenHandlerWithRetry(string path, string ext, bool editable)
     {

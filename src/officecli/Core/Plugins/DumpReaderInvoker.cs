@@ -2,35 +2,41 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Text.Json;
+using System.Security.Cryptography;
 using OfficeCli.Handlers;
 
 namespace OfficeCli.Core.Plugins;
 
 /// <summary>
-/// Runs a dump-reader plugin per plugins/plugin-protocol.md §5.1. The plugin
-/// reads a foreign source file (e.g. .doc) and **streams** BatchItem objects
-/// as JSONL (one JSON object per line) on stdout. Main opens a fresh native
-/// scratch file (extension from the plugin's manifest <c>target</c> field —
-/// docx/xlsx/pptx), replays each item as it arrives, and returns the
-/// populated path.
+/// Runs a dump-reader plugin per plugins/plugin-protocol.md §5.1. A normal
+/// plugin emits BatchItem objects as JSONL; main buffers the lines, replays
+/// them synchronously into a native scratch file, and returns that path. A
+/// plugin declaring both <c>direct-native</c> and <c>byte-preserving</c>
+/// instead publishes the exact native sibling with an exactly zero-byte
+/// stdout stream; main verifies the sibling against the source.
 ///
-/// Streaming has two benefits over a buffered JSON-array transport: per-line
-/// activity feeds the idle watchdog (§5.6), and main's memory does not scale
-/// with batch size on multi-million-paragraph .doc files.
+/// The line-oriented transport gives the idle watchdog (§5.6) an activity
+/// signal and preserves item boundaries. Main currently buffers validated
+/// lines before synchronous replay, so this contract does not promise bounded
+/// aggregate host memory for very large dumps.
 ///
 /// The conversion is one-shot: edits to the returned file are not propagated
 /// back to the source file.
 /// </summary>
 public static class DumpReaderInvoker
 {
-    public sealed record DumpResult(string ConvertedPath, ResolvedPlugin Plugin);
+    public sealed record DumpResult(
+        string ConvertedPath,
+        ResolvedPlugin Plugin,
+        bool DirectNative);
 
     /// <summary>
     /// Resolve a dump-reader plugin for <paramref name="sourceExt"/>, invoke it
     /// against <paramref name="sourceFullPath"/>, and replay the resulting
-    /// JSONL stream into a fresh native file. Throws CliException on
-    /// resolution or invocation failure; otherwise the result references a
-    /// temp file the caller must dispose (or leave for OS tmp cleanup).
+    /// JSONL stream into a fresh native file, or verify its direct-native
+    /// sibling. Throws CliException on resolution, collision, or invocation
+    /// failure. A non-direct result references a temporary file that the
+    /// caller must move or leave for OS temporary-file cleanup.
     /// </summary>
     public static DumpResult Run(string sourceFullPath, string sourceExt)
     {
@@ -42,6 +48,13 @@ public static class DumpReaderInvoker
             };
 
         var targetExt = plugin.Manifest.ResolveTargetExtension();
+        var nativeSibling = Path.ChangeExtension(sourceFullPath, targetExt);
+        var siblingBefore = CaptureNativeSibling(nativeSibling);
+        var directNativeCapable = HasCapability(plugin, "direct-native")
+            && HasCapability(plugin, "byte-preserving");
+        if (directNativeCapable && siblingBefore.Exists)
+            EnsurePreexistingDirectSiblingIsCompatible(
+                sourceFullPath, siblingBefore, plugin.Manifest.Name);
         var tmpOut = Path.Combine(Path.GetTempPath(),
             $"officecli-dumpread-{Guid.NewGuid():N}{targetExt}");
         // minimal: true gives a bare-skeleton native file (no default styles,
@@ -51,8 +64,6 @@ public static class DumpReaderInvoker
         BlankDocCreator.Create(tmpOut, locale: null, minimal: true);
 
         int itemIndex = 0;
-        Exception? replayError = null;
-
         // v6.4: open the handler AFTER the plugin process finishes streaming.
         // The previous design called ExecuteBatchItem inside the PluginProcess
         // stdout reader task — i.e. on a background Task.Run thread. The
@@ -106,12 +117,12 @@ public static class DumpReaderInvoker
 
             // Bubble up the per-line callback error first — its message is more
             // actionable than the generic non-zero exit that follows.
-            if (PluginProcess.LineCallbackError is CliException ce)
+            if (result.StdoutCallbackError is CliException ce)
                 throw ce;
-            if (PluginProcess.LineCallbackError is not null)
+            if (result.StdoutCallbackError is not null)
                 throw new CliException(
-                    $"Dump-reader plugin '{plugin.Manifest.Name}' replay aborted: {PluginProcess.LineCallbackError.Message}",
-                    PluginProcess.LineCallbackError)
+                    $"Dump-reader plugin '{plugin.Manifest.Name}' replay aborted: {result.StdoutCallbackError.Message}",
+                    result.StdoutCallbackError)
                 { Code = "plugin_command_failed" };
 
             if (result.IdleTimedOut)
@@ -144,6 +155,32 @@ public static class DumpReaderInvoker
             // flooding. ResidentServer captures Console.Error for response warnings.
             foreach (var warning in ExtractStructuredWarnings(result.Stderr))
                 Console.Error.WriteLine(warning);
+
+            var siblingAfter = CaptureNativeSibling(nativeSibling);
+            if (directNativeCapable)
+            {
+                if (result.StdoutObserved)
+                    throw new CliException(
+                        $"Direct-native dump-reader plugin '{plugin.Manifest.Name}' wrote to stdout; " +
+                        "the direct-native success stream must be exactly zero bytes.")
+                    { Code = "plugin_contract_violation" };
+                if (!siblingAfter.Exists)
+                    throw new CliException(
+                        $"Direct-native dump-reader plugin '{plugin.Manifest.Name}' exited successfully without its native sibling.")
+                    { Code = "plugin_contract_violation" };
+                if (siblingBefore.Exists && siblingAfter != siblingBefore)
+                    throw new CliException(
+                        $"Direct-native dump-reader plugin '{plugin.Manifest.Name}' modified a pre-existing native sibling.")
+                    { Code = "plugin_contract_violation" };
+                EnsureByteIdentical(sourceFullPath, siblingAfter, plugin.Manifest.Name);
+                try { File.Delete(tmpOut); } catch { }
+                return new DumpResult(nativeSibling, plugin, DirectNative: true);
+            }
+
+            if (siblingAfter != siblingBefore)
+                throw new CliException(
+                    $"JSONL dump-reader plugin '{plugin.Manifest.Name}' changed a native sibling as an undeclared side effect.")
+                { Code = "plugin_contract_violation" };
 
             // v6.4: now that the plugin has exited and all JSONL is buffered,
             // open the handler on this thread and replay synchronously. See
@@ -197,28 +234,91 @@ public static class DumpReaderInvoker
                     $"[warning] dump-reader plugin '{plugin.Manifest.Name}' produced no commands for {Path.GetFileName(sourceFullPath)}. " +
                     $"The generated {targetExt} will be blank — this is usually a plugin gap, not a source-file property.");
         }
-        catch (Exception ex)
+        catch
         {
-            replayError = ex;
             try { File.Delete(tmpOut); } catch { }
             throw;
         }
-        finally
-        {
-            // If we threw, the tmp file is already cleaned up above. If we
-            // succeeded, the caller takes ownership. Either way, leave nothing
-            // dangling on disk.
-            if (replayError is null && !File.Exists(tmpOut))
-                throw new CliException(
-                    $"Dump-reader plugin '{plugin.Manifest.Name}' replay produced no output file.")
-                { Code = "plugin_contract_violation" };
-        }
 
-        return new DumpResult(tmpOut, plugin);
+        if (!File.Exists(tmpOut))
+            throw new CliException(
+                $"Dump-reader plugin '{plugin.Manifest.Name}' replay produced no output file.")
+            { Code = "plugin_contract_violation" };
+        return new DumpResult(tmpOut, plugin, DirectNative: false);
     }
 
     private static string Truncate(string s, int max) =>
         DisplayText.Truncate(s, max, "...");
+
+    private sealed record NativeSiblingSnapshot(
+        bool Exists,
+        long Length,
+        long LastWriteTicks,
+        string Sha256)
+    {
+        public static NativeSiblingSnapshot Missing { get; } = new(false, 0, 0, "");
+    }
+
+    private static bool HasCapability(ResolvedPlugin plugin, string capability) =>
+        plugin.Manifest.Supports?.Any(value =>
+            string.Equals(value, capability, StringComparison.Ordinal)) == true;
+
+    private static NativeSiblingSnapshot CaptureNativeSibling(string path)
+    {
+        if (!File.Exists(path)) return NativeSiblingSnapshot.Missing;
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new CliException(
+                $"Native sibling {Path.GetFileName(path)} must not be a reparse point.")
+            { Code = "plugin_output_conflict" };
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan);
+        if ((File.GetAttributes(stream.SafeFileHandle) & FileAttributes.ReparsePoint) != 0)
+            throw new CliException(
+                $"Native sibling {Path.GetFileName(path)} must not be a reparse point.")
+            { Code = "plugin_output_conflict" };
+        return new NativeSiblingSnapshot(
+            true,
+            stream.Length,
+            File.GetLastWriteTimeUtc(stream.SafeFileHandle).Ticks,
+            Convert.ToHexString(SHA256.HashData(stream)));
+    }
+
+    private static void EnsureByteIdentical(
+        string sourcePath,
+        NativeSiblingSnapshot sibling,
+        string pluginName)
+    {
+        var source = CaptureNativeSibling(sourcePath);
+        if (!source.Exists
+            || source.Length != sibling.Length
+            || !string.Equals(source.Sha256, sibling.Sha256, StringComparison.Ordinal))
+            throw new CliException(
+                $"Direct-native dump-reader plugin '{pluginName}' did not produce a byte-identical native sibling.")
+            { Code = "plugin_contract_violation" };
+    }
+
+    private static void EnsurePreexistingDirectSiblingIsCompatible(
+        string sourcePath,
+        NativeSiblingSnapshot sibling,
+        string pluginName)
+    {
+        var source = CaptureNativeSibling(sourcePath);
+        if (!source.Exists
+            || source.Length != sibling.Length
+            || !string.Equals(source.Sha256, sibling.Sha256, StringComparison.Ordinal))
+            throw new CliException(
+                $"Direct-native dump-reader plugin '{pluginName}' cannot use the different pre-existing native sibling.")
+            {
+                Code = "plugin_output_conflict",
+                Suggestion = "Move or rename the existing sibling, then retry.",
+            };
+    }
 
     private static IReadOnlyList<string> ExtractStructuredWarnings(string stderr)
     {

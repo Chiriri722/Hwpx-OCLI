@@ -177,12 +177,19 @@ officecli add deck.pptx / --type slide --prop title="Q4 Report"
 | PowerPoint (.pptx) | ✅ | ✅ | ✅ |
 | Hancom HWPX / OWPML (plugin) | ✅ | Plain-text subset | — |
 | Hancom HWP / HML (plugin) | ✅ via DOCX projection | — | — |
+| Hancom Cell 12.0300 verified OOXML carrier subset (plugin) | ✅ via XLSX sibling | Sibling only | — |
+| Hancom Show 12.0000 verified OOXML carrier subset (plugin) | ✅ via PPTX sibling | Sibling only | — |
 
 The optional [Hancom plugin](plugins/hancom/README.md) keeps the two ownership
 models separate: `.hwpx`/`.owpml` are opened directly by a package-preserving
 format handler, while `.hwp`/`.hml` remain read-only dump-reader inputs. HWPX
 editing is intentionally limited to existing plain `hp:t` text nodes; structural
-edits and format creation are not advertised.
+edits and format creation are not advertised. The plugin also validates the
+exact public-sample profiles Cell 12.0300 and Show 12.0000, then creates a
+primary-stream-byte-identical `.xlsx`/`.pptx` sibling without modifying the source.
+That narrow bridge's profile markers classify compatibility but do not authenticate
+the producer. It does not cover `.nxl`, CFB/legacy generations, arbitrary v12 builds,
+source write-back, or creation.
 
 **Word** — full [i18n & RTL support](https://github.com/iOfficeAI/OfficeCLI/wiki/i18n) (per-script font slots, per-script BCP-47 lang tags `lang.latin/ea/cs`, complex-script bold/italic/size, `direction=rtl` cascading through paragraph/run/section/table/style/header/footer/docDefaults, `rtlGutter` + `pgBorders` shorthand, locale-aware page numbering for Hindi/Arabic/Thai/CJK; `create --locale ar-SA` auto-enables RTL), [paragraphs](https://github.com/iOfficeAI/OfficeCLI/wiki/word-paragraph) (framePr, tabs shorthand, char-based indents), [runs](https://github.com/iOfficeAI/OfficeCLI/wiki/word-run) (underline.color, position half-pts), [tables](https://github.com/iOfficeAI/OfficeCLI/wiki/word-table) (virtual column ops add/remove/move/copyfrom, hMerge), [styles](https://github.com/iOfficeAI/OfficeCLI/wiki/word-style), [textbox](https://github.com/iOfficeAI/OfficeCLI/wiki/word-textbox) / [shape](https://github.com/iOfficeAI/OfficeCLI/wiki/word-shape) (textbox: rotation, `textDirection` `eaVert`/`vert270`, gradient, shadow, opacity), [headers/footers](https://github.com/iOfficeAI/OfficeCLI/wiki/word-header-footer), [images](https://github.com/iOfficeAI/OfficeCLI/wiki/word-picture) (PNG/JPG/GIF/SVG), [equations](https://github.com/iOfficeAI/OfficeCLI/wiki/word-equation) (LaTeX input), [diagrams](https://github.com/iOfficeAI/OfficeCLI/wiki/diagram) (mermaid → native editable shapes, or any mermaid type as a full-fidelity PNG), [comments](https://github.com/iOfficeAI/OfficeCLI/wiki/word-comment), [footnotes](https://github.com/iOfficeAI/OfficeCLI/wiki/word-footnote), [watermarks](https://github.com/iOfficeAI/OfficeCLI/wiki/word-watermark), [bookmarks](https://github.com/iOfficeAI/OfficeCLI/wiki/word-bookmark), [TOC](https://github.com/iOfficeAI/OfficeCLI/wiki/word-toc), [charts](https://github.com/iOfficeAI/OfficeCLI/wiki/word-chart), [hyperlinks](https://github.com/iOfficeAI/OfficeCLI/wiki/word-hyperlink), [sections](https://github.com/iOfficeAI/OfficeCLI/wiki/word-section), [form fields](https://github.com/iOfficeAI/OfficeCLI/wiki/word-formfield), [content controls (SDT)](https://github.com/iOfficeAI/OfficeCLI/wiki/word-sdt), [fields](https://github.com/iOfficeAI/OfficeCLI/wiki/word-field) (22 zero-param types + MERGEFIELD / REF / PAGEREF / SEQ / STYLEREF / DOCPROPERTY / IF), [OLE objects](https://github.com/iOfficeAI/OfficeCLI/wiki/word-ole), [revisions / tracked changes](https://github.com/iOfficeAI/OfficeCLI/wiki/word-revision) (`revision.type=ins\|del\|format\|moveFrom\|moveTo` + `revision.action=accept\|reject`, per-target `/revision[@author=Alice]` selector, tracked Find&Replace), page background color, [document properties](https://github.com/iOfficeAI/OfficeCLI/wiki/word-document)
 

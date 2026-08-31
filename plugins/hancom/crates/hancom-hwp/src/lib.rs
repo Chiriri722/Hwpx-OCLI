@@ -13,6 +13,7 @@ pub mod format;
 pub mod format_handler;
 pub mod hwpml;
 pub mod manifest;
+pub mod ooxml_carrier;
 pub mod owpml;
 
 use std::ffi::{OsStr, OsString};

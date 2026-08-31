@@ -75,6 +75,12 @@ Run `officecli plugins list` before promising Hancom support. With the
 - `.hwpx` and `.owpml` open directly for `view`, `get`, `query`, `validate`,
   and replacement of existing plain text nodes. Structural `add`, `remove`,
   `move`, `copy`, raw mutation, and creation are unsupported.
+- Verified Cell 12.0300 `.cell` and Show 12.0000 `.show` OOXML carriers are
+  read-only inputs. They create a primary-stream-byte-identical sibling `.xlsx`
+  or `.pptx` under the enumerated filesystem-metadata policy;
+  edit that sibling, not the Hancom source. Profile markers classify this
+  narrow subset but do not authenticate its producer. `.nxl`, CFB/legacy
+  files, unobserved profiles/builds, write-back, and creation are unsupported.
 - Address editable text with paths such as
   `/document/section[1]/paragraph[1]/text[1]`. After `set`, run `save` before
   an external reader or `close` before proving a fresh-session reopen.

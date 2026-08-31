@@ -3,7 +3,7 @@ name = "officecli-hwpx"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "OfficeCLI dump-reader and editable format-handler plugins for Hancom HWP/HML/HWPX/OWPML documents"
+description = "OfficeCLI plugins for Hancom HWP/HML/HWPX/OWPML and validated Cell/Show OOXML carriers"
 license = "MIT"
 repository = "https://github.com/Chiriri722/Hwpx-OCLI"
 
@@ -21,6 +21,14 @@ path = "src/bin/officecli-dump-reader-hwpx.rs"
 name = "officecli-hancom-hwpx"
 path = "src/bin/officecli-hancom-hwpx.rs"
 
+[[bin]]
+name = "officecli-hancom-cell"
+path = "src/bin/officecli-hancom-cell.rs"
+
+[[bin]]
+name = "officecli-hancom-show"
+path = "src/bin/officecli-hancom-show.rs"
+
 [lib]
 name = "officecli_hwpx"
 path = "src/lib.rs"
@@ -36,6 +44,7 @@ tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.177"
+xattr = "1.6.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

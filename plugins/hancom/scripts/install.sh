@@ -15,24 +15,33 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_NAMES=("officecli-hancom-hwp" "officecli-hancom-hwp" "officecli-hancom-hwpx" "officecli-hancom-hwpx")
+BIN_NAMES=("officecli-hancom-hwp" "officecli-hancom-hwp" "officecli-hancom-hwpx" "officecli-hancom-hwpx" "officecli-hancom-cell" "officecli-hancom-show")
 BUILT_BINS=(
   "${REPO_ROOT}/target/release/${BIN_NAMES[0]}"
   "${REPO_ROOT}/target/release/${BIN_NAMES[1]}"
   "${REPO_ROOT}/target/release/${BIN_NAMES[2]}"
   "${REPO_ROOT}/target/release/${BIN_NAMES[3]}"
+  "${REPO_ROOT}/target/release/${BIN_NAMES[4]}"
+  "${REPO_ROOT}/target/release/${BIN_NAMES[5]}"
 )
-PLUGIN_NAMES=("officecli-hancom-hwp" "officecli-hancom-hwp" "officecli-hancom-hwpx" "officecli-hancom-hwpx")
-KINDS=("dump-reader" "dump-reader" "format-handler" "format-handler")
-EXTENSIONS=("hwp" "hml" "hwpx" "owpml")
+PLUGIN_NAMES=("officecli-hancom-hwp" "officecli-hancom-hwp" "officecli-hancom-hwpx" "officecli-hancom-hwpx" "officecli-hancom-cell" "officecli-hancom-show")
+KINDS=("dump-reader" "dump-reader" "format-handler" "format-handler" "dump-reader" "dump-reader")
+EXTENSIONS=("hwp" "hml" "hwpx" "owpml" "cell" "show")
+TARGETS=("docx" "docx" "" "" "xlsx" "pptx")
+EXPECTED_KINDS_JSON=("[\"dump-reader\"]" "[\"dump-reader\"]" "[\"format-handler\"]" "[\"format-handler\"]" "[\"dump-reader\"]" "[\"dump-reader\"]")
+EXPECTED_EXTENSIONS_JSON=("[\".hwp\",\".hml\"]" "[\".hwp\",\".hml\"]" "[\".hwpx\",\".owpml\"]" "[\".hwpx\",\".owpml\"]" "[\".cell\"]" "[\".show\"]")
 ENV_VARS=(
   "OFFICECLI_PLUGIN_DUMP_READER_HWP"
   "OFFICECLI_PLUGIN_DUMP_READER_HML"
   "OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX"
   "OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML"
+  "OFFICECLI_PLUGIN_DUMP_READER_CELL"
+  "OFFICECLI_PLUGIN_DUMP_READER_SHOW"
 )
-CANONICAL_INDEXES=(0 0 2 2)
-LINK_TARGETS=("" "../hwp/plugin" "" "../hwpx/plugin")
+CANONICAL_INDEXES=(0 0 2 2 4 5)
+LINK_TARGETS=("" "../hwp/plugin" "" "../hwpx/plugin" "" "")
+EXPECTED_SUITE_VERSION=""
+MANIFEST_VERSION_RESULT=""
 
 # Releases before format-handler promotion installed these two dump-reader
 # paths. They are part of the same rollback domain and must be absent after a
@@ -157,13 +166,42 @@ assert_install_targets_safe() {
   done
 }
 
+LOCK_DIR="${PLUGINS_DIR}/.hancom-install.lock"
+LOCK_HELD=0
+
+acquire_install_lock() {
+  assert_install_directories_not_links || return 1
+  mkdir -p "${PLUGINS_DIR}" || return 1
+  assert_install_directories_not_links || return 1
+  if ! mkdir -m 700 "${LOCK_DIR}" 2>/dev/null; then
+    echo "error: another Hancom plugin install or uninstall is already running for ${PLUGINS_DIR}" >&2
+    return 1
+  fi
+  LOCK_HELD=1
+}
+
+release_install_lock() {
+  if [[ "${LOCK_HELD}" -eq 1 ]]; then
+    if ! rmdir "${LOCK_DIR}" 2>/dev/null; then
+      echo "warning: could not remove Hancom installer lock directory: ${LOCK_DIR}" >&2
+    fi
+    LOCK_HELD=0
+  fi
+  return 0
+}
+
+if [[ "${ACTION}" != "print-env" ]]; then
+  acquire_install_lock || exit 73  # EX_CANTCREAT
+  trap release_install_lock EXIT
+fi
+
 case "${ACTION}" in
   uninstall)
     assert_install_directories_not_links || exit 73  # EX_CANTCREAT
     assert_install_targets_safe || exit 73  # EX_CANTCREAT
 
     # Remove aliases before either their new or legacy canonical file.
-    UNINSTALL_ORDER=(5 3 1 0 2 4)
+    UNINSTALL_ORDER=(7 3 1 4 5 0 2 6)
     for index in "${UNINSTALL_ORDER[@]}"; do
       path="${MANAGED_PATHS[$index]}"
       dir="${MANAGED_DIRS[$index]}"
@@ -199,7 +237,7 @@ if [[ "${DO_BUILD}" -eq 1 ]]; then
   ( cd "${REPO_ROOT}" && cargo build --release --locked )
 fi
 
-for index in 0 2; do
+for index in 0 2 4 5; do
   if [[ ! -x "${BUILT_BINS[$index]}" ]]; then
     echo "error: binary not found at ${BUILT_BINS[$index]}" >&2
     echo "run without --no-build, or run: cargo build --release" >&2
@@ -210,21 +248,31 @@ done
 manifest_matches_target() {
   local path="$1"
   local index="$2"
-  local manifest name_needle protocol_needle kind_needle extension_needle
+  local manifest name_needle protocol_needle kinds_needle extensions_needle version_suffix
 
   manifest="$("${path}" --info 2>/dev/null)" || return 1
   name_needle="\"name\":\"${PLUGIN_NAMES[$index]}\""
   protocol_needle="\"protocol\":1"
-  kind_needle="\"${KINDS[$index]}\""
-  extension_needle="\".${EXTENSIONS[$index]}\""
+  kinds_needle="\"kinds\":${EXPECTED_KINDS_JSON[$index]}"
+  extensions_needle="\"extensions\":${EXPECTED_EXTENSIONS_JSON[$index]}"
   [[ "${manifest}" == *"${name_needle}"* ]] || return 1
   [[ "${manifest}" == *"${protocol_needle}"* ]] || return 1
-  [[ "${manifest}" == *"${kind_needle}"* ]] || return 1
-  [[ "${manifest}" == *"${extension_needle}"* ]] || return 1
+  [[ "${manifest}" == *"${kinds_needle}"* ]] || return 1
+  [[ "${manifest}" == *"${extensions_needle}"* ]] || return 1
+  version_suffix="${manifest#*\"version\":\"}"
+  [[ "${version_suffix}" != "${manifest}" ]] || return 1
+  MANIFEST_VERSION_RESULT="${version_suffix%%\"*}"
+  [[ -n "${MANIFEST_VERSION_RESULT}" ]] || return 1
+  if [[ ! "${MANIFEST_VERSION_RESULT}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+    return 1
+  fi
+  if [[ -n "${EXPECTED_SUITE_VERSION}" && "${MANIFEST_VERSION_RESULT}" != "${EXPECTED_SUITE_VERSION}" ]]; then
+    return 1
+  fi
   if [[ "${KINDS[$index]}" == "dump-reader" ]]; then
-    [[ "${manifest}" == *"\"target\":\"docx\""* ||
-       "${manifest}" == *"\"target\":\"xlsx\""* ||
-       "${manifest}" == *"\"target\":\"pptx\""* ]] || return 1
+    [[ "${manifest}" == *"\"target\":\"${TARGETS[$index]}\""* ]] || return 1
+  else
+    [[ "${manifest}" != *"\"target\":"* ]] || return 1
   fi
 }
 
@@ -232,6 +280,9 @@ for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
   if ! manifest_matches_target "${BUILT_BINS[$index]}" "${index}"; then
     echo "error: '${BIN_NAMES[$index]} --info' does not match ${KINDS[$index]}/${EXTENSIONS[$index]}; refusing to install." >&2
     exit 70  # EX_SOFTWARE
+  fi
+  if [[ -z "${EXPECTED_SUITE_VERSION}" ]]; then
+    EXPECTED_SUITE_VERSION="${MANIFEST_VERSION_RESULT}"
   fi
 done
 
@@ -269,7 +320,11 @@ cleanup_staging() {
   done
   return 0
 }
-trap cleanup_staging EXIT
+cleanup_on_exit() {
+  cleanup_staging
+  release_install_lock
+}
+trap cleanup_on_exit EXIT
 
 for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
   if [[ -z "${LINK_TARGETS[$index]}" ]]; then
@@ -399,7 +454,7 @@ cleanup_recovery_backup() {
   fi
 }
 
-# Commit the four new paths first. The old dump-reader paths remain discoverable
+# Commit the six active paths first. The old dump-reader paths remain discoverable
 # until both format-handler paths exist; only then are they retired.
 for ((index = 0; index < ${#MANAGED_PATHS[@]}; index++)); do
   path="${MANAGED_PATHS[$index]}"
@@ -456,7 +511,6 @@ done
 for dir in "${OBSOLETE_DIRS[@]}"; do
   rmdir "${dir}" 2>/dev/null || true
 done
-trap - EXIT
 
 for ((index = 0; index < ${#EXTENSIONS[@]}; index++)); do
   if [[ -n "${LINK_TARGETS[$index]}" ]]; then
@@ -472,6 +526,10 @@ echo
 echo "manifests reported by the installed plugins:"
 "${INSTALL_PATHS[0]}" --info
 "${INSTALL_PATHS[2]}" --info
+"${INSTALL_PATHS[4]}" --info
+"${INSTALL_PATHS[5]}" --info
 echo
 echo "verify discovery with:"
 echo "  officecli plugins list"
+release_install_lock
+trap - EXIT

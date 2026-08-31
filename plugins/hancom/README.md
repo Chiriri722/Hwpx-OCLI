@@ -1,13 +1,17 @@
 # OfficeCLI Hancom plugins
 
-[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 한글 문서 플러그인 모음이다.
-역할과 쓰기 권한이 다른 두 바이너리를 제공한다.
+[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 한컴 문서 플러그인 모음이다.
+역할·대상 포맷·쓰기 권한이 다른 네 바이너리를 제공한다.
 
 - `officecli-hancom-hwpx`: `.hwpx`·`.owpml`을 직접 여는 `format-handler`.
   조회와 strict editable subset의 텍스트 수정·저장을 지원한다.
 - `officecli-hancom-hwp`: `.hwp`·legacy `.hml`을 DOCX 명령으로 옮기는
   `dump-reader`. 바이너리 HWP만 선택적으로
   [RHWP](https://github.com/edwardkim/rhwp) v0.8.4+를 변환기로 사용한다.
+- `officecli-hancom-cell`: 검증된 Cell 12.0300 OOXML carrier `.cell`을
+  byte-identical `.xlsx` 형제로 만드는 읽기 전용 `dump-reader`.
+- `officecli-hancom-show`: 검증된 Show 12.0000 OOXML carrier `.show`를
+  byte-identical `.pptx` 형제로 만드는 읽기 전용 `dump-reader`.
 
 ## 한컴 공개 문서 표기
 
@@ -23,34 +27,53 @@
 .hwpx/.owpml ──[format-handler]──▶ view/get/query + text set/save
 .hml          ──[dump-reader]────▶ BatchItem JSONL ──[officecli]──▶ .docx
 .hwp          ──[RHWP, 선택]────▶ 임시 .hwpx ──[dump-reader]────▶ .docx
+.cell 12.0300 ──[검증+byte copy]──────────────────────────────▶ .xlsx
+.show 12.0000 ──[검증+byte copy]──────────────────────────────▶ .pptx
 ```
 
 `.hwpx`와 `.owpml`은 형제 DOCX를 만들지 않고 원본 패키지를 직접 연다. 저장 가능한
 범위는 plain `hp:p/hp:run/hp:t` 텍스트 노드의 치환이다. 저장은 같은 디렉터리의
 copy-on-write 임시 파일에서 G0~G3 검증을 마친 뒤 원자 교체하며, 바뀌지 않은 ZIP
 entry와 metadata는 그대로 보존한다. `.hwp`와 `.hml`은 읽기 전용 변환 경로다.
+Cell/Show는 전체 ZIP·XML과 관측된 profile marker를 검증한 뒤 원본을 바꾸지
+않고 native 형제를 만든다. marker는 지원 부분집합을 분류할 뿐 생산자나 provenance를
+인증하지 않는다. 이 경로는 proprietary parser나 일반 변환기가 아니다.
 
 ## 설치
 
-설치 스크립트는 다음 네 활성 경로와 두 폐기 경로를 하나의 rollback domain으로
+설치 스크립트는 다음 여섯 활성 경로와 두 폐기 경로를 하나의 rollback domain으로
 관리한다.
 
 | 확장자 | kind | 바이너리 |
 |---|---|---|
 | `.hwp`, `.hml` | `dump-reader` | `officecli-hancom-hwp` |
 | `.hwpx`, `.owpml` | `format-handler` | `officecli-hancom-hwpx` |
+| `.cell` | `dump-reader` (`target=xlsx`) | `officecli-hancom-cell` |
+| `.show` | `dump-reader` (`target=pptx`) | `officecli-hancom-show` |
 
-새 활성 경로 네 곳을 모두 검증·커밋한 뒤에만 이전
-`dump-reader/{hwpx,owpml}` 경로를 폐기한다. 어느 단계든 실패하면 기존 여섯
-관리 대상의 상태를 복원하며, unrelated 플러그인은 건드리지 않는다.
+새 활성 경로 여섯 곳을 모두 검증·커밋한 뒤에만 이전
+`dump-reader/{hwpx,owpml}` 경로를 폐기한다. 어느 단계든 실패하면 기존 여덟
+관리 대상의 상태를 conflict-safe best effort로 복원하며, unrelated 플러그인은 건드리지
+않는다. 설치 성공은 여섯 활성 경로가 한 suite version으로 postflight 검증되고 두 폐기
+경로가 사라진 뒤에만 반환한다. 여덟 독립 경로 전체에 대한 filesystem/crash atomicity는
+제공하지 않는다. 실패하거나 강제 종료된 실행은 partial layout과 backup을 남길 수 있으므로
+같은 설치기가 성공할 때까지 Hancom plugin suite를 사용하지 않는다. rollback은 다른 actor가
+바꾼 경로를 덮지 않으며 종료 이후의 완전 복구를 보장하지 않는다.
+모든 역할의 name/version/protocol/kind/extensions/target을 staging 전에 확인하고,
+Windows에서는 같은 로그인 세션과 plugin root를 공유하는 named mutex로, Unix에서는
+같은 plugin root의 atomic lock directory로 install과 uninstall을 직렬화한다. 동시 host
+실행이 한 immutable generation만 관측한다는 보장은 없다.
+Unix 프로세스가 강제 종료되어 `.hancom-install.lock`이 남으면 실행 중인 설치기가
+없는지 먼저 확인한 뒤 그 정확한 빈 디렉터리만 수동으로 제거한다.
 
 ```bash
 scripts/install.sh
 ```
 
-Unix에서는 `dump-reader/hwp/plugin`과 `format-handler/hwpx/plugin`에 실제
-바이너리를 설치한다. `dump-reader/hml/plugin`은 `../hwp/plugin`,
-`format-handler/owpml/plugin`은 `../hwpx/plugin` 상대 심볼릭 링크다. 네 활성
+Unix에서는 `dump-reader/hwp/plugin`, `format-handler/hwpx/plugin`,
+`dump-reader/cell/plugin`, `dump-reader/show/plugin`에 실제 바이너리를 설치한다.
+`dump-reader/hml/plugin`은 `../hwp/plugin`, `format-handler/owpml/plugin`은
+`../hwpx/plugin` 상대 심볼릭 링크다. 여섯 활성
 경로를 항상 함께 설치·제거하며 별도의 포맷 선택 옵션은 없다.
 
 ```bash
@@ -59,13 +82,15 @@ scripts/install.sh --uninstall   # 제거
 scripts/install.sh --print-env   # 환경변수 방식 안내 (1순위 경로)
 ```
 
-`--print-env`는 역할별 바이너리를 가리키는 다음 네 설정을 출력한다.
+`--print-env`는 역할/확장자별 바이너리를 가리키는 다음 여섯 설정을 출력한다.
 
 ```bash
 OFFICECLI_PLUGIN_DUMP_READER_HWP
 OFFICECLI_PLUGIN_DUMP_READER_HML
 OFFICECLI_PLUGIN_FORMAT_HANDLER_HWPX
 OFFICECLI_PLUGIN_FORMAT_HANDLER_OWPML
+OFFICECLI_PLUGIN_DUMP_READER_CELL
+OFFICECLI_PLUGIN_DUMP_READER_SHOW
 ```
 
 확인:
@@ -93,18 +118,21 @@ Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로
 .\scripts\install.ps1 -PrintEnv
 ```
 
-설치 위치는 다음 네 곳이다.
+설치 위치는 다음 여섯 곳이다.
 
 ```text
 $HOME\.officecli\plugins\dump-reader\hwp\plugin.exe
 $HOME\.officecli\plugins\dump-reader\hml\plugin.exe
 $HOME\.officecli\plugins\format-handler\hwpx\plugin.exe
 $HOME\.officecli\plugins\format-handler\owpml\plugin.exe
+$HOME\.officecli\plugins\dump-reader\cell\plugin.exe
+$HOME\.officecli\plugins\dump-reader\show\plugin.exe
 ```
 
 Windows에서는 심볼릭 링크 권한에 의존하지 않고 역할별 바이너리를 해당 두 경로에
-각각 복사한다. 네 임시 복사본의 SHA-256과 `--info`의 name/protocol/kind/
-extensions/target을 먼저 검증한 뒤 교체하고, 중간 실패 시 확장자별 커밋 상태를
+각각 복사하고 Cell/Show 전용 바이너리는 각 한 경로에 복사한다. 여섯 임시
+복사본의 SHA-256과 `--info`의 name/protocol/exact kind/exact extensions/
+exact target을 먼저 검증한 뒤 교체하고, 중간 실패 시 확장자별 커밋 상태를
 역순으로 되돌린다. 경로를 순차 교체하므로 프로세스 강제 종료까지 포함한 완전한
 다중 경로 원자성을 보장하지는 않는다.
 
@@ -115,6 +143,9 @@ symlink/junction/reparse point 또는 디렉터리가 아닌 component가 있으
 각 target 복원은 앞선 정리 실패와 무관하게 끝까지 시도한다. rollback 전에 현재
 파일의 hash/형태가 installer가 둔 값인지 다시 확인하므로, 동시 외부 변경을
 덮어쓰지 않는다. 이 경우 복구용 백업 위치를 경고로 남긴다.
+Windows 제거는 resident 종료 직후 남을 수 있는 image lock을 최대 20회 × 250ms
+재시도한다. 각 시도마다 directory와 target의 reparse 경계를 다시 확인하며,
+영구 권한 오류는 5초 안에 최종 실패한다.
 
 ## 포맷 판별
 
@@ -127,6 +158,9 @@ symlink/junction/reparse point 또는 디렉터리가 아닌 component가 있으
 | HWPML (`.hml`, 단일 XML) | 문단·문자·기본 스타일·표 공통 부분집합을 직접 읽는다 |
 | HWP 5.x (CFB) | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
 | HWP 3.0 | RHWP가 있으면 임시 HWPX로 변환 후 처리, 없으면 exit 3 |
+| Cell 12.0300 (검증된 ZIP/OOXML profile) | 전체 package 검증 후 byte-identical `.xlsx` 형제 생성 |
+| Show 12.0000 (검증된 ZIP/OOXML profile) | 전체 package 검증 후 byte-identical `.pptx` 형제 생성 |
+| `.nxl`, CFB Cell/Show, 다른 생산자 build | exit 3; 구조를 추측하지 않음 |
 | 그 밖 (`.docx` 등) | exit 2와 원인 명시 |
 
 바이너리 HWP 지원 계획은 `docs/04-hwp-support-plan.md`.
@@ -174,10 +208,14 @@ cargo run --release --example detect -- 문서1.hwp 문서2.hwpx
 # dump-reader 매니페스트와 format-handler 매니페스트
 officecli-hancom-hwp --info
 officecli-hancom-hwpx --info
+officecli-hancom-cell --info
+officecli-hancom-show --info
 
 # dump-reader 변환 결과 보기
 officecli-hancom-hwp dump /path/to/문서.hwp
 officecli-hancom-hwp dump /path/to/문서.hml
+officecli-hancom-cell dump /path/to/표본.cell
+officecli-hancom-show dump /path/to/표본.show
 
 # HWPX parser/emit 경로를 직접 진단할 때만 명시 실행
 officecli-hancom-hwp dump 문서.hwpx --quiet
@@ -194,9 +232,52 @@ officecli validate 문서.hwpx
 `set`은 자동 resident 세션에 반영될 수 있다. 다른 프로그램이 디스크 파일을 즉시 읽어야
 하면 `save`로 flush하고, 새 세션 재열기까지 확인하려면 위처럼 `close`한 뒤 다시 `view`한다.
 
-두 플러그인의 표준출력은 각 프로토콜의 JSONL 전용이다. 진단은 stderr로 나간다.
+네 플러그인의 표준출력은 각 프로토콜 전용이다. HWP/HML은 JSONL을 내보내고,
+Cell/Show는 성공 시 stdout에 바이트를 하나도 쓰지 않고 native 형제를 직접
+no-clobber 원자 커밋한다. 진단은 stderr로 나간다. 호스트는 매니페스트가
+`direct-native`와 `byte-preserving`을 모두 선언한 경우 매번 플러그인을 호출하며,
+exit 0 + raw stdout 0 bytes + 현재 source와 byte-identical인 non-reparse sibling만
+성공으로 인정한다. BOM·공백·빈 줄·JSONL도 계약 위반이고, 서로 다른 기존 sibling은
+플러그인 실행 전에 충돌로 거부한다. 실패한 실행 뒤에는 호스트가 소유권을 증명할 수
+없는 sibling 경로를 삭제하지 않는다. 플러그인은 게시 전 private candidate만 정리하며,
+이미 게시된 sibling은 보존된다.
 `dump-reader`의 직접 HWPX 입력은 RHWP 브리지와 DOCX projection을 시험하기 위한
 명시적 진단 경로일 뿐, 매니페스트에는 `.hwpx`/`.owpml`을 광고하지 않는다.
+
+### Cell/Show modern OOXML carrier 경계
+
+공개기관의 Cell 12.0300 한 개와 Show 12.0000 세 개만 지원 profile의 근거다.
+이 marker들은 누구나 작성할 수 있으므로 한컴이 만들었다는 인증 수단이 아니다.
+소스 512MiB, ZIP 4,096 entries, entry 64MiB, 누적 expanded 256MiB, XML 16MiB,
+압축비 1,000:1과 XML event/name/attribute/namespace/depth 예산을 넘으면 실패한다.
+local/central ZIP header와 실제 expanded length를 대조하고, 모든 entry CRC와
+XML/rels를 끝까지 읽는다. 경로 충돌·symlink/special entry·암호화·미지원 압축·
+DTD/PI·잘못된 선언/UTF-8/XML 1.0 문자·미선언 namespace를 거부한다. 모든 내부
+relationship target은 존재해야 하며 전체 non-directory part가 root relationship에서
+도달해야 한다. 이 closure의 분모에는 `[Content_Types].xml`, relationship part와 일반
+internal part가 들어가고 directory entry와 external URI는 들어가지 않는다. 관측된
+relationship/content-type만 허용하며 VBA/XLM macro part, ActiveX, OLE·embedded package,
+external data/media 및 허용되지 않은 action/relationship class를 거부한다. Show의 bounded
+HTTPS hyperlink는 보존한다. 따라서 arbitrary Cell formula·defined name이나 presentation
+action을 inert하다고 인증하지 않으며, 소비자 보안 설정을 대신하지 않는다.
+
+검증은 private finalized candidate의 retained file identity에서 파생한 같은 바이트로
+수행한다. source primary stream의 hash/size/mtime 또는 경로 정체성이 copy부터 commit
+사이 바뀌면 게시하지 않는다. fresh sibling에는 primary/default stream의 정확한 바이트와
+source mtime을 보존한다. Windows는 read-only, `Zone.Identifier`, canonical DACL
+rule/protected state를 복사·검증하고 EFS source와 그 외 ADS는 fail-closed한다. retained
+Windows source handle은 read sharing만 허용해 이 path 기반 ADS/DACL 검사 동안 write/delete
+open과 rename/replacement를 막는다. Linux는
+retained descriptor에서 plugin credential로 보이고 읽을 수 있는 complete bounded xattr
+set과 mode를 보존한다. macOS는 여기에 extended ACL을 별도 복사·검증한다. 열거·읽기·적용·
+검증 실패는 게시 전에 fail-closed하고, cached sibling도 이 열거된 항목이 모두 맞아야
+재사용한다. Windows owner/SACL/MIC, Unix UID/GID, process-invisible attribute, creation time,
+hard-link identity, allocation/compression layout 등 file-object 전체 동일성을 보장하지 않는다.
+
+Show 공개 표본의 잘못된 `0x5455` extended timestamp는 Show profile 후보에서
+flags=2, 길이=13, 동일 timestamp 3회인 정확한 모양만 익명 검증 복사본에서
+neutralize한다. 원본과 결과는 그 바이트를 그대로 유지한다. 상세 근거와 공개 표본
+해시는 [ADR-0016](../../docs/adr/0016-hancom-v12-ooxml-carrier-bridge.md)에 있다.
 
 ## 커버리지
 
@@ -297,6 +378,9 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
   않은 차트 배치
 - plain 텍스트 치환을 넘는 HWPX 구조 편집(`add/remove/move/copy/raw-set/add-part`)
 - 편집 gate를 통과하지 못한 비정규·불완전 HWPX의 저장(조회는 별도 관대한 경계)
+- `.nxl`, CFB/legacy Cell·Show, Cell 12.0300/Show 12.0000 외 생산자 build
+- Cell/Show source write-back·생성·정규화, 모든 세대 호환 또는 별도 export와의
+  일반적 의미/바이트 동등성
 
 ## 개발
 
@@ -306,6 +390,7 @@ cargo test -p officecli-hwpx --test parse_owpml     # OWPML 파싱 107개
 cargo test -p officecli-hwpx --test parse_hwpml     # HWPML 파싱 44개
 cargo test -p officecli-hwpx --test protocol_contract # 프로토콜 계약 E2E 64개
 cargo test -p officecli-hwpx --test hwpx_format_handler
+cargo test -p officecli-hwpx --test ooxml_carrier
 cargo test -p officecli-hwpx --test install_contract
 cargo test -p officecli-hwpx --test golden          # 골든파일 회귀 3개
 cargo clippy --workspace --locked --all-targets -- -D warnings
@@ -332,7 +417,8 @@ scripts/verify-roundtrip.sh                         # PATH의 current host 사�
 OFFICECLI=/absolute/path/to/officecli scripts/verify-roundtrip.sh
 ```
 
-두 kind의 디스커버리, format-handler 조회·텍스트 저장·재열기·검증과
+두 kind와 여섯 활성 경로의 디스커버리, format-handler 조회·텍스트 저장·재열기·검증,
+Cell/Show direct-native sibling의 byte/source-metadata 보존과
 dump-reader의 `plugins lint` → JSONL → DOCX replay → 서식·표·병합·이미지·
 체크박스·내어쓰기를 실제 current `officecli` 호스트로 확인한다. 승격 전
 v1.0.145 릴리스는 필요한 format-handler lifecycle 계약이 없어 지원하지 않는다.
@@ -363,10 +449,13 @@ crates/
   hancom-hwp/
     src/bin/officecli-hancom-hwp.rs HWP/HML dump-reader 진입점
     src/bin/officecli-hancom-hwpx.rs HWPX/OWPML format-handler 진입점
+    src/bin/officecli-hancom-cell.rs Cell 12.0300 OOXML carrier 진입점
+    src/bin/officecli-hancom-show.rs Show 12.0000 OOXML carrier 진입점
     src/bin/officecli-dump-reader-hwpx.rs 하위 호환 진입점
     src/format_handler.rs bounded JSONL 세션과 command vocabulary
     src/converter.rs    선택적 RHWP HWP→HWPX 변환 경계
     src/hwpml.rs        legacy HWPML 단일 XML 리더
+    src/ooxml_carrier.rs Cell/Show ZIP·profile 검증과 byte-copy commit
     src/lib.rs          인자 파싱 + 명령 디스패치
     src/manifest.rs     dump-reader --info 매니페스트 (§4)
     src/{format,error,emit}/ 공용 core 임시 호환 re-export
@@ -381,9 +470,10 @@ crates/
       xml.rs            quick-xml 헬퍼 (네임스페이스 무시, 엔티티 해제)
     tests/              파서·프로토콜·설치·골든·호환 회귀
 scripts/
-  install.sh            Unix의 kind별 실파일 두 개 + 확장자 링크 설치
-  install.ps1           Windows 네 kind/확장자 경로에 검증된 바이너리 복사
+  install.sh            Unix 실파일 네 개 + HML/OWPML 확장자 링크 설치
+  install.ps1           Windows 여섯 활성 경로에 검증된 바이너리 복사
   generate-editable-fixture.py strict editable HWPX/OWPML smoke fixture
+  generate-ooxml-carrier-fixture.py profile-compatible seed용 Cell/Show marker fixture
   make_fixture.py       전 기능 HWPX 생성 (Rust 코드와 독립)
   verify-roundtrip.sh   두 프로토콜과 DOCX projection 실제 host 검증
   verify-corpus.py      실제 한글 문서 코퍼스 회귀 검증

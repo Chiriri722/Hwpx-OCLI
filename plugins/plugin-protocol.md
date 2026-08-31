@@ -37,32 +37,65 @@ manifest `target` field.
 |---|---|
 | Lifecycle | Short-lived (one shot) |
 | Source file handle | Plugin (read-only) |
-| Target file handle | Main (replays plugin's batch into a sibling native file) |
+| Target file handle | Main for JSONL replay; plugin for the bounded direct-native mode below |
 | Vocabulary | **Main's `<target>` command vocabulary** (no plugin-defined extensions) |
-| IPC | None — plugin writes JSONL (one `BatchItem` per line) to stdout and exits |
+| IPC | JSONL on stdout, or exactly zero stdout bytes after atomically publishing a native sibling |
 | Output extension | Sibling `<source-stem>.<target>` next to the source |
 
 Flow:
 
-1. User invokes a command that opens a `.doc` file
-2. Main checks for a sibling `<source-stem>.<target>` next to the source. If
-   it exists and is newer than the source, main opens it directly and skips
-   steps 3–5
-3. Main spawns the plugin: `<plugin> dump <source>`
-4. Plugin parses the source and **streams** `add`/`set`/`batch` items to stdout
-   as JSONL (one JSON object per line, terminated by `\n`), then exits 0
-5. Main creates a blank `<target>` skeleton, replays the batch line-by-line,
-   and moves it to the sibling path. Subsequent invocations reuse the sibling
+1. User invokes a command that opens a foreign file.
+2. Main resolves the manifest. Direct-native mode is selected only when
+   `supports` contains the exact strings `direct-native` and
+   `byte-preserving`; otherwise the JSONL path applies.
+3. A JSONL path may reuse a sibling that is at least as new as the source. If
+   invoked, main spawns `<plugin> dump <source>`, reads one BatchItem per line,
+   replays the buffered lines into a private native file, and publishes it only
+   if the sibling path is still absent. A JSONL plugin must not create, replace,
+   or remove the sibling as a side effect.
+4. A direct-native path is invoked on every open. Before launch, an existing
+   sibling must be a non-reparse regular file and byte-identical to the source;
+   a different sibling is a user-visible collision and is never overwritten.
+5. The direct-native plugin validates a private finalized candidate through
+   the same retained file identity that it later publishes, performs no later
+   writes to its primary stream, then either reuses a byte-identical sibling
+   with matching enumerated metadata or atomically publishes that candidate
+   without clobbering another writer.
+6. Main accepts direct-native success only for exit 0, an exactly zero-byte raw
+   stdout stream, and a non-reparse sibling that is byte-identical to the
+   current source. A BOM, whitespace, blank line, JSON, missing sibling, or
+   changed length/mtime/hash snapshot for an existing sibling is a contract
+   violation. On failure, main does not delete any sibling path because it
+   cannot prove ownership without a race. The plugin must clean private
+   candidates before publication; any already published sibling is retained.
 
 Edits target the sibling native file, not the original source. Source-side changes
-invalidate the cache automatically via mtime comparison; delete the sibling to
-force reconversion.
+invalidate the JSONL cache via mtime comparison. Direct-native plugins perform
+their own source/sibling validation on every invocation.
 
 **Streaming requirement**: dump-reader plugins MUST emit one batch item per
 line, flushed individually. Top-level JSON arrays (`[{...},{...}]`) are
-rejected by main with `corrupt_batch`. Streaming gives the host's idle
-watchdog (§5.6) per-item activity signal and bounds main's memory usage on
-large source files.
+rejected by main with `corrupt_batch`. Per-line output gives the host's idle
+watchdog (§5.6) an activity signal. The current host buffers validated lines
+before synchronous Open XML replay because the package writer is not
+thread-safe; plugin authors must not infer an aggregate host-memory guarantee
+from the line-oriented wire format.
+
+**Direct-native exception**: a plugin that already produces the manifest's
+native target MAY advertise both capabilities above and write
+`<source-stem>.<target>` itself. This declaration is exclusive: stdout MUST
+contain zero raw bytes, rather than trimmed-empty text, and the plugin cannot
+fall back to JSONL for that manifest. The plugin MUST validate the complete
+candidate and publish the same bytes atomically without replacement before exit
+0. Plugins are trusted executables with the same user authority as main; this
+mode does not create a sandbox or grant source write-back.
+
+`direct-native` and `byte-preserving` are an experimental downstream v1
+extension in this repository, not an accepted upstream OfficeCLI contract.
+Host and plugin must therefore negotiate both exact capability strings. The
+[post-v1 routing/export proposal](../docs/proposals/plugin-multi-target-routing-and-export.md)
+tracks a possible upstream shape; its acceptance is not implied, and upstream
+protocol syncs must re-audit this forked branch before retaining the mode.
 
 ### 2.2 `exporter` — convert native format to a foreign target
 
@@ -363,7 +396,7 @@ officecli binary, so plugins that produce an intermediate `.docx` (e.g. via an
 external converter) can shell out to `officecli dump <converted.docx>` and pipe
 its output to stdout. Plugins that don't need this can ignore the variable.
 
-**Output format**: JSONL — one JSON object per line, terminated by `\n`,
+**Output format**: normally JSONL — one JSON object per line, terminated by `\n`,
 each line `flush`ed individually. Schema per line matches one entry of
 `officecli batch --commands`:
 
@@ -373,6 +406,11 @@ each line `flush`ed individually. Schema per line matches one entry of
 ```
 
 A top-level JSON array on a single line is **rejected** with `corrupt_batch`.
+
+As the exception defined in §2.1, a direct-native dump-reader writes the exact
+sibling `<source-stem>.<target>` atomically and emits exactly zero stdout bytes.
+Once its manifest advertises both direct-native capabilities, any stdout byte is
+a contract violation; plugins must not mix modes to bypass replay validation.
 
 Diagnostics go to stderr or `--log-file`. The plugin exits 0 on success; non-zero
 codes follow §6.5.
@@ -526,6 +564,10 @@ Main runs a watchdog thread for every spawned plugin process:
   heartbeat line is consumed by the watchdog and not surfaced to the user
 - When `now - last_activity > idle_timeout`, main `Kill(entire_process_tree)`
   and reports `plugin_idle_timeout` (exit code 6)
+- For short-lived plugins, process exit is not success until both redirected
+  output readers finish. The same idle budget remains active while buffered
+  callbacks drain or a descendant holds a pipe open, so a partial JSONL stream
+  is never replayed as complete
 - `--timeout 0` disables the watchdog; manifest cannot disable
 
 Long opaque operations (exporter rendering, format-handler `save` on large

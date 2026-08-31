@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:expectedSuiteVersion = $null
 
 if ((@($Uninstall, $PrintEnv) | Where-Object { $_ }).Count -gt 1) {
     throw "-Uninstall and -PrintEnv cannot be used together"
@@ -13,8 +14,12 @@ if ((@($Uninstall, $PrintEnv) | Where-Object { $_ }).Count -gt 1) {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $hwpBinaryName = "officecli-hancom-hwp.exe"
 $hwpxBinaryName = "officecli-hancom-hwpx.exe"
+$cellBinaryName = "officecli-hancom-cell.exe"
+$showBinaryName = "officecli-hancom-show.exe"
 $hwpBuiltBinary = Join-Path $repoRoot "target\release\$hwpBinaryName"
 $hwpxBuiltBinary = Join-Path $repoRoot "target\release\$hwpxBinaryName"
+$cellBuiltBinary = Join-Path $repoRoot "target\release\$cellBinaryName"
+$showBuiltBinary = Join-Path $repoRoot "target\release\$showBinaryName"
 
 if (-not [IO.Path]::IsPathFullyQualified($HOME)) {
     throw "HOME must be an absolute path"
@@ -30,6 +35,8 @@ $hwpInstallDirectory = Join-Path $dumpReaderRoot "hwp"
 $hmlInstallDirectory = Join-Path $dumpReaderRoot "hml"
 $hwpxInstallDirectory = Join-Path $formatHandlerRoot "hwpx"
 $owpmlInstallDirectory = Join-Path $formatHandlerRoot "owpml"
+$cellInstallDirectory = Join-Path $dumpReaderRoot "cell"
+$showInstallDirectory = Join-Path $dumpReaderRoot "show"
 $legacyHwpxInstallDirectory = Join-Path $dumpReaderRoot "hwpx"
 $legacyOwpmlInstallDirectory = Join-Path $dumpReaderRoot "owpml"
 
@@ -43,6 +50,8 @@ $installTargets = @(
         Directory = $hwpInstallDirectory
         Path = (Join-Path $hwpInstallDirectory "plugin.exe")
         PluginName = "officecli-hancom-hwp"
+        ExpectedExtensions = @(".hwp", ".hml")
+        ExpectedTarget = "docx"
         BinaryName = $hwpBinaryName
         BuiltBinary = $hwpBuiltBinary
         Install = $true
@@ -56,6 +65,8 @@ $installTargets = @(
         Directory = $hmlInstallDirectory
         Path = (Join-Path $hmlInstallDirectory "plugin.exe")
         PluginName = "officecli-hancom-hwp"
+        ExpectedExtensions = @(".hwp", ".hml")
+        ExpectedTarget = "docx"
         BinaryName = $hwpBinaryName
         BuiltBinary = $hwpBuiltBinary
         Install = $true
@@ -69,6 +80,8 @@ $installTargets = @(
         Directory = $hwpxInstallDirectory
         Path = (Join-Path $hwpxInstallDirectory "plugin.exe")
         PluginName = "officecli-hancom-hwpx"
+        ExpectedExtensions = @(".hwpx", ".owpml")
+        ExpectedTarget = $null
         BinaryName = $hwpxBinaryName
         BuiltBinary = $hwpxBuiltBinary
         Install = $true
@@ -82,8 +95,40 @@ $installTargets = @(
         Directory = $owpmlInstallDirectory
         Path = (Join-Path $owpmlInstallDirectory "plugin.exe")
         PluginName = "officecli-hancom-hwpx"
+        ExpectedExtensions = @(".hwpx", ".owpml")
+        ExpectedTarget = $null
         BinaryName = $hwpxBinaryName
         BuiltBinary = $hwpxBuiltBinary
+        Install = $true
+    }
+    [PSCustomObject]@{
+        Kind = "dump-reader"
+        Extension = "cell"
+        Label = "dump-reader/cell"
+        EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_CELL"
+        PluginRoot = $dumpReaderRoot
+        Directory = $cellInstallDirectory
+        Path = (Join-Path $cellInstallDirectory "plugin.exe")
+        PluginName = "officecli-hancom-cell"
+        ExpectedExtensions = @(".cell")
+        ExpectedTarget = "xlsx"
+        BinaryName = $cellBinaryName
+        BuiltBinary = $cellBuiltBinary
+        Install = $true
+    }
+    [PSCustomObject]@{
+        Kind = "dump-reader"
+        Extension = "show"
+        Label = "dump-reader/show"
+        EnvironmentVariable = "OFFICECLI_PLUGIN_DUMP_READER_SHOW"
+        PluginRoot = $dumpReaderRoot
+        Directory = $showInstallDirectory
+        Path = (Join-Path $showInstallDirectory "plugin.exe")
+        PluginName = "officecli-hancom-show"
+        ExpectedExtensions = @(".show")
+        ExpectedTarget = "pptx"
+        BinaryName = $showBinaryName
+        BuiltBinary = $showBuiltBinary
         Install = $true
     }
 )
@@ -183,18 +228,38 @@ function Assert-PluginManifest([string]$Path, [object]$Target, [string]$Context)
     if ($manifest.protocol -ne 1) {
         throw "$Context $($Target.Label) plugin protocol is '$($manifest.protocol)', expected '1'"
     }
-    if (@($manifest.kinds) -notcontains $Target.Kind) {
-        throw "$Context $($Target.Label) manifest does not declare kind '$($Target.Kind)'"
-    }
-    $expectedExtension = ".$($Target.Extension)"
-    if (@($manifest.extensions) -notcontains $expectedExtension) {
-        throw "$Context $($Target.Label) manifest does not declare extension '$expectedExtension'"
-    }
+    $semverPattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
     if (
-        $Target.Kind -eq "dump-reader" -and
-        $manifest.target -notin @("docx", "xlsx", "pptx")
+        $manifest.version -isnot [string] -or
+        $manifest.version -notmatch $semverPattern
     ) {
-        throw "$Context $($Target.Label) dump-reader has an invalid target '$($manifest.target)'"
+        throw "$Context $($Target.Label) plugin has no valid semantic version"
+    }
+    if ($null -eq $script:expectedSuiteVersion) {
+        $script:expectedSuiteVersion = [string]$manifest.version
+    } elseif ([string]$manifest.version -ne $script:expectedSuiteVersion) {
+        throw "$Context $($Target.Label) plugin version is '$($manifest.version)', expected suite version '$script:expectedSuiteVersion'"
+    }
+    $actualKinds = @($manifest.kinds)
+    if ($actualKinds.Count -ne 1 -or $actualKinds[0] -ne $Target.Kind) {
+        throw "$Context $($Target.Label) manifest kinds do not exactly match '$($Target.Kind)'"
+    }
+    $actualExtensions = @($manifest.extensions)
+    $missingExtensions = @(
+        $Target.ExpectedExtensions | Where-Object { $actualExtensions -notcontains $_ }
+    )
+    if (
+        $actualExtensions.Count -ne $Target.ExpectedExtensions.Count -or
+        $missingExtensions.Count -ne 0
+    ) {
+        throw "$Context $($Target.Label) manifest extensions do not exactly match '$($Target.ExpectedExtensions -join ',')'"
+    }
+    if ($Target.Kind -eq "dump-reader") {
+        if ($manifest.target -ne $Target.ExpectedTarget) {
+            throw "$Context $($Target.Label) target is '$($manifest.target)', expected '$($Target.ExpectedTarget)'"
+        }
+    } elseif ($manifest.PSObject.Properties.Name -contains "target") {
+        throw "$Context $($Target.Label) format-handler must not declare a target"
     }
 }
 
@@ -208,6 +273,63 @@ function Remove-EmptyInstallDirectory([object]$Target) {
     }
 }
 
+function Remove-InstallTargetWithRetry([object]$Target) {
+    $maxAttempts = 20
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Target.Path)) {
+            return
+        }
+
+        # A resident host may have exited while Windows is still releasing its
+        # image mapping. Revalidate every attempt so waiting out that transient
+        # lock never weakens the install-root and reparse-point boundary.
+        Assert-InstallDirectoryNotReparse $Target.Directory
+        Assert-InstallTargetSafe $Target.Path
+        try {
+            Remove-Item -LiteralPath $Target.Path -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -eq $maxAttempts) {
+                throw
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
+function New-InstallMutex([string]$Path) {
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $normalized = [IO.Path]::GetFullPath($Path).ToUpperInvariant()
+        $hash = $hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($normalized))
+        $key = ([BitConverter]::ToString($hash)).Replace("-", "")
+    } finally {
+        $hasher.Dispose()
+    }
+    $mutex = [Threading.Mutex]::new($false, "Local\OfficeCli.Hancom.Install.$key")
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne(0)
+    } catch [Threading.AbandonedMutexException] {
+        $acquired = $true
+    }
+    if (-not $acquired) {
+        $mutex.Dispose()
+        throw "another Hancom plugin install or uninstall is already running for $Path"
+    }
+    return $mutex
+}
+
+if ($PrintEnv) {
+    foreach ($target in $installTargets) {
+        Write-Output ('$env:{0} = ''{1}''' -f $target.EnvironmentVariable, $target.BuiltBinary)
+    }
+    exit 0
+}
+
+$installMutex = New-InstallMutex $pluginsDirectory
+try {
+
 if ($Uninstall) {
     foreach ($target in $managedTargets) {
         Assert-InstallDirectoryNotReparse $target.Directory
@@ -215,19 +337,12 @@ if ($Uninstall) {
     }
     foreach ($target in $managedTargets) {
         if (Test-Path -LiteralPath $target.Path) {
-            Remove-Item -LiteralPath $target.Path -Force
+            Remove-InstallTargetWithRetry $target
             Write-Host "removed $($target.Path)"
         } else {
             Write-Host "not installed: $($target.Path)"
         }
         Remove-EmptyInstallDirectory $target
-    }
-    exit 0
-}
-
-if ($PrintEnv) {
-    foreach ($target in $installTargets) {
-        Write-Output ('$env:{0} = ''{1}''' -f $target.EnvironmentVariable, $target.BuiltBinary)
     }
     exit 0
 }
@@ -252,11 +367,19 @@ if (-not $NoBuild) {
 $binarySources = @(
     [PSCustomObject]@{ BinaryName = $hwpBinaryName; Path = $hwpBuiltBinary }
     [PSCustomObject]@{ BinaryName = $hwpxBinaryName; Path = $hwpxBuiltBinary }
+    [PSCustomObject]@{ BinaryName = $cellBinaryName; Path = $cellBuiltBinary }
+    [PSCustomObject]@{ BinaryName = $showBinaryName; Path = $showBuiltBinary }
 )
 foreach ($binary in $binarySources) {
     if (-not (Test-Path -LiteralPath $binary.Path -PathType Leaf)) {
         throw "binary not found at $($binary.Path)"
     }
+}
+
+# Validate every role/target and one suite-wide version before creating an
+# install directory or staging a file.
+foreach ($target in $installTargets) {
+    Assert-PluginManifest $target.BuiltBinary $target "built"
 }
 
 foreach ($target in $managedTargets) {
@@ -433,3 +556,13 @@ foreach ($target in $obsoleteTargets) {
     Write-Host "retired: $($target.Path)"
 }
 Write-Host "verify discovery with: officecli plugins list"
+} finally {
+    if ($null -ne $installMutex) {
+        try {
+            $installMutex.ReleaseMutex()
+        } catch [ApplicationException] {
+            # The mutex was abandoned or already released; disposal is enough.
+        }
+        $installMutex.Dispose()
+    }
+}

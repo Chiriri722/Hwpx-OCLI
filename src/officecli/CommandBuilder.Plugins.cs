@@ -285,8 +285,8 @@ static partial class CommandBuilder
                 IdleTimeoutSeconds = idle,
                 OnStdoutLine = OnLine,
             });
-            if (PluginProcess.LineCallbackError is CliException ce) throw ce;
-            if (PluginProcess.LineCallbackError is not null) throw PluginProcess.LineCallbackError;
+            if (runResult.StdoutCallbackError is CliException ce) throw ce;
+            if (runResult.StdoutCallbackError is not null) throw runResult.StdoutCallbackError;
             if (runResult.IdleTimedOut)
                 throw new CliException(
                     $"Plugin '{resolved.Manifest.Name}' produced no output for {idle}s — likely hung.")

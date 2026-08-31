@@ -22,7 +22,16 @@ public static class PluginProcess
     public sealed record RunResult(
         int ExitCode,
         string Stderr,
-        bool IdleTimedOut);
+        bool IdleTimedOut,
+        bool StdoutObserved,
+        Exception? StdoutCallbackError);
+
+    private sealed class ActivityState
+    {
+        public long LastActivityTicks;
+        public int StdoutObserved;
+        public Exception? StdoutCallbackError;
+    }
 
     public sealed class RunOptions
     {
@@ -38,7 +47,7 @@ public static class PluginProcess
         /// <summary>
         /// Per-line stdout callback. If null, stdout is drained silently. Lines
         /// are delivered without the trailing newline. Callback exceptions are
-        /// captured into <see cref="LineCallbackError"/> and stop the run.
+        /// captured into <see cref="RunResult.StdoutCallbackError"/> and stop the run.
         /// </summary>
         public Action<string>? OnStdoutLine { get; init; }
 
@@ -50,17 +59,8 @@ public static class PluginProcess
         public Action<string>? OnStderrLine { get; init; }
     }
 
-    /// <summary>
-    /// Most recent exception thrown by an <see cref="RunOptions.OnStdoutLine"/>
-    /// callback in the current call, or null if the callback succeeded. Stored
-    /// per-call (the AsyncLocal scope is per <see cref="Run"/> invocation).
-    /// </summary>
-    public static Exception? LineCallbackError { get; private set; }
-
     public static RunResult Run(RunOptions opts)
     {
-        LineCallbackError = null;
-
         var psi = new ProcessStartInfo
         {
             FileName = opts.ExecutablePath,
@@ -82,7 +82,7 @@ public static class PluginProcess
 
         using var p = new Process { StartInfo = psi };
         if (!p.Start())
-            return new RunResult(-1, "Failed to start plugin process.", false);
+            return new RunResult(-1, "Failed to start plugin process.", false, false, null);
 
         // Activity timestamp shared by both reader tasks and the watchdog.
         // Wall-clock ticks (DateTime.UtcNow.Ticks, 100ns resolution) instead
@@ -93,12 +93,16 @@ public static class PluginProcess
         // a laptop waking up after an hour mid-plugin gets an honest
         // "idle for an hour" reading and we kill the (likely-stale) plugin
         // instead of letting it run on dead network sockets / file handles.
-        long lastActivityTicks = DateTime.UtcNow.Ticks;
+        var activity = new ActivityState
+        {
+            LastActivityTicks = DateTime.UtcNow.Ticks,
+        };
         var stderrCollector = new StringBuilder();
         var stderrLock = new object();
 
-        var stdoutTask = Task.Run(() => ReadStdout(p, opts, ref lastActivityTicks));
-        var stderrTask = Task.Run(() => ReadStderr(p, opts, stderrCollector, stderrLock, ref lastActivityTicks));
+        var stdoutTask = Task.Run(() => ReadStdout(p, opts, activity));
+        var stderrTask = Task.Run(() => ReadStderr(p, opts, stderrCollector, stderrLock, activity));
+        var readerTasks = Task.WhenAll(stdoutTask, stderrTask);
 
         bool idleTimedOut = false;
         if (opts.IdleTimeoutSeconds > 0)
@@ -106,44 +110,83 @@ public static class PluginProcess
             var budgetTicks = TimeSpan.FromSeconds(opts.IdleTimeoutSeconds).Ticks;
             var pollIntervalMs = Math.Max(250, opts.IdleTimeoutSeconds * 1000 / 4);
 
-            while (!p.HasExited)
+            // A process exit does not prove redirected output has drained. The
+            // reader may still be delivering buffered JSONL to its callback,
+            // or a descendant may have inherited a pipe handle. Keep the same
+            // inactivity budget active until both readers complete so callers
+            // can never replay a silently truncated stream.
+            while (!p.HasExited || !readerTasks.IsCompleted)
             {
-                if (p.WaitForExit(pollIntervalMs)) break;
-                var since = DateTime.UtcNow.Ticks - Volatile.Read(ref lastActivityTicks);
+                if (p.HasExited)
+                {
+                    try { readerTasks.Wait(pollIntervalMs); } catch { }
+                }
+                else
+                {
+                    try { p.WaitForExit(pollIntervalMs); } catch { }
+                }
+                if (p.HasExited && readerTasks.IsCompleted) break;
+
+                var since = DateTime.UtcNow.Ticks - Volatile.Read(ref activity.LastActivityTicks);
                 if (since > budgetTicks)
                 {
                     idleTimedOut = true;
                     try { p.Kill(entireProcessTree: true); } catch { }
+                    try { p.StandardOutput.Close(); } catch { }
+                    try { p.StandardError.Close(); } catch { }
                     break;
                 }
             }
         }
+        else
+        {
+            // Disabling the watchdog also disables the output-drain deadline.
+            // Completion is still mandatory before a successful result.
+            try { p.WaitForExit(); } catch { }
+            try { readerTasks.Wait(); } catch { }
+        }
 
-        // Drain the reader tasks. WaitForExit guarantees the streams close.
+        // Reap the process. After an idle timeout a callback itself may still
+        // be blocked in caller code, so retain only a bounded cleanup wait; the
+        // IdleTimedOut result makes every production caller fail closed.
         try { p.WaitForExit(); } catch { }
-        try { stdoutTask.Wait(2000); } catch { }
-        try { stderrTask.Wait(2000); } catch { }
+        if (idleTimedOut)
+        {
+            try { readerTasks.Wait(2000); } catch { }
+        }
 
         string stderr;
         lock (stderrLock) stderr = stderrCollector.ToString();
 
-        return new RunResult(p.ExitCode, stderr, idleTimedOut);
+        return new RunResult(
+            p.ExitCode,
+            stderr,
+            idleTimedOut,
+            Volatile.Read(ref activity.StdoutObserved) != 0,
+            activity.StdoutCallbackError);
     }
 
-    private static void ReadStdout(Process p, RunOptions opts, ref long activityTicks)
+    private static void ReadStdout(
+        Process p,
+        RunOptions opts,
+        ActivityState activity)
     {
-        var reader = p.StandardOutput;
+        using var reader = new StreamReader(
+            new ActivityReadStream(p.StandardOutput.BaseStream, activity),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: false),
+            detectEncodingFromByteOrderMarks: false,
+            bufferSize: 4096,
+            leaveOpen: true);
         try
         {
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
-                Volatile.Write(ref activityTicks, DateTime.UtcNow.Ticks);
                 if (opts.OnStdoutLine is null) continue;
                 try { opts.OnStdoutLine(line); }
                 catch (Exception ex)
                 {
-                    LineCallbackError = ex;
+                    Interlocked.CompareExchange(ref activity.StdoutCallbackError, ex, null);
                     try { p.Kill(entireProcessTree: true); } catch { }
                     return;
                 }
@@ -152,7 +195,7 @@ public static class PluginProcess
         catch { /* stream closed / process killed */ }
     }
 
-    private static void ReadStderr(Process p, RunOptions opts, StringBuilder collector, object collectorLock, ref long activityTicks)
+    private static void ReadStderr(Process p, RunOptions opts, StringBuilder collector, object collectorLock, ActivityState activity)
     {
         var reader = p.StandardError;
         try
@@ -166,12 +209,12 @@ public static class PluginProcess
                 // "heartbeat" field.
                 if (IsHeartbeat(line))
                 {
-                    Volatile.Write(ref activityTicks, DateTime.UtcNow.Ticks);
+                    Volatile.Write(ref activity.LastActivityTicks, DateTime.UtcNow.Ticks);
                     continue;
                 }
 
                 // Any non-heartbeat stderr output also counts as activity.
-                Volatile.Write(ref activityTicks, DateTime.UtcNow.Ticks);
+                Volatile.Write(ref activity.LastActivityTicks, DateTime.UtcNow.Ticks);
                 if (opts.OnStderrLine is not null)
                 {
                     try { opts.OnStderrLine(line); } catch { /* ignore sink errors */ }
@@ -191,6 +234,52 @@ public static class PluginProcess
             }
         }
         catch { /* stream closed / process killed */ }
+    }
+
+    private sealed class ActivityReadStream(Stream inner, ActivityState activity) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = inner.Read(buffer, offset, count);
+            Observe(read);
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = inner.Read(buffer);
+            Observe(read);
+            return read;
+        }
+
+        public override int ReadByte()
+        {
+            var value = inner.ReadByte();
+            Observe(value < 0 ? 0 : 1);
+            return value;
+        }
+
+        private void Observe(int count)
+        {
+            if (count <= 0) return;
+            Volatile.Write(ref activity.StdoutObserved, 1);
+            Volatile.Write(ref activity.LastActivityTicks, DateTime.UtcNow.Ticks);
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     /// <summary>
