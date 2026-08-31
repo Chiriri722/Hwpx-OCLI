@@ -269,8 +269,9 @@ rule/protected state를 복사·검증하고 EFS source와 그 외 ADS는 fail-c
 Windows source handle은 read sharing만 허용해 이 path 기반 ADS/DACL 검사 동안 write/delete
 open과 rename/replacement를 막는다. Linux는
 retained descriptor에서 plugin credential로 보이고 읽을 수 있는 complete bounded xattr
-set과 mode를 보존한다. macOS는 여기에 extended ACL을 별도 복사·검증한다. 열거·읽기·적용·
-검증 실패는 게시 전에 fail-closed하고, cached sibling도 이 열거된 항목이 모두 맞아야
+set과 mode를 보존한다. macOS는 여기에 extended ACL을 별도 복사·검증하고, ACL이 없는
+regular file에 대한 Darwin `ENOENT`만 empty ACL로 정규화한다. 그 외 열거·읽기·적용·검증
+실패는 게시 전에 fail-closed하고, cached sibling도 이 열거된 항목이 모두 맞아야
 재사용한다. Windows owner/SACL/MIC, Unix UID/GID, process-invisible attribute, creation time,
 hard-link identity, allocation/compression layout 등 file-object 전체 동일성을 보장하지 않는다.
 

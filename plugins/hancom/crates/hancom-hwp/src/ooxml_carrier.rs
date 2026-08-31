@@ -3187,9 +3187,15 @@ mod macos_acl {
         let path = c_path(path)?;
         let acl = unsafe { acl_get_file(path.as_ptr(), ACL_TYPE_EXTENDED) };
         if acl.is_null() {
+            let error = io::Error::last_os_error();
+            // Darwin reports a regular file with no extended ACL as ENOENT.
+            // Normalize only that absence marker; permission, filesystem, and
+            // representation failures still fail closed below.
+            if error.raw_os_error() == Some(libc::ENOENT) {
+                return Ok(Vec::new());
+            }
             return Err(PluginError::invalid_argument(format!(
-                "cannot read the macOS ACL: {}",
-                io::Error::last_os_error()
+                "cannot read the macOS ACL: {error}"
             )));
         }
         let acl = Acl(acl);

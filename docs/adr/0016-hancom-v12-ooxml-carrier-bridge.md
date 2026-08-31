@@ -72,8 +72,10 @@ not interpret the sibling extension as a general sanitization guarantee.
    protected state; Linux mode and the complete bounded xattr set visible and
    readable from the retained descriptor under the plugin credentials; macOS mode,
    that same process-visible xattr set (including quarantine when exposed there),
-   and its separate extended ACL. Enumeration, read, application, or verification
-   failure fails closed. EFS-encrypted Windows sources and alternate data streams
+   and its separate extended ACL. Darwin's `ENOENT` result for a regular file with
+   no extended ACL is normalized to the empty ACL; every other enumeration, read,
+   application, or verification failure fails closed. EFS-encrypted Windows sources
+   and alternate data streams
    other than the primary stream and `Zone.Identifier` are unsupported. A cached
    sibling is reused only when its primary/default stream, modification time, and
    those enumerated attributes match. This is not complete file-object or security
