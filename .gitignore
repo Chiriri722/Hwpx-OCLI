@@ -3,6 +3,7 @@
 .dotnet-cli-home/
 .nuget/
 plugins/hancom/target/
+plugins/hancom/.officecli/
 __pycache__/
 *.py[cod]
 
