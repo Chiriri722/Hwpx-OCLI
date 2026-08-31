@@ -200,6 +200,12 @@ window; the retry is not permission bypass.
 - Synthetic fixtures exercise all supported operating systems in CI without
   redistributing government attachments. They prove discovery and the protocol
   path, not additional producer generations.
+- [CI run `33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)
+  passed those content-bearing Cell and Show fixtures against the current host
+  and release plugins on Linux, Windows, and macOS at implementing HEAD
+  `5df4d34e`. Each platform verified direct-native view, unchanged source hash
+  and mtime, and a fresh byte-identical sibling; the same run also passed the
+  complete carrier test suite, release build, and Rust 1.88 MSRV checks.
 - Native Hancom Office open/save was not available as an oracle. Any future
   write-back or claim of native round-trip requires a recorded product build,
   recovery-free open, render inspection, save, and reopen.

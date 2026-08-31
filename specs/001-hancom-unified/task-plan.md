@@ -404,8 +404,13 @@ ADR-1(읽기 전용) 을 **뒤집는** 변경이므로 새 ADR로 명시 기록�
       mutation 전에 검증한다. Windows에서는 같은 로그인 세션과 plugin root의 named
       mutex로, Unix에서는 같은 plugin root의 atomic lock directory로 install·uninstall
       트랜잭션을 직렬화한다.
-- [ ] T6-2 · Linux/Windows/macOS 네이티브 CI에서 확장자별 실제 `officecli` 디스커버리 검증.
-      `plugins list` 행 수는 경로별 열거 때문에 신뢰하지 말고 `view`로 실해석 확인(기존 교훈)
+- [x] T6-2 · Linux/Windows/macOS 네이티브 CI에서 확장자별 실제 `officecli` 디스커버리 검증.
+      [`33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)에서
+      current checkout host의 exact two-kind/six-slot discovery, HWP/HML/HWPX/OWPML view,
+      content-bearing Cell/Show view, source hash/mtime 불변, byte-identical sibling과
+      eight-path uninstall을 세 OS 모두 통과했다. 경로별 열거 때문에 `plugins list` 행 수가
+      아니라 `view` 실해석을 판정 근거로 사용했다. 같은 HEAD의 action pin
+      [`33349242344`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242344)도 통과했다.
 - [x] T6-3 · 대용량·자원예산 실측을 계열별로 (기존 48MiB HWPX 실측 방식 재사용).
       공개 1.2–8.0MiB 표본의 3회 관측은 45–92ms/peak working set 4.34–4.95MiB였다.
       현재 strict profile에서 48MiB stored PNG를 유효한 image relationship으로 연결한
@@ -619,7 +624,9 @@ Cell은 독립 공식 XLSX와 text/stats가 정확히
 일치했다. legacy/다른 build/`.nxl`/external converter/proprietary parser는 근거가 없으므로
 명시적으로 deferred다.
 P7은 구현이 아니라 `docs/proposals/plugin-multi-target-routing-and-export.md`의 설계 제안으로
-완료했다. 현재 남은 즉시 실행 항목은 T6-2 3OS CI와 최종 완료 감사이다.
+완료했다. 구현·검증 목록의 즉시 실행 항목은 모두 완료했다. 남은 unchecked 항목은 새 공개
+규격·provenance 표본·제품 정책이 들어올 때만 열리는 evidence-gated 작업과 carrier가 실제로
+커질 때만 수행하는 구조 분리뿐이다.
 
 ## 2026-08-31 외부 감사 (제3자 검토)
 
@@ -635,7 +642,8 @@ P7은 구현이 아니라 `docs/proposals/plugin-multi-target-routing-and-export
 - `NOTICE`에 필수 한컴 표기 문구가 존재한다 → **T0-1 컴플라이언스 해소 확인**.
   `ooxml_carrier.rs`에도 `HANCOM_PUBLIC_SPEC_NOTICE` 상수로 박혀 있다.
 - proprietary parser와 다른 세대 지원의 미완료 항목은 **의도적 evidence-gated deferred**다.
-  T6-2의 3OS release evidence와 A-3의 커밋 고정은 별도 즉시 실행 항목이다.
+  감사 시점에 별도 즉시 실행 항목이던 T6-2의 3OS release evidence와 A-3의 커밋 고정도
+  각각 CI run `33349242319`와 기능 커밋 `7e179d5b`로 완료했다.
 
 ### 감사에서 발견한 문제
 
@@ -739,11 +747,16 @@ sibling을 만든다. 이 기술적 사실만으로 모든 표본의 권리 관�
 4. ~~Pro 독립 검토와 전체 local gate~~ · **완료.** 조건부 GO의 retained-handle,
    Windows path binding, 네 공개 표본 current release host 검증 조건을 닫고, Rust workspace,
    .NET host, installer/script와 output-reader drain 회귀까지 통과했다.
-5. 정확한 변경만 커밋·푸시하고 Linux/Windows/macOS current-host workflow와 action pin을
-   모두 확인해 T6-2와 ADR-0015의 release evidence를 닫는다.
-6. provenance와 사용 권한이 확인된 추가 `.cell`/`.show` 표본으로 **carrier allowlist를
-   확장**한다. 다른 `12.*` build나 legacy 세대 표본이 들어오면 T4-2 세대 판별이 열린다.
-7. codebase-memory를 최종 commit으로 재색인하고 요구사항별 완료 감사를 수행한다.
-   legacy/다세대/native Hancom oracle 항목은 새 외부 근거가 생기기 전까지 deferred로 남긴다.
-8. A-4(cell/show 크레이트 분리)는 carrier가 proprietary parsing으로 확장될 때 실행한다.
+5. ~~정확한 변경만 커밋·푸시하고 Linux/Windows/macOS current-host workflow와 action pin을
+   모두 확인한다.~~ · **완료.** 구현 HEAD `5df4d34e`에서 current-host workflow
+   [`33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)와 action pin
+   [`33349242344`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242344)이 모두 통과해
+   T6-2와 ADR-0015의 release evidence를 닫았다.
+6. **외부 근거 유입 시 재개.** provenance와 사용 권한이 확인된 추가 `.cell`/`.show`
+   표본으로 carrier allowlist를 확장한다. 다른 `12.*` build나 legacy 세대 표본이 들어오면
+   T4-2 세대 판별이 열린다.
+7. **최종 인계 절차.** 이 문서 커밋 뒤 codebase-memory를 최종 HEAD로 재색인하고 요구사항별
+   완료 감사를 수행한다. legacy/다세대/native Hancom oracle 항목은 새 외부 근거가 생기기
+   전까지 deferred로 남긴다.
+8. **구조 확장 시 재개.** A-4(cell/show 크레이트 분리)는 carrier가 proprietary parsing으로 확장될 때 실행한다.
    현재 carrier는 얇아 실해가 없으므로 부채 기록으로만 유지한다.

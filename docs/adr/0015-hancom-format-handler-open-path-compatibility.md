@@ -122,7 +122,9 @@ source-identity check.
   rejects missing/null/nonempty args, props, and extra fields on command-save.
 - `OfficeCli.Tests::FormatHandlerLifecycleFramesMatchProtocolV1` continues to
   require the host's canonical top-level path and editable flag.
-- The implementing CI run must pass the native HWPX/OWPML smoke on all three
-  operating systems before this decision is considered released.
+- [CI run `33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)
+  passed the native current-host HWPX/OWPML lifecycle smoke on Linux, Windows,
+  and macOS at implementing HEAD `5df4d34e`. This closes the end-to-end release
+  gate for the compatibility decision.
 
 This ADR is re-indexed into codebase-memory with the implementing commit.

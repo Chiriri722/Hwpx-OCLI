@@ -104,8 +104,11 @@ installer attempt.
 - A clean Linux current-host smoke enumerated the four active registrations, ran
   `set → save → close → reopen → validate` for both HWPX and OWPML, verified the
   source hash and escaped XML delta, and created no sibling DOCX.
-- `.github/workflows/hwpx-plugin.yml` carries the same actual-host smoke on
-  Linux, Windows, and macOS. The implementing run must be green on all three
-  before this expanded decision is considered released.
+- [CI run `33349242319`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33349242319)
+  passed on the implementing HEAD `5df4d34e`. Its Linux, Windows, and macOS
+  current-host jobs verified exact two-kind/six-slot discovery, absence of the
+  retired registrations, HWP/HML/HWPX/OWPML views, content-bearing Cell/Show
+  views with byte-identical siblings, and eight-path uninstall. This closes the
+  release gate for the expanded decision.
 
 This ADR is re-indexed into codebase-memory with the implementing commit.
