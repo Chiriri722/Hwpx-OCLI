@@ -1,6 +1,5 @@
 //! Installation/discovery contract for every advertised Hancom source extension.
 
-#[cfg(unix)]
 const UNIX_INSTALLER: &str = include_str!("../../../scripts/install.sh");
 const WINDOWS_INSTALLER: &str = include_str!("../../../scripts/install.ps1");
 
@@ -240,12 +239,11 @@ fn installers_serialize_mutations_and_require_one_suite_version() {
         );
     }
 
-    #[cfg(unix)]
     for expected in [
         "LOCK_DIR=\"${PLUGINS_DIR}/.hancom-install.lock\"",
         "acquire_install_lock || exit 73",
         "EXPECTED_SUITE_VERSION=\"\"",
-        "MANIFEST_VERSION_RESULT=\"${version_suffix%%\"*}\"",
+        "MANIFEST_VERSION_RESULT=\"${version_suffix%%\\\"*}\"",
         "MANIFEST_VERSION_RESULT}\" =~ ^(0|[1-9][0-9]*)\\.",
     ] {
         assert!(
