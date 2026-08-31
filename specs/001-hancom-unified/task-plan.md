@@ -650,9 +650,9 @@ P7은 구현이 아니라 `docs/proposals/plugin-multi-target-routing-and-export
       `plugins/hwpx/target/`의 재생성 가능한 9,435개 build 항목을 dry-run 후 제거하고,
       유일한 추적 파일 `.gitignore`와 빈 legacy root도 삭제했다. 활성
       `plugins/hancom/{target,.officecli}/` ignore만 남겼다(`fba4723d`).
-- [ ] **A-3 🟡 한셀/한쇼 구현이 미커밋이다.** `ooxml_carrier.rs`, 두 bin, 테스트,
-      fixture 생성기, `docs/adr/0016-*.md`, `docs/proposals/`가 모두 untracked다.
-      감사 시점에 유실 위험이 있으므로 원자 커밋으로 고정한다.
+- [x] **A-3 🟡 한셀/한쇼 구현을 커밋으로 고정했다.** `ooxml_carrier.rs`, 두 bin,
+      테스트, fixture 생성기, `docs/adr/0016-*.md`, `docs/proposals/`와 host/installer
+      경계를 원자 기능 커밋 `7e179d5b`로 고정했다.
 - [ ] **A-4 🟡 cell/show 바이너리가 `hancom-hwp` 크레이트 안에 있다.** A1 설계는
       `hancom-cell`/`hancom-show` 별도 크레이트였다. 현재는 `.cell`/`.show` 코드가
       한글 크레이트에 얹혀 있어 의존 경계가 흐리다. carrier가 커지면 분리한다.
@@ -731,13 +731,14 @@ sibling을 만든다. 이 기술적 사실만으로 모든 표본의 권리 관�
    추가하고 stale `plugins/hwpx/` build tree와 추적 stub을 제거했다(`fba4723d`).
    untracked 노출 1,644 MB → 2.43 MB.
    (`.agents/research/` 2 MB는 조사 원본이므로 보존 여부를 판단할 것.)
-2. **A-3** · 한셀/한쇼 carrier 구현(`ooxml_carrier.rs`, 두 bin, 테스트, fixture 생성기,
-   ADR-0016, proposals)을 원자 커밋으로 고정한다. A-1/A-2 위생 수정은 별도 선행
-   커밋으로 분리했다.
-3. **A-5** · 프로토콜 divergence(`direct-native`/`byte-preserving`)를 `docs/proposals/`와
-   상호 참조하고 upstream sync 리스크를 ADR에 명시한다.
-4. Pro 독립 검토 결과를 코드/ADR/완료 판정에 반영하고 새 carrier/installer/host 회귀를
-   포함한 전체 local gate를 실행한다.
+2. ~~**A-3**~~ · **완료.** 한셀/한쇼 carrier 구현(`ooxml_carrier.rs`, 두 bin, 테스트,
+   fixture 생성기, ADR-0016, proposals)과 host/installer 경계를 `7e179d5b`로 고정했다.
+   A-1/A-2 위생 수정은 별도 선행 커밋으로 분리했다.
+3. ~~**A-5**~~ · **완료.** 프로토콜 divergence(`direct-native`/`byte-preserving`)를
+   `docs/proposals/`와 상호 참조하고 upstream sync 리스크를 ADR에 명시했다.
+4. ~~Pro 독립 검토와 전체 local gate~~ · **완료.** 조건부 GO의 retained-handle,
+   Windows path binding, 네 공개 표본 current release host 검증 조건을 닫고, Rust workspace,
+   .NET host, installer/script와 output-reader drain 회귀까지 통과했다.
 5. 정확한 변경만 커밋·푸시하고 Linux/Windows/macOS current-host workflow와 action pin을
    모두 확인해 T6-2와 ADR-0015의 release evidence를 닫는다.
 6. provenance와 사용 권한이 확인된 추가 `.cell`/`.show` 표본으로 **carrier allowlist를
