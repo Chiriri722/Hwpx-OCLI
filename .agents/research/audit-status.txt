@@ -1,0 +1,31 @@
+ M .github/workflows/hwpx-plugin.yml
+ M README.md
+ M SKILL.md
+ M docs/adr/0014-hancom-format-handler-install-promotion.md
+ M docs/spec-sources.md
+ M plugins/hancom/Cargo.lock
+ M plugins/hancom/README.md
+ M plugins/hancom/crates/hancom-hwp/Cargo.toml
+ M plugins/hancom/crates/hancom-hwp/src/lib.rs
+ M plugins/hancom/crates/hancom-hwp/tests/install_contract.rs
+ M plugins/hancom/scripts/install.ps1
+ M plugins/hancom/scripts/install.sh
+ M plugins/plugin-protocol.md
+ M specs/001-hancom-unified/task-plan.md
+ M src/officecli/CommandBuilder.Plugins.cs
+ M src/officecli/Core/Plugins/DumpReaderInvoker.cs
+ M src/officecli/Core/Plugins/PluginProcess.cs
+ M src/officecli/Handlers/DocumentHandlerFactory.cs
+ M tests/OfficeCli.Tests/Program.cs
+?? .agents/research/
+?? .github/skills/
+?? .kiro/
+?? .specify/
+?? docs/adr/0016-hancom-v12-ooxml-carrier-bridge.md
+?? docs/proposals/
+?? plugins/hancom/.officecli/
+?? plugins/hancom/crates/hancom-hwp/src/bin/officecli-hancom-cell.rs
+?? plugins/hancom/crates/hancom-hwp/src/bin/officecli-hancom-show.rs
+?? plugins/hancom/crates/hancom-hwp/src/ooxml_carrier.rs
+?? plugins/hancom/crates/hancom-hwp/tests/ooxml_carrier.rs
+?? plugins/hancom/scripts/generate-ooxml-carrier-fixture.py

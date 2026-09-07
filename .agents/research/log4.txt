@@ -1,0 +1,12 @@
+[FETCH]... ↓ https://en.wikipedia.org/wiki/Hangul_(word_processor)                                                | \u2713 | \u23f1: 1.36s 
+[SCRAPE].. ◆ https://en.wikipedia.org/wiki/Hangul_(word_processor)                                                | \u2713 | \u23f1: 0.21s 
+[COMPLETE] ● https://en.wikipedia.org/wiki/Hangul_(word_processor)                                                | \u2713 | \u23f1: 1.60s 
+[FETCH]... ↓ https://www.hancom.com/etc/hwpDownload.do                                                            | \u2713 | \u23f1: 1.80s 
+[SCRAPE].. ◆ https://www.hancom.com/etc/hwpDownload.do                                                            | \u2713 | \u23f1: 0.04s 
+[COMPLETE] ● https://www.hancom.com/etc/hwpDownload.do                                                            | \u2713 | \u23f1: 1.86s 
+[FETCH]... ↓ https://github.com/nicoulaj/libreoffice-hwpfilter                                                    | \u2713 | \u23f1: 1.87s 
+[SCRAPE].. ◆ https://github.com/nicoulaj/libreoffice-hwpfilter                                                    | \u2713 | \u23f1: 0.07s 
+[COMPLETE] ● https://github.com/nicoulaj/libreoffice-hwpfilter                                                    | \u2713 | \u23f1: 1.95s 
+OK   https://en.wikipedia.org/wiki/Hangul_(word_processor) -> en-wikipedia-org-wiki-Hangul-word-processor-ad5a7f3b.md (35008 chars)
+OK   https://www.hancom.com/etc/hwpDownload.do -> www-hancom-com-etc-hwpDownload-do-7f27a8ae.md (13611 chars)
+OK   https://github.com/nicoulaj/libreoffice-hwpfilter -> github-com-nicoulaj-libreoffice-hwpfilter-60060d59.md (9182 chars)

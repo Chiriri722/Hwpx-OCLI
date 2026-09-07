@@ -1,0 +1,7 @@
+ .gitignore                             |   2 +
+ plugins/hwpx/notes.md                  |   6 +
+ plugins/hwpx/scripts/install.ps1       | 100 ++++++++---
+ plugins/hwpx/scripts/install.sh        |  17 +-
+ plugins/hwpx/task_plan.md              |   9 +-
+ plugins/hwpx/tests/install_contract.rs | 319 +++++++++++++++++++++++++++++++++
+ 6 files changed, 424 insertions(+), 29 deletions(-)

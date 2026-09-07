@@ -1,0 +1,14 @@
+## Goal
+## Non-Goals
+## 확정된 호스트 제약 (코드 읽어 검증)
+## 아키텍처 결정
+## 필수 레포·도구 (사용자 요구에 따른 명시)
+## Phases
+## Key Questions (남은 evidence gate)
+## Risks
+## Acceptance Gates (Phase 완료 판정)
+## Decisions Made
+## Status
+## 2026-08-31 외부 감사 (제3자 검토)
+## 라이선스 판단 재검토 (사용자 질의 응답)
+## Next Action Plan

@@ -1,0 +1,760 @@
+   Compiling officecli-hwpx v0.1.0 (C:\Users\White\Documents\GitHub\Hwpx-OCLI\plugins\hancom\crates\hancom-hwp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.70s
+     Running unittests src\lib.rs (plugins\hancom\target\debug\deps\officecli_hancom_core-25d0e0bd32c56f00.exe)
+
+running 99 tests
+test budget::tests::arithmetic_overflow_is_rejected_without_mutation ... ok
+test container::tests::detects_hwp3_only_at_the_start_of_the_file ... ok
+test container::tests::handles_files_shorter_than_the_probe ... ok
+test container::tests::detects_hwpml_after_utf8_bom_declaration_and_whitespace ... ok
+test container::tests::detection_classifies_hwpml_even_when_a_doctype_precedes_the_root ... ok
+test container::tests::rejects_generic_xml_even_when_it_mentions_hwpml_in_text ... ok
+test container::tests::detects_utf16_hwpml_with_either_bom ... ok
+test container::tests::detection_requires_the_exact_unprefixed_hwpml_root_name ... ok
+test container::tests::rejects_unrecognized_bytes_with_a_hex_hint ... ok
+test diagnostics::tests::printable_unicode_is_preserved ... ok
+test container::tests::rejects_zip_that_is_not_hwpx ... ok
+test emit::batch::tests::false_flags_are_omitted ... ok
+test container::tests::detects_hwpx_without_mimetype_via_section ... ok
+test emit::batch::tests::korean_text_is_not_escaped_to_ascii ... ok
+test emit::batch::tests::empty_props_are_omitted ... ok
+test emit::batch::tests::json_line_is_single_line_without_bom ... ok
+test emit::batch::tests::add_emits_command_parent_type ... ok
+test container::tests::detects_hwpx_by_mimetype ... ok
+test emit::batch::tests::prop_order_is_preserved ... ok
+test emit::batch::tests::prop_opt_skips_none ... ok
+test container::tests::rejects_zip_with_wrong_mimetype ... ok
+test emit::batch::tests::remove_emits_only_command_and_path ... ok
+test emit::batch::tests::set_emits_path_without_parent_or_type ... ok
+test emit::tests::empty_document_emits_nothing ... ok
+test emit::tests::block_sink_stops_before_emitting_later_items_after_an_error ... ok
+test emit::tests::output_is_not_a_top_level_array ... ok
+test emit::tests::uses_lf_only_and_no_bom ... ok
+test emit::tests::writes_one_json_object_per_line ... ok
+test emit::word::tests::cell_text_goes_to_the_cell_paragraph_with_soft_breaks ... ok
+test emit::word::tests::char_style_maps_size_with_pt_unit ... ok
+test emit::word::tests::checkbox_becomes_interactive_formfield_not_a_character ... ok
+test emit::word::tests::checkbox_inside_a_cell_targets_the_cell_paragraph ... ok
+test container::tests::rejects_cfb_directory_child_cycle ... ok
+test container::tests::rejects_cfb_without_file_header ... ok
+test emit::word::tests::children_attach_via_last_predicate_not_absolute_index ... ok
+test emit::word::tests::click_here_field_becomes_a_fillable_text_formfield ... ok
+test container::tests::detects_hwp5_and_reads_version_and_flags ... ok
+test emit::word::tests::distribute_align_maps_to_its_own_value ... ok
+test container::tests::needs_conversion_only_for_binary_formats ... ok
+test container::tests::hwp5_without_protection_flags_is_not_protected ... ok
+test emit::word::tests::empty_table_emits_nothing ... ok
+test container::tests::rejects_cfb_with_wrong_signature ... ok
+test container::tests::hwp5_file_header_string_does_not_trip_hwp3_detection ... ok
+test emit::word::tests::combined_merge_keeps_colspan_on_continuation_rows ... ok
+test emit::word::tests::emits_section_breaks_then_scoped_header_footer_parts ... ok
+test emit::word::tests::hanging_indent_uses_its_own_prop_never_a_negative_value ... ok
+test emit::word::tests::holes_in_the_grid_still_consume_a_cell_slot ... ok
+test emit::word::tests::horizontal_merge_mid_row_shifts_following_cell_index ... ok
+test emit::word::tests::image_with_data_becomes_data_uri ... ok
+test emit::word::tests::image_without_data_is_skipped ... ok
+test emit::word::tests::inline_equation_inside_a_table_cell_keeps_its_cell_parent ... ok
+test emit::word::tests::line_break_becomes_vertical_tab_not_newline ... ok
+test emit::word::tests::many_paragraph_cell_preserves_count_and_per_paragraph_align ... ok
+test emit::word::tests::mixed_paragraph_splits_into_paragraph_plus_runs ... ok
+test emit::word::tests::mixed_style_cell_paragraph_emits_runs_to_the_right_paragraph ... ok
+test emit::word::tests::multi_paragraph_cell_becomes_multiple_paragraphs ... ok
+test emit::word::tests::multiple_inline_equations_preserve_sibling_order ... ok
+test emit::word::tests::nested_table_becomes_a_real_nested_table ... ok
+test emit::word::tests::newline_inside_run_text_never_reaches_output ... ok
+test emit::word::tests::normalize_maps_every_newline_form_to_the_target_break ... ok
+test emit::word::tests::no_emitted_prop_violates_break_invariants ... ok
+test emit::word::tests::note_body_keeps_run_formatting_and_empty_paragraphs ... ok
+test emit::word::tests::note_followup_paths_count_each_kind_across_body_blocks ... ok
+test emit::word::tests::notes_emit_real_docx_note_elements_at_the_inline_position ... ok
+test emit::word::tests::paragraph_style_maps_to_docx_props ... ok
+test emit::word::tests::picture_dimensions_always_carry_a_unit ... ok
+test emit::word::tests::rejects_unsafe_form_field_names ... ok
+test emit::word::tests::removes_automatic_seed_after_table_first_header_story ... ok
+test emit::word::tests::section_note_policy_decorates_dynamic_note_references ... ok
+test emit::word::tests::seeds_header_paragraph_through_paragraph_vocabulary ... ok
+test emit::word::tests::text_field_without_hint_still_emits_a_field ... ok
+test emit::word::tests::table_emits_rows_cols_then_cell_sets ... ok
+test emit::word::tests::textbox_followup_paths_include_nested_cell_boxes_in_story_ordinals ... ok
+test emit::word::tests::trims_float_representation ... ok
+test emit::word::tests::twip_to_pt_divides_by_twenty ... ok
+test emit::word::tests::uniform_paragraph_collapses_to_single_add ... ok
+test error::tests::corrupt_input_maps_to_exit_two ... ok
+test error::tests::error_codes_use_snake_case ... ok
+test emit::word::tests::vertical_merge_uses_restart_and_continue_enum ... ok
+test error::tests::exit_codes_match_protocol_table ... ok
+test error::tests::plugin_never_emits_idle_timeout_code_six ... ok
+test model::tests::align_parses_owpml_case_insensitively ... ok
+test model::tests::counts_private_use_chars_including_nested_tables ... ok
+test model::tests::derives_col_widths_from_single_span_cells ... ok
+test model::tests::derives_real_form_document_widths ... ok
+test model::tests::detects_private_use_area_codepoints ... ok
+test model::tests::derives_remaining_column_by_subtracting_from_a_merged_cell ... ok
+test model::tests::gives_up_entirely_when_a_column_cannot_be_resolved ... ok
+test model::tests::hwpunit_converts_to_twip_by_factor_five ... ok
+test model::tests::hwpunit_converts_to_point_by_factor_hundred ... ok
+test model::tests::justify_maps_to_docx_both ... ok
+test model::tests::negative_first_line_indent_becomes_hanging ... ok
+test model::tests::paragraph_with_image_is_never_uniform ... ok
+test model::tests::plain_text_renders_tab_and_linebreak ... ok
+test model::tests::splits_evenly_when_several_columns_are_unknown ... ok
+test model::tests::uniform_style_detects_mixed_runs ... ok
+test xml_encoding::tests::decodes_utf8_and_both_utf16_byte_orders ... ok
+test xml_encoding::tests::rejects_odd_or_invalid_utf16 ... ok
+test xml_encoding::tests::prefix_decoder_tolerates_a_trailing_high_surrogate ... ok
+
+test result: ok. 99 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\core_contract.rs (plugins\hancom\target\debug\deps\core_contract-0e81469555a1d6dd.exe)
+
+running 5 tests
+test container_detection_is_shared_without_trusting_extensions ... ok
+test document_units_are_shared_at_the_protocol_boundary ... ok
+test diagnostics_escape_terminal_and_line_control_characters ... ok
+test resource_budget_rejects_over_limit_without_committing_usage ... ok
+test heartbeat_uses_the_host_watchdog_frame ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (plugins\hancom\target\debug\deps\officecli_hwpx-b14218420a1ad608.exe)
+
+running 203 tests
+test cli::tests::process_exit_codes_fit_the_platform_byte ... ok
+test format_handler::tests::jsonl_frames_require_an_lf_terminator ... ok
+test format_handler::tests::invalid_utf8_frame_is_a_protocol_argument_error ... ok
+test converter::tests::relative_path_entries_are_not_converter_search_roots ... ok
+test format_handler::tests::part_paths_reject_traversal_and_windows_separators ... ok
+test format_handler::tests::wire_errors_retain_core_error_codes ... ok
+test converter::tests::stderr_capture_keeps_only_a_bounded_tail ... ok
+test hwpml::tests::ignores_character_unit_margins_without_guessing_font_metrics ... ok
+test format_handler::tests::string_fields_report_the_received_json_kind ... ok
+test format_handler::tests::view_end_zero_is_rejected ... ok
+test format_handler::tests::section_scan_rejects_unclosed_xml ... ok
+test hwpml::tests::rejects_a_document_type_declaration ... ok
+test manifest::tests::json_line_has_no_bom_and_no_crlf ... ok
+test manifest::tests::does_not_declare_reserved_kinds ... ok
+test manifest::tests::all_json_keys_are_snake_case ... ok
+test manifest::tests::extensions_keep_leading_dot ... ok
+test manifest::tests::dump_reader_declares_target ... ok
+test manifest::tests::declares_all_required_fields ... ok
+test manifest::tests::dump_reader_only_claims_legacy_formats ... ok
+test manifest::tests::name_is_kebab_case ... ok
+test manifest::tests::idle_timeout_default_is_positive ... ok
+test manifest::tests::kinds_declares_dump_reader_kebab_case ... ok
+test manifest::tests::version_is_semver_triple ... ok
+test manifest::tests::protocol_version_is_one ... ok
+test owpml::equation::latex::tests::serializes_structural_nodes_to_formula_parser_latex ... ok
+test hwpml::tests::rejects_excessive_xml_nesting ... ok
+test converter::tests::staging_rejects_a_source_that_exceeds_its_copy_budget ... ok
+test owpml::equation::parser::latex_compat_tests::task1305_paren_superscript_binds_to_group ... ok
+test owpml::equation::parser::latex_compat_tests::task1305_paren_subscript_binds_to_group ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_arithmetic_subscript_not_merged ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_braced_sum_unchanged ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_spaced_equation_not_merged ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_unbraced_lim_lower_limit_full ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_adjacent_identifier_not_merged ... ok
+test owpml::equation::parser::latex_compat_tests::official_deg_case_distinguishes_function_and_symbol ... ok
+test owpml::equation::parser::latex_compat_tests::task1304_unbraced_sum_lower_limit_full ... ok
+test owpml::equation::parser::latex_compat_tests::task1305_plain_paren_not_grouped ... ok
+test owpml::equation::parser::latex_compat_tests::task1305_regression_number_and_leftright_scripts ... ok
+test owpml::equation::parser::latex_compat_tests::test_hwpeq_inf_remains_symbol ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_backslash_backslash_tokenizes_as_newline ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_aligned ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_array ... ok
+test owpml::equation::parser::latex_compat_tests::test_hwpeq_not_regressed ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_bmatrix ... ok
+test converter::tests::windows_ignores_an_untrusted_media_root_for_conversion_scratch ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_cases ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_smallmatrix ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_pmatrix ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_escaped_braces ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_dfrac_tfrac ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_implies ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_begin_split ... ok
+test converter::tests::windows_conversion_scratch_has_a_protected_dacl ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_binom ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_infty ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_langle_rangle ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_leq_geq ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_mathbb ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_mathbf ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_mathcal ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_mathfrak_mathsf_mathtt ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_mathrm ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_nabla ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_not_lowercase ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_operatorname ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_overline_lowercase ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_overrightarrow ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_overset ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_phantom ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_rightarrow ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_spacing_quad ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_quadratic_formula ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_stackrel ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_text ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_thin_space ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_underline_lowercase ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_underset ... ok
+test owpml::equation::parser::latex_compat_tests::test_latex_widehat_widetilde ... ok
+test owpml::equation::parser::test_bar_rm_it ... ok
+test owpml::equation::parser::test_lim_fraction ... ok
+test owpml::equation::parser::test_rm_p_left ... ok
+test owpml::equation::parser::tests::test_atop ... ok
+test owpml::equation::parser::tests::test_cases ... ok
+test owpml::equation::parser::tests::left_right_group_binds_trailing_script ... ok
+test owpml::equation::parser::test_cases_double_amp ... ok
+test owpml::equation::parser::tests::test_cos_fraction_with_left_right ... ok
+test owpml::equation::parser::tests::test_decoration ... ok
+test owpml::equation::parser::tests::test_font_style ... ok
+test owpml::equation::parser::tests::test_greek ... ok
+test owpml::equation::parser::tests::test_font_style_body_decoration_not_leaked ... ok
+test owpml::equation::parser::tests::test_integral ... ok
+test owpml::equation::parser::tests::test_latex_frac ... ok
+test owpml::equation::parser::tests::test_latex_sqrt_with_bracket_index ... ok
+test owpml::equation::parser::tests::test_latex_quadratic_slice ... ok
+test owpml::equation::parser::tests::test_limit ... ok
+test owpml::equation::parser::tests::test_left_right ... ok
+test owpml::equation::parser::tests::test_matrix ... ok
+test owpml::equation::parser::tests::test_root_glued_digit_parses_as_sqrt ... ok
+test owpml::equation::parser::tests::test_simple_fraction ... ok
+test owpml::equation::parser::tests::test_sample_eq01_script ... ok
+test owpml::equation::parser::tests::test_sqrt ... ok
+test owpml::equation::parser::tests::test_sqrt_with_index ... ok
+test owpml::equation::parser::tests::test_sum ... ok
+test owpml::equation::parser::tests::test_superscript ... ok
+test format_handler::tests::oversized_jsonl_frame_is_drained_before_the_next_request ... ok
+test owpml::equation::parser::tests::test_task1122_over_followed_by_number_parses_as_fraction ... ok
+test owpml::equation::parser::tests::test_task1122_over_prefix_non_numeric_identifiers_parse_as_text ... ok
+test owpml::equation::symbols::tests::test_arrows ... ok
+test owpml::equation::symbols::tests::test_big_operators ... ok
+test owpml::equation::parser::tests::test_uppercase_font_and_deco_commands ... ok
+test owpml::equation::symbols::tests::test_case_insensitive_operators ... ok
+test owpml::equation::symbols::tests::test_functions ... ok
+test owpml::equation::symbols::tests::test_greek_lower ... ok
+test owpml::equation::symbols::tests::test_greek_upper ... ok
+test owpml::equation::symbols::tests::test_operators ... ok
+test owpml::equation::symbols::tests::test_set_operators_not_big ... ok
+test owpml::equation::symbols::tests::test_structure_commands ... ok
+test owpml::equation::tests::converts_the_hwpxlib_reference_equation ... ok
+test owpml::equation::tests::converts_official_integral_bounds_and_left_scripts ... ok
+test owpml::equation::tests::rejects_ambiguous_words_unknown_pua_and_invalid_rgb ... ok
+test owpml::equation::tests::rejects_contextual_equation_commands_outside_their_grammar ... ok
+test owpml::equation::tests::converts_official_operator_aliases_without_command_leakage ... ok
+test owpml::equation::tests::rejects_unbalanced_or_excessively_nested_input ... ok
+test owpml::equation::tests::accepts_official_short_terms_functions_and_reserved_words ... ok
+test owpml::equation::tokenizer::tests::test_arrow ... ok
+test owpml::equation::tests::rejects_known_lossy_commands ... ok
+test owpml::equation::tests::rejects_orphan_operators_and_ragged_matrices ... ok
+test owpml::equation::tokenizer::tests::test_cap_cup_glued_split ... ok
+test owpml::equation::tokenizer::tests::test_dots_glued_split ... ok
+test owpml::equation::tokenizer::tests::test_decimal_number ... ok
+test owpml::equation::tokenizer::tests::test_font_style_keyword_alone_unchanged ... ok
+test owpml::equation::tokenizer::tests::test_existing_commands_unchanged ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_bold ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_it_compound ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_it_single_letter ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_rm_lowercase ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_rm_uppercase ... ok
+test owpml::equation::tokenizer::tests::test_font_style_prefix_rm_compound ... ok
+test owpml::equation::tokenizer::tests::test_glued_keyword_letter_split ... ok
+test owpml::equation::tokenizer::tests::test_glued_keyword_no_oversplit ... ok
+test owpml::equation::tokenizer::tests::test_korean_text ... ok
+test owpml::equation::tokenizer::tests::test_latex_command_prefix ... ok
+test owpml::equation::tests::converts_the_closed_structural_support_set ... ok
+test owpml::equation::tokenizer::tests::test_left_right ... ok
+test owpml::equation::tokenizer::tests::test_matrix ... ok
+test owpml::equation::tokenizer::tests::test_multi_char_symbols ... ok
+test owpml::equation::tokenizer::tests::test_over_glued_short_letter_operand ... ok
+test owpml::equation::tokenizer::tests::test_prime_prefix_split ... ok
+test owpml::equation::tokenizer::tests::test_quoted_string ... ok
+test owpml::equation::tokenizer::tests::test_pua_conditional_bar ... ok
+test owpml::equation::tokenizer::tests::test_simple_fraction ... ok
+test owpml::equation::tokenizer::tests::test_root_sqrt_prefix_split_on_digit ... ok
+test owpml::equation::tokenizer::tests::test_sample_eq01 ... ok
+test owpml::equation::tokenizer::tests::test_subscript_superscript ... ok
+test owpml::equation::tokenizer::tests::test_superscript ... ok
+test owpml::equation::tokenizer::tests::test_task1122_over_atop_followed_by_number_splits ... ok
+test owpml::equation::tokenizer::tests::test_task1122_over_prefix_non_numeric_identifiers_stay_intact ... ok
+test owpml::equation::tokenizer::tests::test_task576_alpha_no_split ... ok
+test owpml::equation::tokenizer::tests::test_task576_sim_lowercase_prefix_split ... ok
+test owpml::equation::tokenizer::tests::test_task576_sim_uppercase_prefix_split ... ok
+test owpml::equation::tokenizer::tests::test_task576_times_followed_by_space ... ok
+test owpml::equation::tokenizer::tests::test_task576_times_lowercase_prefix_split ... ok
+test owpml::equation::tokenizer::tests::test_task576_times_uppercase_prefix_split ... ok
+test owpml::equation::tokenizer::tests::test_whitespace_chars ... ok
+test owpml::package::tests::attr_value_handles_single_quotes ... ok
+test owpml::package::tests::attr_value_requires_word_boundary ... ok
+test owpml::package::tests::guesses_image_content_types ... ok
+test owpml::package::tests::parses_manifest_from_single_line_xml ... ok
+test owpml::package::tests::parses_spine_order ... ok
+test owpml::package::tests::section_index_sorts_numerically_not_lexically ... ok
+test owpml::package::tests::tag_local_name_ignores_namespace_prefix ... ok
+test owpml::section::tests::hint_length_is_counted_in_characters_not_bytes ... ok
+test owpml::section::tests::missing_or_malformed_hint_yields_none ... ok
+test owpml::section::tests::parses_direction_hint_from_command_string ... ok
+test owpml::styles::tests::normalizes_color_forms ... ok
+test owpml::styles::tests::font_ref_accepts_a_literal_name_when_not_an_index ... ok
+test owpml::styles::tests::parses_char_properties ... ok
+test owpml::styles::tests::font_ref_resolves_through_the_font_table ... ok
+test owpml::styles::tests::parses_para_properties ... ok
+test owpml::styles::tests::parses_hanging_indent_from_negative_intent ... ok
+test owpml::styles::tests::unknown_id_yields_default_style ... ok
+test owpml::styles::tests::underline_type_none_means_no_underline ... ok
+test owpml::xml::tests::finds_attribute_regardless_of_prefix ... ok
+test owpml::xml::tests::parses_numeric_attributes ... ok
+test owpml::styles::tests::strikeout_reads_shape_not_type ... ok
+test owpml::xml::tests::strips_namespace_prefix ... ok
+test owpml::xml::tests::preserves_korean_attribute_values ... ok
+test owpml::xml::tests::unescapes_entities_in_attribute_values ... ok
+test owpml::styles::tests::tolerates_malformed_header ... ok
+test tests::dump_requires_source ... ok
+test tests::file_identity_requires_matching_volume_and_index ... ok
+test tests::flag_requiring_value_reports_missing_value ... ok
+test tests::help_goes_to_stderr_not_stdout ... ok
+test tests::no_args_is_help ... ok
+test tests::parses_dump_options ... ok
+test tests::parses_dump_with_source ... ok
+test tests::info_writes_manifest_to_stdout_only ... ok
+test tests::parses_info ... ok
+test tests::unknown_option_is_reported ... ok
+test tests::unknown_subcommand_is_reported ... ok
+test owpml::equation::tests::enforces_ast_matrix_and_output_boundaries ... ok
+test owpml::equation::tests::enforces_script_token_and_group_boundaries ... ok
+test converter::tests::converter_timeout_terminates_the_windows_process_tree ... ok
+
+test result: ok. 203 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+     Running unittests src\bin\officecli-dump-reader-hwpx.rs (plugins\hancom\target\debug\deps\officecli_dump_reader_hwpx-1af3ad1dd6ac6626.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\officecli-hancom-cell.rs (plugins\hancom\target\debug\deps\officecli_hancom_cell-304bbe21d2595b28.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\officecli-hancom-hwp.rs (plugins\hancom\target\debug\deps\officecli_hancom_hwp-fd612d56a4c4d4c3.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\officecli-hancom-hwpx.rs (plugins\hancom\target\debug\deps\officecli_hancom_hwpx-472d303662a7d541.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\officecli-hancom-show.rs (plugins\hancom\target\debug\deps\officecli_hancom_show-4e09b87810e532d7.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\core_compat.rs (plugins\hancom\target\debug\deps\core_compat-05ca7444c1856a54.exe)
+
+running 1 test
+test legacy_paths_are_aliases_for_shared_core_types ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\golden.rs (plugins\hancom\target\debug\deps\golden-191e02975838db14.exe)
+
+running 3 tests
+test canonical_document_matches_golden_output ... ok
+test golden_document_covers_intended_features ... ok
+test golden_output_satisfies_protocol_invariants ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\hwpx_format_handler.rs (plugins\hancom\target\debug\deps\hwpx_format_handler-dd08e159a3fb3ed3.exe)
+
+running 16 tests
+test manifest_is_a_split_format_handler_with_honest_vocabulary ... ok
+test open_frame_present_editable_keeps_strict_type_checks ... ok
+test legacy_nested_open_fields_reject_mixed_or_extended_shapes ... ok
+test open_frame_present_path_keeps_strict_type_and_identity_checks ... ok
+test permissive_package_is_readable_but_cannot_cross_the_editable_gate ... ok
+test read_only_session_never_advertises_or_accepts_mutation ... ok
+test view_honors_protocol_and_legacy_max_lines_spellings ... ok
+test open_frame_without_editable_defaults_to_read_only ... ok
+test open_frame_without_redundant_path_uses_the_cli_source ... ok
+test unadvertised_topology_mutation_fails_without_a_successful_noop ... ok
+test legacy_command_save_rejects_incomplete_or_extended_shapes ... ok
+test external_source_change_before_save_is_never_overwritten ... ok
+test legacy_lifecycle_envelopes_preserve_explicit_editability_and_durable_save ... ok
+test close_implicitly_saves_a_pending_supported_edit ... ok
+test protocol_reads_edits_and_durably_reopens_the_saved_package ... ok
+test dedicated_binary_prints_exactly_one_format_handler_manifest ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests\install_contract.rs (plugins\hancom\target\debug\deps\install_contract-03e589cfb3e85446.exe)
+
+running 21 tests
+test installers_serialize_mutations_and_require_one_suite_version ... ok
+test installers_split_dump_reader_and_format_handler_discovery ... ok
+test windows_installer_exposes_every_environment_override ... ok
+test windows_installer_manages_every_extension_directory ... ok
+test installers_preflight_every_physical_binary_and_exact_target ... ok
+test windows_uninstall_checks_reparse_directories_before_removing_targets ... ok
+test windows_installer_never_deletes_recovery_backups_from_finally ... ok
+test windows_installer_tracks_each_stage_before_copying_into_it ... ok
+test windows_installer_creates_managed_directories_without_provider_path_expansion ... ok
+test installers_use_all_canonical_binary_names ... ok
+test windows_print_env_registers_each_kind_with_its_canonical_binary ... ok
+test windows_uninstall_remains_idempotent_when_the_managed_tree_is_missing ... ok
+test windows_uninstall_retries_a_transient_file_lock ... ok
+test windows_uninstall_removes_every_extension_and_preserves_unrelated_plugins ... ok
+test windows_uninstall_rejects_a_broken_ancestor_junction ... ok
+test windows_install_treats_brackets_in_home_as_literal_characters ... ok
+test windows_failed_migration_restores_the_legacy_hwpx_only_install ... ok
+test windows_install_restores_every_prior_target_when_a_later_commit_is_locked ... ok
+test windows_uninstall_rejects_non_directory_managed_components ... ok
+test windows_install_migrates_a_legacy_hwpx_only_layout_idempotently ... ok
+test windows_uninstall_rejects_reparse_points_in_every_existing_managed_component ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.61s
+
+     Running tests\ooxml_carrier.rs (plugins\hancom\target\debug\deps\ooxml_carrier-3b8ee10f95df7b78.exe)
+
+running 38 tests
+test carrier_help_includes_required_hancom_public_spec_notice ... ok
+test dump_cli_rejects_unknown_options_and_wrong_source_extensions ... ok
+test a_target_hardlink_to_the_source_is_never_replaced ... ok
+test a_claimed_zip_that_cannot_be_opened_is_corrupt ... ok
+test a_valid_opposite_ooxml_family_is_unsupported_not_corrupt ... ok
+test duplicate_cell_main_markers_are_corrupt ... ok
+test a_different_preexisting_native_sibling_is_never_replaced ... ok
+test a_cached_native_sibling_with_a_different_mtime_is_rejected ... ok
+test dump_cli_accepts_common_protocol_options ... ok
+test every_reachable_part_requires_an_unambiguous_content_type ... ok
+test duplicate_relationship_ids_and_dangling_internal_targets_are_corrupt ... ok
+test manifests_route_each_extension_to_its_native_ooxml_family ... ok
+test dtds_and_incomplete_ooxml_packages_are_corrupt ... ok
+test oversized_sources_are_rejected_before_container_parsing ... ok
+test hancom_show_timestamp_quirk_is_ignored_only_in_the_validation_copy ... ok
+test expanded_name_duplicate_attributes_and_attribute_floods_are_corrupt ... ok
+test dangling_main_sheet_and_slide_relationship_ids_are_corrupt ... ok
+test https_hyperlinks_are_the_only_supported_external_relationships ... ok
+test local_and_central_zip_headers_must_match ... ok
+test duplicate_and_missing_content_type_declarations_are_corrupt ... ok
+test legacy_or_unknown_containers_are_reported_as_unsupported ... ok
+test duplicate_producer_fields_and_uppercase_xml_payloads_are_corrupt ... ok
+test unobserved_zip_extra_fields_are_unsupported ... ok
+test timestamp_compatibility_rejects_non_hancom_shapes ... ok
+test active_parts_and_non_hyperlink_external_relationships_are_unsupported ... ok
+test validated_cell_is_copied_byte_for_byte_to_xlsx_sibling ... ok
+test relationship_and_content_type_metadata_reject_unexpected_attributes ... ok
+test invalid_utf8_and_raw_xml_control_characters_are_corrupt ... ok
+test unreachable_parts_and_unobserved_content_types_are_unsupported ... ok
+test validated_show_is_copied_byte_for_byte_to_pptx_sibling ... ok
+test unknown_attribute_entities_and_misplaced_declarations_are_corrupt ... ok
+test namespace_confused_required_children_are_corrupt ... ok
+test windows_zone_identifier_is_preserved_on_the_native_sibling ... ok
+test opc_identity_and_required_root_relationships_are_unambiguous ... ok
+test unsafe_or_colliding_zip_entry_names_are_corrupt ... ok
+test reserved_namespace_rebindings_are_corrupt ... ok
+test unverified_producer_versions_fail_closed_as_unsupported ... ok
+test symlink_entries_and_extreme_expansion_are_corrupt ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests\owpml_editor_cow.rs (plugins\hancom\target\debug\deps\owpml_editor_cow-dc5083749c1c8647.exe)
+
+running 11 tests
+test surgical_text_edit_changes_only_the_selected_inner_bytes ... ok
+test surgical_text_edit_rejects_namespace_confusion ... ok
+test surgical_text_edit_rejects_noops_wrong_preconditions_and_ambiguous_ids ... ok
+test surgical_text_edit_rejects_non_plain_target_content ... ok
+test ordinal_selector_disambiguates_repeated_hancom_paragraph_ids ... ok
+test cow_fails_closed_when_zip_extra_fields_cannot_be_preserved ... ok
+test g3_rejects_semantically_matching_but_byte_tampered_replacements ... ok
+test cow_rewrites_only_an_exact_planned_part_and_passes_g3 ... ok
+test cow_noop_uses_the_exact_raw_package_path ... ok
+test cow_restores_non_default_version_made_by_metadata ... ok
+test cow_rejects_inexact_plans_key_mismatches_and_changed_sources ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\owpml_editor_g3.rs (plugins\hancom\target\debug\deps\owpml_editor_g3-14f277dd2cfdfdf8.exe)
+
+running 6 tests
+test g3_requires_each_planned_part_to_change ... ok
+test noop_copy_preserves_snapshot_and_reopens_with_identical_semantics ... ok
+test g3_reopens_candidate_and_rejects_an_unexpected_known_semantic_delta ... ok
+test g3_accepts_only_the_exact_requested_known_semantic_delta ... ok
+test g3_rejects_preserved_metadata_changes_even_for_a_planned_part ... ok
+test g3_rejects_unplanned_payload_or_compression_changes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\owpml_output_conformance.rs (plugins\hancom\target\debug\deps\owpml_output_conformance-65faf4116e124d14.exe)
+
+running 14 tests
+test symlink_entries_are_not_writer_output ... ok
+test archive_must_start_with_the_physical_mimetype_local_header ... ok
+test container_must_select_the_canonical_hpf_rootfile ... ok
+test all_entry_payloads_are_checksum_verified ... ok
+test canonical_output_package_passes_strict_gate ... ok
+test every_container_rootfile_must_resolve ... ok
+test manifest_hrefs_and_spine_ids_must_resolve ... ok
+test mimetype_must_be_first_stored_and_byte_exact ... ok
+test topology_elements_must_be_in_their_canonical_parents ... ok
+test required_package_parts_must_all_exist ... ok
+test section_manifest_spine_and_header_count_must_agree ... ok
+test package_paths_must_be_portable_and_unambiguous ... ok
+test every_xml_part_must_be_safe_and_well_formed ... ok
+test writer_output_cannot_exceed_reader_resource_limits ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests\parse_hwpml.rs (plugins\hancom\target\debug\deps\parse_hwpml-8e8e0183def4aaf2.exe)
+
+running 44 tests
+test accepts_legal_misc_before_root_when_declaration_is_absent ... ok
+test content_bearing_elements_outside_paragraphs_fail_closed ... ok
+test distinguishes_legal_from_misplaced_or_duplicate_doctypes ... ok
+test accepts_well_formed_xml_declaration_variants ... ok
+test a_bom_conflicting_with_an_unsupported_declared_encoding_is_corrupt ... ok
+test content_bearing_elements_directly_under_tables_fail_closed ... ok
+test applies_hwpml_character_and_paragraph_styles ... ok
+test ignores_formatting_whitespace_between_text_children_but_keeps_char_spaces ... ok
+test preserves_cdata_inside_char_without_collecting_head_or_tail_metadata ... ok
+test content_bearing_controls_beside_text_also_fail_closed ... ok
+test maps_basic_hwpml_table_between_surrounding_text ... ok
+test ambiguous_hyphen_and_fixed_width_space_fail_closed ... ok
+test recognizes_hwpml_but_rejects_document_type_declarations_as_unsupported ... ok
+test rejects_default_namespace_confusion_below_the_root ... ok
+test reads_utf16_little_and_big_endian_documents ... ok
+test preserves_significant_space_only_runs_around_tables ... ok
+test reads_documented_char_wrappers_and_supported_character_controls ... ok
+test preserves_empty_hwpml_paragraphs_as_blank_lines ... ok
+test rejects_duplicate_head_body_and_tail_root_children ... ok
+test rejects_duplicate_style_ids_and_conflicting_vertical_alignment ... ok
+test rejects_explicit_dangling_style_references ... ok
+test accepts_common_subset_version_allowlist_and_rejects_unknown_ones ... ok
+test rejects_direct_text_children_outside_documented_char_wrapper ... ok
+test accepts_xml_character_references_but_rejects_undeclared_entities ... ok
+test content_bearing_controls_fail_instead_of_disappearing_silently ... ok
+test rejects_malformed_xml_declaration_pseudo_attributes ... ok
+test rejects_invalid_duplicate_or_misplaced_mapping_ids ... ok
+test rejects_mapping_wrappers_outside_the_documented_parent_chain ... ok
+test rejects_root_children_whose_order_would_lose_style_information ... ok
+test rejects_non_hwpml_xml_and_truncated_xml ... ok
+test rejects_text_and_paragraphs_outside_the_documented_body_path ... ok
+test rejects_xml_declarations_outside_the_document_start ... ok
+test rejects_xml_versions_outside_the_supported_xml_1_0_grammar ... ok
+test rejects_xml_declarations_that_conflict_with_the_actual_byte_encoding ... ok
+test requires_an_exact_unprefixed_root_and_version_attribute ... ok
+test rejects_known_controls_under_the_wrong_parent ... ok
+test unknown_root_children_fail_instead_of_hiding_document_content ... ok
+test resolves_font_ids_within_their_declared_language_group ... ok
+test requires_table_cell_paragraphs_to_follow_paralist ... ok
+test skips_unsupported_control_subtrees_instead_of_leaking_their_metadata ... ok
+test rejects_table_structure_elements_under_the_wrong_parent ... ok
+test rejects_malformed_or_out_of_grid_table_coordinates ... ok
+test rejects_payload_inside_empty_character_controls ... ok
+test limits_aggregate_attribute_bytes_even_below_the_attribute_count_cap ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\parse_owpml.rs (plugins\hancom\target\debug\deps\parse_owpml-d300a4f576884bda.exe)
+
+running 107 tests
+test duplicate_spine_references_are_parsed_once ... ok
+test applies_paragraph_properties ... ok
+test accepts_single_parity_header_footer_story ... ok
+test accepts_missing_mimetype ... ok
+test duplicate_number_definition_does_not_poison_same_id_bullet_namespace ... ok
+test converts_header_footer_page_counters_to_dynamic_docx_fields ... ok
+test applies_char_properties_from_header ... ok
+test accepts_paired_odd_even_header_footer_stories ... ok
+test collects_named_styles_used_only_in_header_stories ... ok
+test converts_a_real_hancom_equation_script_to_inline_latex ... ok
+test emits_a_standalone_non_character_equation_in_display_mode ... ok
+test emits_active_named_styles_before_paragraphs_without_losing_direct_formatting ... ok
+test concatenates_multiple_sections_in_spine_order ... ok
+test emits_page_center_alignment_without_consuming_inactive_horizontal_offset ... ok
+test falls_back_to_filename_order_without_hpf ... ok
+test filled_click_here_field_stays_as_styled_text ... ok
+test expands_official_numbering_path_tokens_without_repeating_level_one ... ok
+test emits_supported_inline_rectangle_without_leaking_or_reordering_text ... ok
+test emits_supported_floating_vertical_textbox_with_structural_inner_paragraphs ... ok
+test emits_rounded_inline_rectangle_and_ignores_inactive_anchor_flags ... ok
+test emits_verified_page_relative_ellipse_without_fill ... ok
+test chart_switch_uses_default_for_unknown_cases_and_rejects_orphan_branches ... ok
+test emits_number_bullet_and_section_outline_definitions_before_body ... ok
+test emits_verified_self_contained_chart_part_with_native_frame_geometry ... ok
+test ignores_a_dormant_tenth_hwp_numbering_level ... ok
+test empty_click_here_field_becomes_a_text_field ... ok
+test accepts_hancom_oracle_auto_indent_bullet_offsets ... ok
+test merges_adjacent_runs_with_identical_style ... ok
+test image_without_bindata_leaves_data_none ... ok
+test ignores_malformed_dormant_named_styles ... ok
+test materializes_hancoms_implicit_outline_zero_profile_for_named_styles ... ok
+test preserves_empty_paragraphs_as_blank_lines ... ok
+test oversized_cell_span_returns_error_instead_of_panicking ... ok
+test materializes_numbering_owned_only_by_an_active_named_style ... ok
+test maps_active_outline_style_level_even_when_direct_para_pr_differs ... ok
+test preserves_exact_section_note_line_and_spacing_profiles ... ok
+test preserves_korean_and_special_characters ... ok
+test preserves_multiple_equations_cdata_color_and_surrounding_text_order ... ok
+test preserves_an_inline_equation_inside_a_table_cell ... ok
+test preserves_pua_bullet_and_verified_marker_character_style ... ok
+test preserves_checkboxes_inside_nested_tables ... ok
+test preserves_section_footnote_and_endnote_policies ... ok
+test reads_checkbox_form_controls ... ok
+test preserves_section_boundaries_and_header_footer_stories ... ok
+test reads_paragraph_text_in_order ... ok
+test reads_cell_spans_and_fill ... ok
+test reads_line_break_as_inline_not_paragraph_split ... ok
+test reads_footnotes_and_endnotes_as_ordered_inline_notes ... ok
+test reads_superscript_and_subscript ... ok
+test rejects_a_note_without_the_schema_required_sublist ... ok
+test rejects_a_note_auto_number_that_does_not_match_its_container ... ok
+test reads_image_reference_and_resolves_bindata ... ok
+test reads_table_structure_and_cells ... ok
+test rejects_active_named_style_table_count_mismatch ... ok
+test rejects_active_notes_when_section_note_layout_cannot_be_materialized ... ok
+test rejects_custom_section_note_marks_until_numbering_semantics_are_proven ... ok
+test rejects_display_equation_mixed_with_paragraph_text ... ok
+test rejects_case_confused_note_elements_instead_of_proving_zero_notes ... ok
+test rejects_an_ambiguous_active_number_definition ... ok
+test rejects_duplicate_section_note_layout_elements ... ok
+test rejects_active_dangling_or_unrepresentable_numbering ... ok
+test rejects_invalid_first_page_visibility_flags ... ok
+test rejects_floating_rectangle_coordinates_that_overflow_docx_emu ... ok
+test rejects_active_chart_content_without_a_verified_docx_mapping ... ok
+test emits_every_verified_hwp_number_format ... ok
+test rejects_non_zip_input ... ok
+test rejects_chart_references_that_are_missing_or_escape_the_chart_directory ... ok
+test rejects_active_unverified_numbering_layouts_before_emission ... ok
+test rejects_malformed_or_duplicate_header_footer_stories ... ok
+test rejects_note_content_outside_the_schema_required_sublist ... ok
+test rejects_notes_inside_header_footer_stories ... ok
+test rejects_malformed_or_relationship_bearing_chart_parts ... ok
+test rejects_notes_nested_inside_another_note ... ok
+test rejects_numbering_start_outside_the_docx_integer_range ... ok
+test rejects_malformed_or_lossy_equations_instead_of_dropping_them ... ok
+test rejects_missing_or_blank_paragraph_style_references_when_the_table_exists ... ok
+test rejects_excessive_spine_reference_count ... ok
+test rejects_structurally_incomplete_rectangle_as_corrupt_input ... ok
+test rejects_table_dimensions_above_grid_budget ... ok
+test rejects_ambiguous_or_incomplete_active_named_styles ... ok
+test rejects_unknown_direct_children_inside_a_note_sublist ... ok
+test rejects_outline_style_shared_by_sections_with_different_outline_numberings ... ok
+test rejects_non_integer_numbering_geometry_without_rounding ... ok
+test rejects_unrepresentable_footnote_column_placement ... ok
+test rejects_zip_without_sections ... ok
+test rejects_wrong_mimetype ... ok
+test rejects_unrepresentable_or_invalid_note_instance_marks ... ok
+test rejects_malformed_or_unknown_section_note_layout_profiles ... ok
+test repeated_image_references_share_resolved_bytes ... ok
+test rejects_unsafe_numbering_marker_templates ... ok
+test resolves_outline_numbering_per_section_and_ignores_dormant_lossy_templates ... ok
+test selects_supported_ooxml_chart_switch_case_and_ignores_ole_fallback ... ok
+test skips_linesegarray_render_cache ... ok
+test shares_one_numbering_instance_across_number_outline_and_plain_gaps ... ok
+test works_without_header_xml_losing_only_formatting ... ok
+test rejects_unverified_header_footer_timelines_and_overlaps ... ok
+test rejects_unverified_page_counter_kinds_and_number_formats ... ok
+test rejects_shape_values_outside_their_docx_numeric_domains ... ok
+test textbox_content_keeps_named_style_numbering_image_and_footnote ... ok
+test table_inside_paragraph_becomes_sibling_block ... ok
+test rejects_unverified_ellipse_geometry_profiles ... ok
+test rejects_remaining_unimplemented_shape_families_instead_of_dropping_them ... ok
+test rejects_excessive_image_reference_count ... ok
+test enforces_chart_reference_and_embedded_xml_output_budgets ... ok
+test rejects_excessive_embedded_image_output_bytes ... ok
+test rejects_section_xml_larger_than_resource_budget ... ok
+test rejects_excessive_archive_entry_count ... ok
+
+test result: ok. 107 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.96s
+
+     Running tests\protocol_contract.rs (plugins\hancom\target\debug\deps\protocol_contract-ba6ebacd16230849.exe)
+
+running 64 tests
+test distributed_notice_attributes_the_pinned_rhwp_parser_sources ... ok
+test distributed_docs_include_required_hancom_notice ... ok
+test canonical_binary_is_the_primary_hancom_hwp_entrypoint ... ok
+test content_detection_reads_single_xml_hwpml_even_when_named_hwp ... ok
+test binary_hwp5_exits_three_with_actionable_message ... ok
+test configured_converter_path_must_be_absolute ... ok
+test corrupt_input_exits_two ... ok
+test documents_without_private_use_chars_get_no_such_note ... ok
+test active_numbering_failure_exits_three_before_any_stdout_is_emitted ... ok
+test dump_emits_one_json_object_per_line ... ok
+test dormant_note_layout_emits_a_structured_mandatory_warning ... ok
+test dump_add_items_carry_parent_and_type ... ok
+test active_note_layout_exits_three_before_any_stdout_is_emitted ... ok
+test dump_emits_section_note_policy_and_instance_decorations ... ok
+test dump_emits_structural_footnotes_and_endnotes_in_inline_order ... ok
+test dump_keeps_diagnostics_off_stdout ... ok
+test dump_lines_use_documented_batch_item_fields ... ok
+test dump_never_emits_raw_newline_inside_prop_values ... ok
+test dump_never_emits_top_level_array ... ok
+test dump_preserves_korean_text_as_utf8 ... ok
+test canonical_binary_reads_owpml_and_single_xml_hml ... ok
+test dump_stdout_has_no_bom_and_no_crlf ... ok
+test empty_document_exits_zero_with_no_output ... ok
+test extension_is_not_trusted_hwpx_named_hwp_still_works ... ok
+test help_does_not_pollute_stdout ... ok
+test help_includes_required_hancom_notice ... ok
+test generic_xml_is_not_misclassified_as_hwpml ... ok
+test hwpml_doctype_is_recognized_then_rejected_with_exit_three ... ok
+test info_declares_protocol_one ... ok
+test info_declares_required_fields ... ok
+test info_declares_dump_reader_kind_and_only_legacy_hancom_extensions ... ok
+test info_does_not_declare_reserved_kinds ... ok
+test info_declares_valid_target_for_dump_reader ... ok
+test info_idle_timeout_default_is_nonzero_integer ... ok
+test info_exits_zero_and_prints_single_json_object ... ok
+test info_includes_required_hancom_notice ... ok
+test info_output_has_no_bom ... ok
+test info_output_uses_lf_not_crlf ... ok
+test info_uses_snake_case_keys_only ... ok
+test log_file_receives_diagnostics_instead_of_stderr ... ok
+test missing_active_named_style_exits_two_without_partial_stdout ... ok
+test media_dir_option_is_accepted ... ok
+test log_file_hard_link_to_source_is_rejected ... ok
+test missing_file_exits_two ... ok
+test log_file_open_failure_is_reported_on_stderr ... ok
+test log_file_cannot_overwrite_the_source ... ok
+test private_use_chars_are_reported_but_not_altered ... ok
+test unknown_subcommand_fails_without_polluting_stdout ... ok
+test quiet_does_not_suppress_the_mandatory_dormant_layout_warning ... ok
+test protected_hwp5_reports_the_protection ... ok
+test quiet_suppresses_stderr_summary ... ok
+test unsupported_hwpml_control_exits_three_without_partial_stdout ... ok
+test namespace_confused_hwpml_exits_two_without_stdout ... ok
+test unsupported_late_equation_exits_three_without_partial_stdout ... ok
+test unsupported_late_shape_exits_three_without_partial_stdout ... ok
+test zip_that_is_not_hwpx_exits_two_naming_the_cause ... ok
+test zip_without_sections_exits_two ... ok
+test never_exits_with_host_reserved_code_six ... ok
+test converter_nonzero_exit_is_corrupt_input_and_keeps_stdout_empty ... ok
+test converter_success_without_an_output_is_corrupt_input ... ok
+test converter_output_is_revalidated_as_hwpx ... ok
+test configured_converter_turns_binary_hwp_into_jsonl_and_cleans_scratch ... ok
+test legacy_and_canonical_entrypoints_are_byte_for_byte_compatible ... ok
+test legacy_and_canonical_converter_contracts_are_byte_for_byte_compatible ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+   Doc-tests officecli_hancom_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests officecli_hwpx
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

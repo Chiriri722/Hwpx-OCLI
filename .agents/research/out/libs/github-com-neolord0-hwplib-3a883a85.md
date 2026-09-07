@@ -1,0 +1,966 @@
+<!-- source: https://github.com/neolord0/hwplib -->
+
+[Skip to content](https://github.com/neolord0/hwplib#start-of-content)
+## Navigation Menu
+[](https://github.com/)
+[Sign in](https://github.com/login?return_to=https%3A%2F%2Fgithub.com%2Fneolord0%2Fhwplib)
+Appearance settings
+  * Platform
+    * AI CODE CREATION
+      * [GitHub CopilotWrite better code with AI](https://github.com/features/copilot)
+      * [GitHub Copilot appDirect agents from issue to merge](https://github.com/features/ai/github-app)
+      * [MCP RegistryIntegrate external tools](https://github.com/mcp)
+    * DEVELOPER WORKFLOWS
+      * [ActionsAutomate any workflow](https://github.com/features/actions)
+      * [CodespacesInstant dev environments](https://github.com/features/codespaces)
+      * [IssuesPlan and track work](https://github.com/features/issues)
+      * [Code ReviewManage code changes](https://github.com/features/code-review)
+      * [Code QualityEnforce quality at merge](https://github.com/features/code-quality)
+    * APPLICATION SECURITY
+      * [GitHub Advanced SecurityFind and fix vulnerabilities](https://github.com/security/advanced-security)
+      * [Code securitySecure your code as you build](https://github.com/security/advanced-security/code-security)
+      * [Secret protectionStop leaks before they start](https://github.com/security/advanced-security/secret-protection)
+    * EXPLORE
+      * [Why GitHub](https://github.com/why-github)
+      * [Documentation](https://docs.github.com)
+      * [Blog](https://github.blog)
+      * [Changelog](https://github.blog/changelog)
+      * [Marketplace](https://github.com/marketplace)
+[View all features](https://github.com/features)
+  * Solutions
+    * BY COMPANY SIZE
+      * [Enterprises](https://github.com/enterprise)
+      * [Small and medium teams](https://github.com/team)
+      * [Startups](https://github.com/enterprise/startups)
+      * [Nonprofits](https://github.com/solutions/industry/nonprofits)
+    * BY USE CASE
+      * [App Modernization](https://github.com/solutions/use-case/app-modernization)
+      * [DevSecOps](https://github.com/solutions/use-case/devsecops)
+      * [DevOps](https://github.com/solutions/use-case/devops)
+      * [CI/CD](https://github.com/solutions/use-case/ci-cd)
+      * [View all use cases](https://github.com/solutions/use-case)
+    * BY INDUSTRY
+      * [Healthcare](https://github.com/solutions/industry/healthcare)
+      * [Financial services](https://github.com/solutions/industry/financial-services)
+      * [Manufacturing](https://github.com/solutions/industry/manufacturing)
+      * [Government](https://github.com/solutions/industry/government)
+      * [View all industries](https://github.com/solutions/industry)
+[View all solutions](https://github.com/solutions)
+  * Resources
+    * EXPLORE BY TOPIC
+      * [AI](https://github.com/resources/articles?topic=ai)
+      * [Software Development](https://github.com/resources/articles?topic=software-development)
+      * [DevOps](https://github.com/resources/articles?topic=devops)
+      * [Security](https://github.com/resources/articles?topic=security)
+      * [View all topics](https://github.com/resources/articles)
+    * EXPLORE BY TYPE
+      * [Customer stories](https://github.com/customer-stories)
+      * [Events & webinars](https://github.com/resources/events)
+      * [Ebooks & reports](https://github.com/resources/whitepapers)
+      * [Business insights](https://github.com/solutions/executive-insights)
+      * [GitHub Skills](https://skills.github.com)
+    * SUPPORT & SERVICES
+      * [Documentation](https://docs.github.com)
+      * [Customer support](https://support.github.com)
+      * [Community forum](https://github.com/orgs/community/discussions)
+      * [Trust center](https://github.com/trust-center)
+      * [Partners](https://github.com/partners)
+[View all resources](https://github.com/resources)
+  * Open Source
+    * COMMUNITY
+      * [GitHub SponsorsFund open source developers](https://github.com/open-source/sponsors)
+    * PROGRAMS
+      * [Security Lab](https://securitylab.github.com)
+      * [Maintainer Community](https://maintainers.github.com)
+      * [Accelerator](https://github.com/open-source/accelerator)
+      * [GitHub Stars](https://stars.github.com)
+      * [Archive Program](https://archiveprogram.github.com)
+    * REPOSITORIES
+      * [Topics](https://github.com/topics)
+      * [Trending](https://github.com/trending)
+      * [Collections](https://github.com/collections)
+  * Enterprise
+    * ENTERPRISE SOLUTIONS
+      * [Enterprise platformAI-powered developer platform](https://github.com/enterprise)
+    * AVAILABLE ADD-ONS
+      * [GitHub Advanced SecurityEnterprise-grade security features](https://github.com/security/advanced-security)
+      * [Copilot for BusinessEnterprise-grade AI features](https://github.com/features/copilot/copilot-business)
+      * [Premium SupportEnterprise-grade 24/7 support](https://github.com/enterprise/premium-support)
+  * [Pricing](https://github.com/pricing)
+
+
+Search`/`
+[Sign in](https://github.com/login?return_to=https%3A%2F%2Fgithub.com%2Fneolord0%2Fhwplib)
+[Sign up](https://github.com/signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E&source=header-repo&source_repo=neolord0%2Fhwplib)
+Appearance settings
+You signed in with another tab or window. [Reload](https://github.com/neolord0/hwplib) to refresh your session. You signed out in another tab or window. [Reload](https://github.com/neolord0/hwplib) to refresh your session. You switched accounts on another tab or window. [Reload](https://github.com/neolord0/hwplib) to refresh your session. Dismiss alert
+{{ message }}
+[ neolord0 ](https://github.com/neolord0) / **[hwplib](https://github.com/neolord0/hwplib) ** Public
+  * [ Notifications ](https://github.com/login?return_to=%2Fneolord0%2Fhwplib) You must be signed in to change notification settings
+  * [ Fork 190 ](https://github.com/login?return_to=%2Fneolord0%2Fhwplib)
+  * [ Star  587 ](https://github.com/login?return_to=%2Fneolord0%2Fhwplib)
+
+
+  * [ Code ](https://github.com/neolord0/hwplib)
+  * [ Issues 4 ](https://github.com/neolord0/hwplib/issues)
+  * [ Pull requests 0 ](https://github.com/neolord0/hwplib/pulls)
+  * [ Actions ](https://github.com/neolord0/hwplib/actions)
+  * [ Wiki ](https://github.com/neolord0/hwplib/wiki)
+  * [ Security and quality 0 ](https://github.com/neolord0/hwplib/security)
+  * [ Insights ](https://github.com/neolord0/hwplib/pulse)
+
+
+Additional navigation options
+  * [ Code  ](https://github.com/neolord0/hwplib)
+  * [ Issues  ](https://github.com/neolord0/hwplib/issues)
+  * [ Pull requests  ](https://github.com/neolord0/hwplib/pulls)
+  * [ Actions  ](https://github.com/neolord0/hwplib/actions)
+  * [ Wiki  ](https://github.com/neolord0/hwplib/wiki)
+  * [ Security and quality  ](https://github.com/neolord0/hwplib/security)
+  * [ Insights  ](https://github.com/neolord0/hwplib/pulse)
+
+
+[](https://github.com/neolord0/hwplib)
+main
+[**1** Branch](https://github.com/neolord0/hwplib/branches)[**0** Tags](https://github.com/neolord0/hwplib/tags)
+[](https://github.com/neolord0/hwplib/branches)[](https://github.com/neolord0/hwplib/tags)
+Go to file
+Code
+Open more actions menu
+## Latest commit
+[![psk-dalcomlab](https://avatars.githubusercontent.com/u/268488634?v=4&size=40)](https://github.com/psk-dalcomlab)[psk-dalcomlab](https://github.com/neolord0/hwplib/commits?author=psk-dalcomlab)
+[* 2026년 7월 13일 버전으로 롤백..](https://github.com/neolord0/hwplib/commit/cdfb2690f24893d911baa0546de77f9c306a1009)
+Aug 19, 2026
+[cdfb269](https://github.com/neolord0/hwplib/commit/cdfb2690f24893d911baa0546de77f9c306a1009) · Aug 19, 2026
+## History
+[414 Commits](https://github.com/neolord0/hwplib/commits/main/)
+Open commit details
+[](https://github.com/neolord0/hwplib/commits/main/)414 Commits
+## Folders and files  
+| Name  | Name  | Last commit message  | Last commit date  |  
+| --- | --- | --- | --- |  
+| [sample_hwp](https://github.com/neolord0/hwplib/tree/main/sample_hwp "sample_hwp")  | [sample_hwp](https://github.com/neolord0/hwplib/tree/main/sample_hwp "sample_hwp")  | [배포용 문서 읽기 추가...](https://github.com/neolord0/hwplib/commit/7daec3d4849a0d5304f4cf0ee71b859d55e099d4 "배포용 문서 읽기 추가...")  | Dec 30, 2024  |  
+| [src](https://github.com/neolord0/hwplib/tree/main/src "src")  | [src](https://github.com/neolord0/hwplib/tree/main/src "src")  | [* 2026년 7월 13일 버전으로 롤백..](https://github.com/neolord0/hwplib/commit/cdfb2690f24893d911baa0546de77f9c306a1009 "* 2026년 7월 13일 버전으로 롤백..")  | Aug 19, 2026  |  
+| [ .gitignore](https://github.com/neolord0/hwplib/blob/main/%20.gitignore " .gitignore")  | [ .gitignore](https://github.com/neolord0/hwplib/blob/main/%20.gitignore " .gitignore")  | [* 메모 모양(MemoShape) 레코드 읽고 쓰기 추가.](https://github.com/neolord0/hwplib/commit/caee9a14eff2552acca46b0fc9470956b53e4f93 "* 메모 모양\(MemoShape\) 레코드 읽고 쓰기 추가.")  | Sep 13, 2023  |  
+| [README.md](https://github.com/neolord0/hwplib/blob/main/README.md "README.md")  | [README.md](https://github.com/neolord0/hwplib/blob/main/README.md "README.md")  | [* 2026년 7월 13일 버전으로 롤백..](https://github.com/neolord0/hwplib/commit/cdfb2690f24893d911baa0546de77f9c306a1009 "* 2026년 7월 13일 버전으로 롤백..")  | Aug 19, 2026  |  
+| [license.txt](https://github.com/neolord0/hwplib/blob/main/license.txt "license.txt")  | [license.txt](https://github.com/neolord0/hwplib/blob/main/license.txt "license.txt")  | [license.txt](https://github.com/neolord0/hwplib/commit/e3c5574ade5064a4ca08be2a6b768fbf3a5631c7 "license.txt")  | Dec 22, 2016  |  
+| [pom.xml](https://github.com/neolord0/hwplib/blob/main/pom.xml "pom.xml")  | [pom.xml](https://github.com/neolord0/hwplib/blob/main/pom.xml "pom.xml")  | [maven publisher 변경 nexus => central](https://github.com/neolord0/hwplib/commit/7eba3d7b6031adf9b2d011bb40c4cfdc7b010a03 "maven publisher 변경 nexus => central")  | May 20, 2025  |  
+| View all files |  
+## Repository files navigation
+  * [README](https://github.com/neolord0/hwplib)
+  * [Apache-2.0 license](https://github.com/neolord0/hwplib)
+
+
+More items
+# hwplib
+[](https://github.com/neolord0/hwplib#hwplib)
+hwplib의 기능에 대한 질문, 버그 수정 요청은 issues 란을 이용하시고,  
+한글 관련 개발(SI)에 대한 문의는 neolord@hanmail.net 으로 보내주세요.  
+
+한글과 컴퓨터(한컴)에서 만든 워드프로세서 "한글"의 파일에 대한 라이브러리입니다.  
+
+개인적인 취미 생활 또는 사회기여 활동 목적으로 시작한 hwplib, hwpxlib 프로젝트가 이 라이브러리를 기반으로 하는 상용 제품이 개발하여 판매하고 있습니다. 이 라이브러리의 저작권은 저 개인에게 있으므로, 라이브러리 사용, 버그 수정요청, 약간의 질문 등은 Apache-2.0 license에 의해 앞으로도 자유롭게 할 수 있습니다. 그 외에 많은 시간을 초래할 수 있는 기술지원 요청이나 유지보수 계약등은 제 메일로 상의해 주셨으면 합니다.   
+
+  * 사용한 라이브러리나 문서
+    * Apache-POI 라이브러리 - 한글 파일의 하부 구조인 Microsoft Compound File의 부분의 파싱
+    * 한글과컴퓨터에서 공개한 '한글 문서 파일 구조 5.0' 문서 ( [http://www.hancom.com/etc/hwpDownload.do?gnb0=269&gnb1=271&gnb0=101&gnb1=140](http://www.hancom.com/etc/hwpDownload.do?gnb0=269&gnb1=271&gnb0=101&gnb1=140) )   
+( “본 제품은 한글과컴퓨터의 HWP 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다." )
+  * 이 라이브러리에서 할 수 있는 일.(kr.dogfoot.hwplib.sample 패키지에 샘플 참고.)
+    * 한글 파일을 읽어서 객체로 생성 : Reading_HWP_FromFile, Reading_HWP_FromURL
+    * 만들어진 객체를 파일로 저장 : Rewriting_HWPFile, SimpleEditing_HWPFile
+    * 한글 파일에서 텍스트 추출 : Extracting_Text, Extracting_Text_From_Big_File
+    * 필드 텍스트 추출/설정 : Getting_ClickHere_FieldText, Setting_ClickHere_FieldText, Finding_AllField, Setting_FieldText
+    * 조건에 맞는 컨트롤 찾기 : Finding_Control
+    * 다른 파일의 내용(문단)을 추가하기. 파일 합치기 : Adding_Paragraph_Between_HWPFile
+    * 표 컨트롤 조작 : 삽입(Inserting_Table), 셀 합치기(Merging_Cell), 행 삭제(Removing_Table_Row)
+    * 기타 컨트롤 조작 : 이미지 삽입(Inserting_Image), 하이퍼링크 삽입(Inserting_HyperLink)
+    * 기타 설정 : 페이지 크기 변경 (Changing_PaperSize), 폰트 크기, 밑줄 등의 글자모양 설정(Inserting_CharShape 참고)
+  * 이 라이브러리는 다음의 기능을 아직(??) 지원하지 않습니다.
+    * 암호화된 HWP 파일에 대한 읽고 쓰기
+    * 이미지 파일, PDF 파일, HTML 파일로 변환
+    * 특정 페이지 내용 가져오기 나 전체 페이지 수를 구하기
+  * 메이븐 레파지토리 설정
+
+```
+<dependency>
+    <groupId>kr.dogfoot</groupId>
+    <artifactId>hwplib</artifactId>
+</dependency>
+
+```
+
+
+
+  * 1.1.5 버전 : CtrlHeaderGso.copy() 에러남
+
+
+  * hwpx 파일에 대한 라이브러리는 <https://github.com/neolord0/hwpxlib> 을 참조해 주세요.
+  * hwp파일을 hwpx파일로 변환하는 라이브러리는 <https://github.com/neolord0/hwp2hwpx> 을 참조해 주세요.
+
+
+# 2026.7.13
+[](https://github.com/neolord0/hwplib#2026713)
+  * PictueInfo에 brightness, contrast 속성 읽기/쓰기 수정
+
+
+# 2026.2.4
+[](https://github.com/neolord0/hwplib#202624)
+  * 이슈 #303: HWPReader의 fromFile(File f) vs fromFile(String path) 동작 차이, script 부분이 없는 파일 읽을 때 오류 해결
+
+
+# 2026.1.13
+[](https://github.com/neolord0/hwplib#2026113)
+  * 이슈 #302: 목차에 Hyperlink가 있는 문서 열고 저장 시 오류 문제 수정
+  * StringBuffer => StringBuilder 변경
+
+
+# 2025.11.13
+[](https://github.com/neolord0/hwplib#20251113)
+  * 이슈 #301: 문자모양에 취소선과 밑줄을 설정하고 얻어오는 함수 추가
+
+
+# 2025.10.17
+[](https://github.com/neolord0/hwplib#20251017)
+  * ParaHeadMaker(문단 헤드 만들기)에서 0번 numbering을 찾을 때, default numbering을 사용하게 알고리즘 변경
+
+
+# 2025.10.13
+[](https://github.com/neolord0/hwplib#20251013)
+  * 이슈 #299: CharShape.clone() 메소드 오류 수정
+  * TextExtractor(문자열 추출)에 para header가 출력되지 않은 오류 수정
+
+
+# 2025.9.15
+[](https://github.com/neolord0/hwplib#2025915)
+  * 이슈 #295: StreamWriter.writeBytes() 메소드 오류 수정
+
+
+# 2025.9.3
+[](https://github.com/neolord0/hwplib#202593)
+  * 이슈 #292: Control.setCtrlData() 메소드 오류 수정
+
+
+# 2025.5.12
+[](https://github.com/neolord0/hwplib#2025512)
+  * ControlEquation 클래스에 clone() 메소드 오류 수정
+
+
+# 2025.5.11
+[](https://github.com/neolord0/hwplib#2025511)
+  * ParagraphList 클래스에 addParagraph() 메소드 추가
+
+
+# 2025.4.30
+[](https://github.com/neolord0/hwplib#2025430)
+  * 메이븐 저장소에 1.1.9 버전 등록
+
+
+# 2025.3.28
+[](https://github.com/neolord0/hwplib#2025328)
+  * 아슈 281 : BlankFileMaker.make() 를 사용해 한글파일 생성 시 손상된 스크립트 포함 메세지 출력 오류 수정
+
+
+# 2025.2.14
+[](https://github.com/neolord0/hwplib#2025214)
+  * 개체 회전시 이미지도 함께 회전하기 속성 추가. - ShapeComponentProperty.setRotateWithImage()
+
+
+# 2024.12.30
+[](https://github.com/neolord0/hwplib#20241230)
+  * 배포용 문서 읽기
+
+
+# 2024.12.17
+[](https://github.com/neolord0/hwplib#20241217)
+  * 이슈 273 : 섹션 뒤에 확장 바탕쪽이 2개(마지막, 임의) 일 경우 오류수정
+
+
+# 2024.11.08
+[](https://github.com/neolord0/hwplib#20241108)
+  * ShapeComponent.widthAtCreate, heightAtCreate, widthAtCurrent, heightAtCurrent: long => int
+  * BitFlag.get(long, int); 최상위 비트 값을 잘못 가져오는 오류수정
+  * 메이븐 저장소에 1.1.8 버전 등록
+
+
+# 2024.08.27
+[](https://github.com/neolord0/hwplib#20240827)
+  * FileHeader에 배포용인지 나타내는 변수 이름을 isDeploymentDocument => isDistribution 로 변경함
+  * script 부분을 압축 해제한 바이너리로 저장함.
+
+
+# 2024.08.23
+[](https://github.com/neolord0/hwplib#20240823)
+  * 메이븐 저장소에 1.1.7 버전 등록
+
+
+# 2024.08.22
+[](https://github.com/neolord0/hwplib#20240822)
+  * 이슈 265 : Bullet Reader 오류 수정
+
+
+# 2024.08.16
+[](https://github.com/neolord0/hwplib#20240816)
+  * 이슈 263 : 텍스트 추출시 마지막 문단이 출력 안되는 문제 해결
+
+
+# 2024.08.05
+[](https://github.com/neolord0/hwplib#20240805)
+  * Script 부분 read/write 수정,
+  * BlankFileMaker에서 Script 부분에 기본값 넣기
+
+
+# 2024.06.27
+[](https://github.com/neolord0/hwplib#20240627)
+  * 이슈 255 : Script 부분 read/write 수정
+
+
+# 2024.04.09
+[](https://github.com/neolord0/hwplib#20240409)
+  * 이슈 252 : CtrlHeaderGso.copy() 에러 수정
+  * 메이븐 저장소에 1.1.6 버전 등록
+
+
+# 2024.04.09
+[](https://github.com/neolord0/hwplib#20240409-1)
+  * 이슈 251 : 컨테이너 안에 Picture 개체 읽기 오류 수정
+  * 메이븐 저장소에 1.1.5 버전 등록
+
+
+# 2024.03.05
+[](https://github.com/neolord0/hwplib#20240305)
+  * 이슈 246 : 2024버전에서 저장된 파일에서 CtrlHeaderGSO의 알 수 없는 2 bytes 처리.
+
+
+# 2023.12.22
+[](https://github.com/neolord0/hwplib#20231222)
+  * FieldData.parent 추가.. 필드이름이 설정된 Cell or GsoControl
+  * ShapeComponentLineForObjectLinkLine.unknown 삭제...
+  * TextExtractor 에서 문단에 text()가 null일때.. 개행문자가 출력되지 않은 문제 해결...
+  * ParaShape.unknown을 ParaShape.paraLevel로 변경..
+  * 섹션 마지막에 컨트롤이 있을 때 읽기 오류 수정
+  * 구버전 글머리표 오류 수정
+  * 알 수 없는 개체 처리
+
+
+# 2023.11.17
+[](https://github.com/neolord0/hwplib#20231117)
+  * 이슈 234 : CellFinder.findAll() 셀 안에 개체(표 등)을 검색하지 않은 오류 수정
+
+
+# 2023.9.13
+[](https://github.com/neolord0/hwplib#2023913)
+  * 메모모양(MemoShape) 레코드 읽고 쓰기
+
+
+# 2023.9.12
+[](https://github.com/neolord0/hwplib#2023912)
+  * ParaShapeProperty2에 suppressLineNumbers(줄번호 제거) 속성 추가
+  * Bullet 에 그림 글머리표 정보, 체크 문자열 정보 추가
+  * 강조점(EmphasisSort) 값 변경
+  * ImageFillType.None ==> ImageFillTYpe.Zoom
+  * BorderFill에서 BackSlashDiagonalShape, SlashDiagonalShape의 방향 바꿈
+  * BorderFillProperty에 centerLineSort(중심선 종류) 속성 추가
+
+
+# 2023.5.8
+[](https://github.com/neolord0/hwplib#202358)
+  * 이슈 217 : 이슈216에서 레코드의 크기가 0인 레코드를 읽을 때 문단의 ParaCharShape 객체가 생성되지 않는 문제 해결
+
+
+# 2023.4.27
+[](https://github.com/neolord0/hwplib#2023427)
+  * 이슈 216 : 레코드의 크기가 0인 레코드를 읽은 후 무한루프에 빠지는 문제 해결
+
+
+# 2023.3.29
+[](https://github.com/neolord0/hwplib#2023329)
+  * JAVA 1.7에서 사용할 수 있게 코드 수정, 자체 포함된 POI 버전을 4.1.2에서 3.9로 변경함.
+
+
+# 2023.3.7
+[](https://github.com/neolord0/hwplib#202337)
+  * 이슈 212 : Ctrl Data가 없는 필드 컨트롤이 Stream 끝에 있을 때 읽기 오류..
+
+
+# 2023.3.3
+[](https://github.com/neolord0/hwplib#202333)
+  * 이슈 209 : 크기가 다른 다단이 적용된 문서을 저장할 때 발생하는 오류 수정.
+
+
+# 2023.1.20
+[](https://github.com/neolord0/hwplib#2023120)
+  * 이슈 204 : 문서요약 정보 읽고 쓰기 기능 추가
+
+
+# 2023.1.13
+[](https://github.com/neolord0/hwplib#2023113)
+  * 이슈 203 : 문단 복사, 병합시 공통 객체의 복사 속도 개선
+
+
+# 2023.1.3
+[](https://github.com/neolord0/hwplib#202313)
+  * 이슈 201 : GSOControl 객체 내부의 caption, ctrldata 레코드의 순서가 유동적일 수 있는 문제 해결..
+
+
+# 2022.9.9
+[](https://github.com/neolord0/hwplib#202299)
+  * 이슈 193 : ParagraphMerger, ParagraphCopier 클래스에서 ClassCastException 발생하는 오류 수정
+  * 이슈 194 : 문단 텍스트 추출시.. 개요 번호 출력 기능 수정.
+
+
+# 2022.9.5
+[](https://github.com/neolord0/hwplib#202295)
+  * 이슈 191 : HtmlToTableExample.java 에서 setBorderFillID()에 올바르지 못한 값을 넣은 부분 수정.
+
+
+# 2022.7.7
+[](https://github.com/neolord0/hwplib#202277)
+  * 이슈 188 : 배포용 문서 HWP 파일을 읽을 때 오류를 (지원하지 않는다는) 예외로 처리
+  * 이슈 187 : 텍스트 추출시(TextExtractor.extract() 사용) 문단 번호/개요 번호가 설정된 문단에서 오류 수정
+
+
+# 2022.6.24
+[](https://github.com/neolord0/hwplib#2022624)
+  * 이슈 182 : 메모를 문단마다 반복되는 형태에서 마지막 섹션에 한번만 나오는 형태로 변경..
+
+
+# 2022.6.3
+[](https://github.com/neolord0/hwplib#202263)
+  * 메이븐 저장소에 1.1.1 버전 등록
+
+
+# 2022.5.17
+[](https://github.com/neolord0/hwplib#2022517)
+  * 이슈 177 : TOC 필드 추가
+
+
+# 2022.3.17
+[](https://github.com/neolord0/hwplib#2022317)
+  * 이슈 171 : FieldFinder.getAllClickHereText()에 글이 없는 사각형 개체을 포함하는 hwpFile을 입력하여 실행시 오류 수정 (typemild님 요청)
+
+
+# 2022.2.25
+[](https://github.com/neolord0/hwplib#2022225)
+  * 이슈 167 : HtmlToTableExample 새버전에 맞게 수정 (Mineru98님 요청)
+  * ControlField.setName() 추가.
+
+
+# 2021.12.17
+[](https://github.com/neolord0/hwplib#20211217)
+  * 이슈 163 : 캡션 생성시 오류 수정 (Bobby-m-m님 요철)
+
+
+# 2021.12.14
+[](https://github.com/neolord0/hwplib#20211214)
+  * 이슈 162 : 글맵시 컨트롤(ControlTextArt) 추가 (sungjini78님 요철)
+
+
+# 2021.11.8
+[](https://github.com/neolord0/hwplib#2021118)
+  * 메이븐 저장소에 1.1.0 버전 등록
+
+
+# 2021.11.8
+[](https://github.com/neolord0/hwplib#2021118-1)
+  * 이슈 158 : ShapeComponentOLE 객체 읽고 쓰기 할때.. 알 수 없는 바이트 처리(sungjini78님 요철)
+
+
+# 2021.11.1
+[](https://github.com/neolord0/hwplib#2021111)
+  * POI 병합 - 다른 버전이 사용되는 경우, jar 버전의 충돌을 방지하기 위해..
+
+
+# 2021.10.25
+[](https://github.com/neolord0/hwplib#20211025)
+  * Pull Request 반영 - 오타 수정 (BinDataCompress 클래스의 ByStroageDefault => ByStorageDefault, BinDataState 클래스의 NotAcceess => NotAccess)
+
+
+# 2021.8.27
+[](https://github.com/neolord0/hwplib#2021827)
+  * 양식 객체 속성값 분석을 위한 Property 객체 추가...
+  * 양식 객체 Finder 추가...
+  * 필드값 설정시..해당 문단의 LineSeg 삭제.
+
+
+# 2021.7.13
+[](https://github.com/neolord0/hwplib#2021713)
+  * 양식 개체(라디오 버튼, 체크 박스 등) 읽고 쓰기 추가..
+  * FieldFinder 추가.
+
+
+# 2021.7.2
+[](https://github.com/neolord0/hwplib#202172)
+  * 이슈 12,18 : 텍스트 추출시 문단 번호/글머리표를 포함하게 수정. (kr.dogfoot.hwplib.sample.Extracting_Text_With_ParaHead 참고)
+
+
+# 2021.6.25
+[](https://github.com/neolord0/hwplib#2021625)
+  * 섹션(구역) 정의 컨트롤을 복사하는 클래스(SectionDefineCopier) 추가.
+
+
+# 2021.5.31
+[](https://github.com/neolord0/hwplib#2021531)
+  * 단정의 컨트롤(ControlColumnDefine) read/write 수정
+  * 이슈 143 : 문단 추가 기능(kr.dogfoot.hwplib.tool.paragraphadder)에 단정의 컨트롤 복사 기능 추가.
+
+
+# 2021.5.17
+[](https://github.com/neolord0/hwplib#2021517)
+  * 메이븐 저장소에 1.0.4 버전 등록
+
+
+# 2021.5.17
+[](https://github.com/neolord0/hwplib#2021517-1)
+  * 이슈 139 : 문단 추가 기능(kr.dogfoot.hwplib.tool.paragraphadder)에 겹침문자 컨트롤 복사 기능 추가.
+  * 컨트롤의 [본문과의 배치]속성값 수정
+  * 이슈 140 : CharShape.getBorderFillId()가 0 일때, 문단추가 기능 오류 수정..
+
+
+# 2021.3.12
+[](https://github.com/neolord0/hwplib#2021312)
+  * docInfo 아래에 객체 쓰기 순서 변경
+  * 글자 모양의 밑줄 타입 변경
+  * 이미지ID(BIN?????.bmp)를 10진수로 인식하던 것을 16진수로 인식하게 함
+
+
+# 2021.3.3
+[](https://github.com/neolord0/hwplib#202133)
+  * 겹침문자 등에서 한글 고유에 특수문자를 읽고 쓸 때, 코드 변환 오류 수정
+  * 객체 복사시 오류 수정
+  * 머리글/꼬리글 예제 추가 sample/Inserting_HeaderFooter.java
+
+
+# 2021.2.24
+[](https://github.com/neolord0/hwplib#2021224)
+  * 4095 바이트 보다 큰 레코드 읽고 쓰기 오류 수정
+  * 빈 파일 만들기(kr.dogfoot.hwplib.tool.blankfilemaker.BlankFileMaker)에서 빠진 BorderFill 객체 생성.
+
+
+# 2021.2.18
+[](https://github.com/neolord0/hwplib#2021218)
+  * 문단 내에 핊드 테스트 가져오기/섫정하기 함수 수정..
+  * 이슈 127 : 이미지 읽을 떄 id 찾는 방법 오류 수정..
+
+
+# 2021.2.17
+[](https://github.com/neolord0/hwplib#2021217)
+  * ControlField.clone() 오류 수정
+  * 문단 복사할 때 ControlField 복사하게 수정
+
+
+# 2021.2.5
+[](https://github.com/neolord0/hwplib#202125)
+  * 이슈 122 : ParaText.insertString() 추가
+  * 이슈 123 : kr.dogfoot.hwplib.tool.paragraphadder.docinfo.FaceNameAdder의 equal() 함수 내의 Null 체크
+  * 이슈 124 : bullet 복사 부분 수정
+  * 이슈 125 : numbering 복사 부분 수정
+  * 이슈 126 : 묶음(Container) 안에 컨트롤 복사시 오류 수정
+
+
+# 2021.2.5
+[](https://github.com/neolord0/hwplib#202125-1)
+  * 텍스트 축출 옵션 추가.
+
+
+# 2021.2.3
+[](https://github.com/neolord0/hwplib#202123)
+  * 텍스트 축출시 탭, 개행, 하이픈이 빠지는 오류 수정.
+  * TextExtractMethod.xxxWithControlChar 모드 추가.
+
+
+# 2021.1.19
+[](https://github.com/neolord0/hwplib#2021119)
+  * ParagraphAdder.merge() 함수 추가.
+
+
+# 2021.1.12
+[](https://github.com/neolord0/hwplib#2021112)
+  * 메이븐 저장소에 1.0.3 버전 등록
+
+
+# 2020.12.30
+[](https://github.com/neolord0/hwplib#20201230)
+  * 문단 붙이기을 위한 HWPFile 객체 복사 기능 추가
+  * sample/Adding_Paragraph_Between_Cloned_HWPFile 참고..
+
+
+# 2020.11.17
+[](https://github.com/neolord0/hwplib#20201117)
+  * 문단 붙이기(ParagraphAdder) 가능 중 그림 컨트롤 복사 오류 수정
+
+
+# 2020.10.23
+[](https://github.com/neolord0/hwplib#20201023)
+  * 메이븐 저장소에 1.0.2 버전 등록
+
+
+# 2020.8.31
+[](https://github.com/neolord0/hwplib#2020831)
+  * 빈 파일 만드는 코드 추가 - ingyeoking13 님 요청
+  * sample/Making_BlankFile.java 참조
+
+
+# 2020.6.16
+[](https://github.com/neolord0/hwplib#2020616)
+  * 필드(누름틀) 찾기 중에 그리기 객체에 textBox가 null인 오류 수정 - j2y0206 님 요청
+
+
+# 2020.5.27
+[](https://github.com/neolord0/hwplib#2020527)
+  * 다른 문서 간에 문단 복사-붙여넣기 기능에 표 컨트롤 복사 기능 추가 - kimeuietae 님 요청
+  * 다른 문서 간에 문단 복사-붙여넣기 기능에 첫번째 문단을 복사할 때 오류 수정 - kimeuietae 님 요청
+  * sample/Copying_Paragraph_Between_HWPFile.java 참조...
+
+
+# 2020.2.25
+[](https://github.com/neolord0/hwplib#2020225)
+  * 큰 파일애서 텍스트 추출을 할 때 메모리 부족현상 수정 - LeeYunSeop 님 요청
+  * sample/Extracting_Text_From_Big_File.java 참조...
+
+
+# 2020.01.31
+[](https://github.com/neolord0/hwplib#20200131)
+  * 읽기 오류 수정 - osc91 님 요청.
+
+
+# 2020.01.29
+[](https://github.com/neolord0/hwplib#20200129)
+  * 수식 부분 오류 수정 - osc91 님 요청.
+
+
+# 2020.01.07
+[](https://github.com/neolord0/hwplib#20200107)
+  * 5.0.2.5 버전 이상에서 추가된 문단 번호 수준(8-10) 처리.. - Chunsjun 님 요청.
+
+
+# 2020.01.02
+[](https://github.com/neolord0/hwplib#20200102)
+  * 메이븐 Central Repository 등록
+
+
+# 2019.12.20
+[](https://github.com/neolord0/hwplib#20191220)
+  * html 표를 한글로 만드는 샘플 추가(samle/htmltohwp 폴더) - d_duck@naver.com(이준성) 님 제공
+
+
+# 2019.10.22
+[](https://github.com/neolord0/hwplib#20191022)
+  * 홀/짝 조정(페이지 번호 조정) 컨트롤 추가 - kangyongseog 님 요청
+
+
+# 2019.10.2
+[](https://github.com/neolord0/hwplib#2019102)
+  * 문단 텍스트 변경하는 샘플 추가 - humblemh 님 요청
+
+
+# 2019.09.23
+[](https://github.com/neolord0/hwplib#20190923)
+  * 구버전 파일(5.0.0.0)에 수식 읽기 오류 수정... - sungsik.nam@green-mango.co.kr 님 요청
+
+
+# 2019.09.20
+[](https://github.com/neolord0/hwplib#20190920)
+  * 손상된 파일 압축해제 시 무한루프 빠지는 오류 수정(Exception 처리) - LeBronPark 님 요청
+
+
+# 2019.09.16
+[](https://github.com/neolord0/hwplib#20190916)
+  * 구버전의 컨테이너(묶음) 컨트롤 읽기 오류 - sungsik.nam@green-mango.co.kr 님 요청
+
+
+# 2019.08.13
+[](https://github.com/neolord0/hwplib#20190813)
+  * 스트림으로 출력하는 기능 추가(HWPWriter.toStream()) - KimJason8557 님 요청
+
+
+# 2019.06.24
+[](https://github.com/neolord0/hwplib#20190624)
+  * 5.1.0.1 파일 읽기 오류 .... - jwon0615 님 요청
+  * ShapeComponentPicture 레코드에 알수 없는 1바이트 추가됨..
+
+
+# 2019.06.13
+[](https://github.com/neolord0/hwplib#20190613)
+  * 단 설정에서 "단 너비 동일하게"와 1개 이상의 단을 설정한 후 저장하면, 1개의 단으로 저장되는 오류 수정 - kwon1148 님 요청
+
+
+# 2019.06.04
+[](https://github.com/neolord0/hwplib#20190604)
+  * 표 셀에 "안 여백 지정" 속성값 get/set - kamsi76 님 요청
+  * ForControlWithAllField.getFieldText() 오류 수정 - kamsi76 님 요청
+
+
+# 2019.04.12
+[](https://github.com/neolord0/hwplib#20190412)
+  * 표에서 특정 행을 삭제하는 샘플 추가 - kamsi76 님 요청
+  * sample/TestRemoveRow.java 참고
+
+
+# 2019.04.04
+[](https://github.com/neolord0/hwplib#20190404)
+  * 필드명이 일치하는 셀 찾기 기능 추가. - kwonhyun 님 요청
+  * sample/TestFindCell.java 참고
+
+
+# 2019.01.28
+[](https://github.com/neolord0/hwplib#20190128)
+  * FieldFiner에 이름이 같은 필드 모두 찾는 함수 추가... - jclab 님 요청
+  * sample/TestFindAllField.java 참고
+
+
+# 2018.11.20
+[](https://github.com/neolord0/hwplib#20181120)
+  * IDMapping의 문단 모양 개수와 저장된 실제 문단 모양 개수가 다를 때 보정.. - boojongmin@gmail.com 님 요청
+
+
+# 2018.10.17
+[](https://github.com/neolord0/hwplib#20181017)
+  * 필드 설정 기능 강화 :멀티라인 텍스트, 이름이 동일한 필드를 위한 값 리스트, 누름틀 필드 이외에 필드 설정... - jhlee@futechsoft.com 님 요청
+  * sample/TestSetField.java 참고
+
+
+# 2018.09.14
+[](https://github.com/neolord0/hwplib#20180914)
+  * 표 셀 병합하기 - codeless73 님 요청
+  * sample/TestMergingCell.java 참고
+
+
+# 2018.08.31
+[](https://github.com/neolord0/hwplib#20180831)
+  * 필드 텍스트 설정 기능 추가 - jhlee@futechsoft.com 님 요청
+  * sample/TestSetClickHereFieldText.java 참고
+
+
+# 2018.08.21
+[](https://github.com/neolord0/hwplib#20180821)
+  * 저장 때 이미지 압축과정에서 오류 수정 - urusaikara@gmail.com 님 요청
+
+
+# 2018.08.17
+[](https://github.com/neolord0/hwplib#20180817)
+  * 다른 한글 파일에서 있는 문단 추가하는 기능 추가 - accforaus 님 요청
+  * 문단에 포함된 글자만 추가됨. 문단에 포함된 컨트롤들과 메모들을 추가하는 부분은 아직 구현 못함(추후 추가 예정임)
+  * sample/TestParagraphAdder.java 참고
+
+
+# 2018.07.18
+[](https://github.com/neolord0/hwplib#20180718)
+  * 5.0.2.5의 각주 컨트롤 읽을 때 오류 나는 문제 수정 - accforaus 님 요청
+  * BinData가 스토리지 디폴트 모드로 압축되었을 떄 오류 나는 문제 수정
+
+
+# 2018.07.10
+[](https://github.com/neolord0/hwplib#20180710)
+  * 문단의 글자모양(글꼴, 크기, Bold/Italic, 글자색 등) 설정하는 샘플 추가 - zuoliang0 님 요청
+  * sample/TestMakingCharShape.java 참고
+
+
+# 2018.05.04
+[](https://github.com/neolord0/hwplib#20180504)
+  * 이미지 컨트롤 동적 생성 샘플 추가 - parkmap@gmail.com 님 요청
+  * sample/TestInsertImage.java 참고
+
+
+# 2018.03.20
+[](https://github.com/neolord0/hwplib#20180320)
+  * 표 동적 생성 샘플 추가 - krPlatypus 님 요청
+  * sample/TestMakingTable.java 참고
+
+
+# 2017.11.23
+[](https://github.com/neolord0/hwplib#20171123)
+  * 압축 푸는 방식 개선 등의 오류 수정 및 객체 연결선 컨트롤 추가 - osc91 님 요청
+
+
+# 2017.11.14
+[](https://github.com/neolord0/hwplib#20171114)
+  * 메모 있는 문서가 읽히지 않는 오류 수정 - osc91 님 요청
+
+
+# 2017.8.31
+[](https://github.com/neolord0/hwplib#2017831)
+  * 컨트롤 찾기 기능 추가 - osc91 님 요청 
+    * TestFindObject.java 참조
+
+
+
+```
+    	public static class MyControlFilter implements ControlFilter {
+    		public boolean isMatched(Control control, Paragraph paragrpah, Section section) {
+	   		// 필터링 조건 입력 
+		}
+    	}
+	
+	ArrayList<Control> result = ControlFinder.find(hwpFile, new MyControlFilter());
+```
+
+# 2017.8.21
+[](https://github.com/neolord0/hwplib#2017821)
+  * URL로 부터 읽는 기능 추가 - osc91 님 요청
+
+
+
+```
+	String url = "http://ocwork.haansoft.com/sample/sample.hwp";
+	HWPFile hwpFile = HWPReader.fromURL(url); 
+```
+
+# 2017.6.1
+[](https://github.com/neolord0/hwplib#201761)
+  * 저장 모듈 완료 
+    * TestEditingHWPFile.java, TestReWritingHWPFile.java 참고
+
+
+
+```
+	// 파일을 열어서
+	String filename = "sample_hwp\\test-blank.hwp"; 
+	HWPFile hwpFile = HWPReader.fromFile(filename); 
+	
+	if (hwpFile != null) {
+	
+	    // 첫번째 구역/문단에 문자열 추가하고
+		Section s = hwpFile.getBodyText().getSectionList().get(0);
+		Paragraph firstParagraph = s.getParagraph(0);
+		firstParagraph.getText().addString("이것은 추가된 문자열입니다.");
+
+		// 다른 이름으로 저장
+		String writePath = filename.substring(0, 11) + "ed-" + filename.substring(11);
+		HWPWriter.toFile(hwpFile, writePath);
+	}
+```
+
+# 2017.4.26
+[](https://github.com/neolord0/hwplib#2017426)
+  * 구버전에서 만든 파일 읽기 오류 수정 - quantum123님 요청 
+    * 5.0.0.6, 5.0.2.4.1, 5.0.0.3, 5.0.1.6, 5.0.3.0.1, 5.0.0.5, 5.0.1.7 버전
+
+
+# 2017.4.14
+[](https://github.com/neolord0/hwplib#2017414)
+  * 한 장 이상의 긴 문단을 읽지 못하는 문제 해결
+
+
+# 2017.4.4
+[](https://github.com/neolord0/hwplib#201744)
+  * 누름틀 필드 텍스트 찾기 기능 
+    * 필드 텍스트가 여러 줄일때 처리
+    * 필드 텍스트에 컨트롤이 포함되었을 경우 처리
+    * FieldFinder.getClickHereText() 에서 필드 텍스트에 컨트롤이 포함되었을 경우 처리를 위해 TextExtractMethod temInField 매개변수를 추가하였습니다.
+
+
+
+```
+	String text1 = FieldFinder.getClickHereText(hwpFile, "필드1", TextExtractMethod.OnlyMainParagraph);
+```
+
+# 2017.3.29
+[](https://github.com/neolord0/hwplib#2017329)
+  * 누름틀 필드 텍스트 찾기 기능 완료 - musasin84님 요청 
+    * test/TestGettingClickHereFieldText.java 파일 참고
+
+
+
+```
+	HWPFile hwpFile = HWPReader.fromFile(filename);
+	String text1 = FieldFinder.getClickHereText(hwpFile, "필드이름");
+```
+
+# 2017.3.20
+[](https://github.com/neolord0/hwplib#2017320)
+  * 누름틀 필드 컨트롤 읽기 오류 수정
+
+
+# 2017.1.6
+[](https://github.com/neolord0/hwplib#201716)
+  * 텍스트 추출기 모듈을 추가하였습니다. 
+    * TextExtractor.extract()의 두번째 파라미터 값에 따라 세가지 추출 방법을 구현했습니다. 
+      * OnlyMainParagraph // 메인 문단에 포함된 텍스트만 추출함
+      * InsertControlTextBetweenParagraphText // 컨트롤의 텍스트를 문단 텍스트 사이에 삽입하여 추출함
+      * AppendControlTextAfterParagraphText // 컨트롤의 텍스트를 문단 텍스트 뒤에 추가하여 추출함
+    * test/TestExtractingText.java 파일 참고   
+
+
+
+
+```
+	HWPFile hwpFile = HWPReader.fromFile(filename); 
+	String hwpText = TextExtractor.extract(hwpFile, TextExtractMethod.InsertControlTextBetweenParagraphText);
+```
+
+  * 읽기 모듈에서 버그 수정하였습니다.
+  * 소스 인코딩을 euc-kr에서 utf-8로 변경하였습니다.
+
+
+# 2016.12.23
+[](https://github.com/neolord0/hwplib#20161223)
+  * 이 번 배포버전은 읽기 모듈 까지만 구현되었습니다. 쓰기 모듈은 추후 상황을 봐서 구현할 계획입니다. 
+    * 각각의 객체들과 객체에 포함된 메소스들에 대해선 "/doc" 디렉토리에 있는 javadoc 문서를 참고하시기 바랍니다.
+
+
+
+```
+	// 파일을 읽는다. 
+	HWPFile hwpFile = HWPReader.fromFile(filename);  			
+	
+	// 파일에서 첫번째 구역을 얻는다. 
+	Section s = hwpFile.getBodyText().getSectionList().get(0); 		
+	
+	// 첫번째 구역에서 첫번째 문단을 얻는다. 
+	Paragraph p = s.getParagraphList().get(0);				
+	...		
+```
+
+## About
+hwp library for java
+### Topics
+[hwp](https://github.com/topics/hwp)[java](https://github.com/topics/java)
+### Resources
+[Readme](https://github.com/neolord0/hwplib#readme-ov-file)
+[Apache-2.0 license](https://github.com/neolord0/hwplib#Apache-2.0-1-ov-file)
+[Activity](https://github.com/neolord0/hwplib/activity)
+### Stars
+**587** stars
+### Watchers
+**27** watching
+### Forks
+[**190** forks](https://github.com/neolord0/hwplib/forks)
+[Report repository](https://github.com/contact/report-content?content_url=https%3A%2F%2Fgithub.com%2Fneolord0%2Fhwplib&report=neolord0+%28user%29)
+## [Releases](https://github.com/neolord0/hwplib/releases)
+No releases published
+## [Contributors](https://github.com/neolord0/hwplib/graphs/contributors)14 (14)
+  * [![@neolord0](https://avatars.githubusercontent.com/u/24711108?s=64&v=4)](https://github.com/neolord0)
+  * [![@hope9405](https://avatars.githubusercontent.com/u/42699844?s=64&v=4)](https://github.com/hope9405)
+  * [![@psk-dalcomlab](https://avatars.githubusercontent.com/u/268488634?s=64&v=4)](https://github.com/psk-dalcomlab)
+  * [![@dependabot\[bot\]](https://avatars.githubusercontent.com/in/29110?s=64&v=4)](https://github.com/dependabot\[bot\])
+  * [![@swsz2](https://avatars.githubusercontent.com/u/76676913?s=64&v=4)](https://github.com/swsz2)
+  * [![@claude](https://avatars.githubusercontent.com/u/81847?s=64&v=4)](https://github.com/claude)
+  * [![@z0nam](https://avatars.githubusercontent.com/u/2518078?s=64&v=4)](https://github.com/z0nam)
+  * [![@Alencion](https://avatars.githubusercontent.com/u/15667978?s=64&v=4)](https://github.com/Alencion)
+  * [![@gulnergulner](https://avatars.githubusercontent.com/u/22655565?s=64&v=4)](https://github.com/gulnergulner)
+  * [![@potados99](https://avatars.githubusercontent.com/u/35878712?s=64&v=4)](https://github.com/potados99)
+  * [![@seopchan](https://avatars.githubusercontent.com/u/59127311?s=64&v=4)](https://github.com/seopchan)
+  * [![@asklsd0-ulim](https://avatars.githubusercontent.com/u/59568961?s=64&v=4)](https://github.com/asklsd0-ulim)
+  * [![@fj2008](https://avatars.githubusercontent.com/u/80668459?s=64&v=4)](https://github.com/fj2008)
+  * [![@jxxyoung](https://avatars.githubusercontent.com/u/86467141?s=64&v=4)](https://github.com/jxxyoung)
+
+
+## Languages
+  * [Java100%](https://github.com/neolord0/hwplib/search?l=java)
+
+
+## Footer
+[ ](https://github.com) © 2026 GitHub, Inc. 
+### Footer navigation
+  * [Terms](https://docs.github.com/site-policy/github-terms/github-terms-of-service)
+  * [Privacy](https://docs.github.com/site-policy/privacy-policies/github-privacy-statement)
+  * [Security](https://github.com/security)
+  * [Status](https://www.githubstatus.com/)
+  * [Community](https://github.community/)
+  * [Docs](https://docs.github.com/)
+  * [Contact](https://support.github.com?tags=dotcom-footer)
+  * Manage cookies 
+  * Do not share my personal information 
+
+
+You can’t perform that action at this time. 

@@ -1,0 +1,12 @@
+[FETCH]... ↓ https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 1.46s 
+[SCRAPE].. ◆ https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 0.03s 
+[COMPLETE] ● https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 1.52s 
+[FETCH]... ↓ https://help.hancom.com/hoffice/webhelp/9.0/en_us/hshow/file/open/open(other).htm                    | \u2713 | \u23f1: 1.51s 
+[SCRAPE].. ◆ https://help.hancom.com/hoffice/webhelp/9.0/en_us/hshow/file/open/open(other).htm                    | \u2713 | \u23f1: 0.01s 
+[COMPLETE] ● https://help.hancom.com/hoffice/webhelp/9.0/en_us/hshow/file/open/open(other).htm                    | \u2713 | \u23f1: 1.54s 
+[FETCH]... ↓ https://help.hancom.com/hoffice/webhelp/9.0/en_us/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 2.75s 
+[SCRAPE].. ◆ https://help.hancom.com/hoffice/webhelp/9.0/en_us/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 0.04s 
+[COMPLETE] ● https://help.hancom.com/hoffice/webhelp/9.0/en_us/hcell/file/open/open(other).htm                    | \u2713 | \u23f1: 2.82s 
+OK   https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hcell/file/open/open(other).htm -> help-hancom-com-hoffice-webhelp-9-0-ko-kr-hcell-file-open-open-other-htm-65d1168c.md (3611 chars)
+OK   https://help.hancom.com/hoffice/webhelp/9.0/en_us/hshow/file/open/open(other).htm -> help-hancom-com-hoffice-webhelp-9-0-en-us-hshow-file-open-open-other-htm-ac95a867.md (3910 chars)
+OK   https://help.hancom.com/hoffice/webhelp/9.0/en_us/hcell/file/open/open(other).htm -> help-hancom-com-hoffice-webhelp-9-0-en-us-hcell-file-open-open-other-htm-145ccbd4.md (4724 chars)

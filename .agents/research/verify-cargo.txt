@@ -1,0 +1,181 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.63s
+     Running unittests src\lib.rs (plugins\hwpx\target\debug\deps\officecli_hwpx-44c4a90942783bc9.exe)
+
+running 130 tests
+test emit::batch::tests::false_flags_are_omitted ... ok
+test emit::tests::empty_document_emits_nothing ... ok
+test emit::batch::tests::empty_props_are_omitted ... ok
+test converter::tests::stderr_capture_keeps_only_a_bounded_tail ... ok
+test converter::tests::relative_path_entries_are_not_converter_search_roots ... ok
+test emit::batch::tests::korean_text_is_not_escaped_to_ascii ... ok
+test emit::batch::tests::json_line_is_single_line_without_bom ... ok
+test emit::tests::output_is_not_a_top_level_array ... ok
+test emit::tests::uses_lf_only_and_no_bom ... ok
+test emit::batch::tests::prop_opt_skips_none ... ok
+test emit::tests::writes_one_json_object_per_line ... ok
+test emit::batch::tests::prop_order_is_preserved ... ok
+test emit::batch::tests::add_emits_command_parent_type ... ok
+test emit::batch::tests::set_emits_path_without_parent_or_type ... ok
+test emit::word::tests::cell_text_goes_to_the_cell_paragraph_with_soft_breaks ... ok
+test emit::tests::block_sink_stops_before_emitting_later_items_after_an_error ... ok
+test emit::word::tests::char_style_maps_size_with_pt_unit ... ok
+test emit::word::tests::click_here_field_becomes_a_fillable_text_formfield ... ok
+test emit::word::tests::combined_merge_keeps_colspan_on_continuation_rows ... ok
+test emit::word::tests::distribute_align_maps_to_its_own_value ... ok
+test emit::word::tests::children_attach_via_last_predicate_not_absolute_index ... ok
+test converter::tests::staging_rejects_a_source_that_exceeds_its_copy_budget ... ok
+test emit::word::tests::image_with_data_becomes_data_uri ... ok
+test emit::word::tests::line_break_becomes_vertical_tab_not_newline ... ok
+test emit::word::tests::image_without_data_is_skipped ... ok
+test emit::word::tests::empty_table_emits_nothing ... ok
+test emit::word::tests::many_paragraph_cell_preserves_count_and_per_paragraph_align ... ok
+test emit::word::tests::hanging_indent_uses_its_own_prop_never_a_negative_value ... ok
+test emit::word::tests::mixed_paragraph_splits_into_paragraph_plus_runs ... ok
+test emit::word::tests::mixed_style_cell_paragraph_emits_runs_to_the_right_paragraph ... ok
+test emit::word::tests::checkbox_becomes_interactive_formfield_not_a_character ... ok
+test emit::word::tests::paragraph_style_maps_to_docx_props ... ok
+test emit::word::tests::no_emitted_prop_violates_break_invariants ... ok
+test emit::word::tests::checkbox_inside_a_cell_targets_the_cell_paragraph ... ok
+test emit::word::tests::holes_in_the_grid_still_consume_a_cell_slot ... ok
+test emit::word::tests::multi_paragraph_cell_becomes_multiple_paragraphs ... ok
+test converter::tests::windows_conversion_scratch_has_a_protected_dacl ... ok
+test emit::word::tests::picture_dimensions_always_carry_a_unit ... ok
+test emit::word::tests::horizontal_merge_mid_row_shifts_following_cell_index ... ok
+test emit::word::tests::normalize_maps_every_newline_form_to_the_target_break ... ok
+test emit::word::tests::rejects_unsafe_form_field_names ... ok
+test emit::word::tests::table_emits_rows_cols_then_cell_sets ... ok
+test emit::word::tests::newline_inside_run_text_never_reaches_output ... ok
+test emit::word::tests::nested_table_becomes_a_real_nested_table ... ok
+test emit::word::tests::text_field_without_hint_still_emits_a_field ... ok
+test converter::tests::windows_ignores_an_untrusted_media_root_for_conversion_scratch ... ok
+test emit::word::tests::uniform_paragraph_collapses_to_single_add ... ok
+test emit::word::tests::vertical_merge_uses_restart_and_continue_enum ... ok
+test emit::word::tests::twip_to_pt_divides_by_twenty ... ok
+test emit::word::tests::trims_float_representation ... ok
+test error::tests::exit_codes_match_protocol_table ... ok
+test error::tests::plugin_never_emits_idle_timeout_code_six ... ok
+test error::tests::corrupt_input_maps_to_exit_two ... ok
+test format::tests::detects_hwp3_only_at_the_start_of_the_file ... ok
+test error::tests::error_codes_use_snake_case ... ok
+test format::tests::handles_files_shorter_than_the_probe ... ok
+test format::tests::rejects_zip_with_wrong_mimetype ... ok
+test format::tests::rejects_unrecognized_bytes_with_a_hex_hint ... ok
+test format::tests::detects_hwpx_without_mimetype_via_section ... ok
+test format::tests::detects_hwpx_by_mimetype ... ok
+test format::tests::detects_hwp5_and_reads_version_and_flags ... ok
+test format::tests::rejects_cfb_with_wrong_signature ... ok
+test format::tests::rejects_zip_that_is_not_hwpx ... ok
+test format::tests::rejects_cfb_without_file_header ... ok
+test format::tests::hwp5_without_protection_flags_is_not_protected ... ok
+test manifest::tests::dump_reader_declares_target ... ok
+test manifest::tests::json_line_has_no_bom_and_no_crlf ... ok
+test manifest::tests::idle_timeout_default_is_positive ... ok
+test format::tests::needs_conversion_only_for_binary_formats ... ok
+test manifest::tests::extensions_keep_leading_dot ... ok
+test owpml::model::tests::align_parses_owpml_case_insensitively ... ok
+test owpml::model::tests::counts_private_use_chars_including_nested_tables ... ok
+test manifest::tests::protocol_version_is_one ... ok
+test manifest::tests::does_not_declare_reserved_kinds ... ok
+test owpml::model::tests::derives_col_widths_from_single_span_cells ... ok
+test owpml::model::tests::hwpunit_converts_to_twip_by_factor_five ... ok
+test owpml::model::tests::derives_real_form_document_widths ... ok
+test owpml::model::tests::justify_maps_to_docx_both ... ok
+test manifest::tests::declares_all_required_fields ... ok
+test owpml::model::tests::gives_up_entirely_when_a_column_cannot_be_resolved ... ok
+test manifest::tests::all_json_keys_are_snake_case ... ok
+test owpml::model::tests::negative_first_line_indent_becomes_hanging ... ok
+test manifest::tests::version_is_semver_triple ... ok
+test owpml::model::tests::paragraph_with_image_is_never_uniform ... ok
+test owpml::model::tests::hwpunit_converts_to_point_by_factor_hundred ... ok
+test owpml::model::tests::uniform_style_detects_mixed_runs ... ok
+test owpml::package::tests::attr_value_handles_single_quotes ... ok
+test format::tests::hwp5_file_header_string_does_not_trip_hwp3_detection ... ok
+test owpml::section::tests::hint_length_is_counted_in_characters_not_bytes ... ok
+test owpml::section::tests::missing_or_malformed_hint_yields_none ... ok
+test owpml::package::tests::attr_value_requires_word_boundary ... ok
+test manifest::tests::kinds_declares_dump_reader_kebab_case ... ok
+test owpml::package::tests::guesses_image_content_types ... ok
+test manifest::tests::name_is_kebab_case ... ok
+test owpml::styles::tests::font_ref_accepts_a_literal_name_when_not_an_index ... ok
+test owpml::styles::tests::parses_para_properties ... ok
+test owpml::package::tests::section_index_sorts_numerically_not_lexically ... ok
+test owpml::model::tests::derives_remaining_column_by_subtracting_from_a_merged_cell ... ok
+test owpml::model::tests::detects_private_use_area_codepoints ... ok
+test owpml::section::tests::parses_direction_hint_from_command_string ... ok
+test owpml::package::tests::parses_spine_order ... ok
+test owpml::package::tests::tag_local_name_ignores_namespace_prefix ... ok
+test owpml::styles::tests::normalizes_color_forms ... ok
+test owpml::package::tests::parses_manifest_from_single_line_xml ... ok
+test owpml::model::tests::plain_text_renders_tab_and_linebreak ... ok
+test owpml::styles::tests::parses_char_properties ... ok
+test owpml::styles::tests::font_ref_resolves_through_the_font_table ... ok
+test owpml::model::tests::splits_evenly_when_several_columns_are_unknown ... ok
+test owpml::styles::tests::strikeout_reads_shape_not_type ... ok
+test owpml::styles::tests::unknown_id_yields_default_style ... ok
+test owpml::styles::tests::parses_hanging_indent_from_negative_intent ... ok
+test owpml::styles::tests::tolerates_malformed_header ... ok
+test owpml::styles::tests::underline_type_none_means_no_underline ... ok
+test owpml::xml::tests::finds_attribute_regardless_of_prefix ... ok
+test owpml::xml::tests::strips_namespace_prefix ... ok
+test owpml::xml::tests::unescapes_entities_in_attribute_values ... ok
+test tests::dump_requires_source ... ok
+test tests::parses_dump_with_source ... ok
+test tests::file_identity_requires_matching_volume_and_index ... ok
+test tests::parses_dump_options ... ok
+test owpml::xml::tests::parses_numeric_attributes ... ok
+test owpml::xml::tests::preserves_korean_attribute_values ... ok
+test tests::parses_info ... ok
+test tests::info_writes_manifest_to_stdout_only ... ok
+test tests::unknown_option_is_reported ... ok
+test tests::flag_requiring_value_reports_missing_value ... ok
+test tests::help_goes_to_stderr_not_stdout ... ok
+test tests::no_args_is_help ... ok
+test tests::unknown_subcommand_is_reported ... ok
+test converter::tests::converter_timeout_terminates_the_windows_process_tree ... ok
+
+test result: ok. 130 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.86s
+
+     Running unittests src\main.rs (plugins\hwpx\target\debug\deps\officecli_dump_reader_hwpx-17085760b3f17c2f.exe)
+
+running 1 test
+test tests::heartbeat_emits_the_host_watchdog_frame ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\golden.rs (plugins\hwpx\target\debug\deps\golden-6794f04605a0a6a6.exe)
+
+running 3 tests
+test golden_output_satisfies_protocol_invariants ... ok
+test golden_document_covers_intended_features ... ok
+test canonical_document_matches_golden_output ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\install_contract.rs (plugins\hwpx\target\debug\deps\install_contract-c31cb89e1a8b4372.exe)
+
+running 9 tests
+test windows_installer_exposes_hwp_and_hwpx_environment_overrides ... ok
+test windows_installer_never_deletes_recovery_backups_from_finally ... ok
+test windows_installer_tracks_each_stage_before_copying_into_it ... ok
+test windows_installer_manages_both_extension_directories ... FAILED
+test windows_uninstall_checks_reparse_directories_before_removing_targets ... ok
+test windows_uninstall_remains_idempotent_when_the_managed_tree_is_missing ... ok
+test windows_uninstall_rejects_a_broken_ancestor_junction ... ok
+test windows_uninstall_rejects_non_directory_managed_components ... ok
+test windows_uninstall_rejects_reparse_points_in_every_existing_managed_component ... ok
+
+failures:
+
+---- windows_installer_manages_both_extension_directories stdout ----
+
+thread 'windows_installer_manages_both_extension_directories' (37056) panicked at tests\install_contract.rs:23:9:
+install.ps1 must manage dump-reader\hwp"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    windows_installer_manages_both_extension_directories
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.16s
+
+error: test failed, to rerun pass `--test install_contract`

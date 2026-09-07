@@ -1,0 +1,4 @@
+[FETCH]... ↓ https://en.wikipedia.org/wiki/Hancom_Office                                                          | \u2713 | \u23f1: 1.40s 
+[SCRAPE].. ◆ https://en.wikipedia.org/wiki/Hancom_Office                                                          | \u2713 | \u23f1: 0.11s 
+[COMPLETE] ● https://en.wikipedia.org/wiki/Hancom_Office                                                          | \u2713 | \u23f1: 1.54s 
+OK   https://en.wikipedia.org/wiki/Hancom_Office -> en-wikipedia-org-wiki-Hancom-Office-f61915d2.md (24038 chars)

@@ -1,0 +1,43 @@
+  4248:     <_comment>Hierarchical Data Format File</_comment>
+  4249:     <magic priority="50">
+  4250:       <!-- HDF4 -->
+  4251:       <match value="0x0e031301" type="big32" offset="0"/>
+  4252:       <!-- HDF5 -->
+  4253:       <match value="\211HDF\r\n\032" type="string" offset="0"/>
+  4254:     </magic>
+  4255:     <glob pattern="*.hdf"/>
+  4256:     <glob pattern="*.he5"/>
+  4257:     <glob pattern="*.h5"/>
+  4258:   </mime-type>
+  4259: 
+  4260:   <mime-type type="application/x-hwp">
+  4261:     <_comment>Hangul Word Processor File</_comment>
+  4262:     <magic priority="50">
+  4263:       <!--
+  4264:         TIKA-330: Detection pattern based on signature strings from
+  4265:         the hwpfilter/source/hwpfile.cpp file in OpenOffice.org.
+  4266:         This is for HWP before v5, v5 onwards use OLE2
+  4267:       -->
+  4268:       <match value="HWP Document File V" type="string" offset="0"/>
+  4269:     </magic>
+  4270:   </mime-type>
+  4271:   <mime-type type="application/x-hwp-v5">
+  4272:     <_comment>Hangul Word Processor File v5</_comment>
+  4273:     <sub-class-of type="application/x-tika-msoffice"/>
+  4274:   </mime-type>
+  4275:   <mime-type type="application/hwp+zip">
+  4276:     <_comment>Hangul Word Processor File, zip based</_comment>
+  4277:     <sub-class-of type="application/zip"/>
+  4278:     <glob pattern="*.hwpx"/>
+  4279:   </mime-type>
+  4280:   <mime-type type="application/x-ibooks+zip">
+  4281:     <sub-class-of type="application/epub+zip" />
+  4282:     <acronym>iBooks</acronym>
+  4283:     <_comment>Apple iBooks Author publication format</_comment>
+  4284:     <magic priority="50">
+  4285:       <match value="PK\003\004" type="string" offset="0">
+  4286:         <match value="mimetypeapplication/x-ibooks+zip" type="string" offset="30"/>
+  4287:       </match>
+  4288:     </magic>
+  4289:     <glob pattern="*.ibooks"/>
+  4290:   </mime-type>

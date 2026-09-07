@@ -1,0 +1,11 @@
+ M .gitignore
+ M plugins/hwpx/notes.md
+ M plugins/hwpx/scripts/install.ps1
+ M plugins/hwpx/scripts/install.sh
+ M plugins/hwpx/task_plan.md
+ M plugins/hwpx/tests/install_contract.rs
+?? .agents/research/
+?? .github/skills/
+?? .kiro/
+?? .specify/
+?? tests/
