@@ -94,6 +94,126 @@ fn read_section(path: &Path) -> String {
     section
 }
 
+#[test]
+fn mixed_text_remains_readable_without_expanding_the_writer() {
+    for (markup, expected) in [
+        ("LEFT<hp:tab/>RIGHT", "LEFT\tRIGHT"),
+        ("LEFT<hp:tab></hp:tab>RIGHT", "LEFT\tRIGHT"),
+        ("LEFT<hp:lineBreak/>RIGHT", "LEFT\u{b}RIGHT"),
+        ("<![CDATA[LEFT & RIGHT]]>", "LEFT & RIGHT"),
+        ("LEFT<!-- comment -->RIGHT", "LEFTRIGHT"),
+        ("LEFT<x:tab xmlns:x=\"urn:foreign\"/>RIGHT", "LEFTRIGHT"),
+    ] {
+        for editable in [false, true] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("mixed.hwpx");
+            let original = build_package(&section(markup, "TAIL"));
+            std::fs::write(&path, &original).expect("fixture");
+            let input = frame_lines(&[
+                json!({"protocol":1,"msg_type":"open","editable":editable}),
+                json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text"}}),
+                json!({"protocol":1,"msg_type":"command","command":"get","args":{"path":"/document/section[1]/paragraph[1]","depth":1}}),
+                json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":"text"}}),
+                json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"forbidden"}}),
+                json!({"protocol":1,"msg_type":"close"}),
+            ]);
+            let mut output = Vec::new();
+            serve(&path, Cursor::new(input), &mut output).expect("serve");
+            let replies = replies(output);
+            assert_eq!(
+                replies[1]["result"],
+                format!("{expected}\nTAIL"),
+                "{markup}, editable={editable}"
+            );
+            assert_eq!(replies[2]["result"]["text"], expected);
+            assert_eq!(replies[2]["result"]["children"][0]["text"], expected);
+            assert_eq!(replies[3]["result"][0]["text"], expected);
+            assert_eq!(replies[3]["result"][0]["format"]["editable"], false);
+            assert_eq!(
+                replies[4]["error"]["code"],
+                if editable {
+                    "unsupported_feature"
+                } else {
+                    "unsupported_command"
+                }
+            );
+            assert_eq!(std::fs::read(path).expect("source"), original);
+        }
+    }
+}
+
+#[test]
+fn run_separators_survive_plain_text_edits_and_reopen() {
+    for (control, separator) in [("tab", "\t"), ("lineBreak", "\u{b}")] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("separator.hwpx");
+        let markup = format!("LEFT</hp:t><hp:{control}/><hp:t>RIGHT");
+        std::fs::write(&path, build_package(&section(&markup, "TAIL"))).expect("fixture");
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(frame_lines(&[
+            json!({"protocol":1,"msg_type":"open","editable":true}),
+            json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text"}}),
+            json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[2]"},"props":{"text":"CHANGED"}}),
+            json!({"protocol":1,"msg_type":"save"}),
+            json!({"protocol":1,"msg_type":"close"}),
+        ])), &mut output).expect("serve");
+        let response = replies(output);
+        assert_eq!(response[1]["result"], format!("LEFT{separator}RIGHT\nTAIL"));
+        assert!(
+            response.iter().all(|reply| reply["msg_type"] == "ok"),
+            "{response:#?}"
+        );
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(frame_lines(&[
+            json!({"protocol":1,"msg_type":"open","editable":false}),
+            json!({"protocol":1,"msg_type":"command","command":"get","args":{"path":"/document/section[1]/paragraph[1]"}}),
+            json!({"protocol":1,"msg_type":"close"}),
+        ])), &mut output).expect("reopen");
+        assert_eq!(
+            replies(output)[1]["result"]["text"],
+            format!("LEFT{separator}CHANGED")
+        );
+    }
+}
+
+#[test]
+fn query_type_aliases_match_bare_types_and_preserve_absolute_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("query.hwpx");
+    std::fs::write(&path, build_package(&section("first", "second"))).expect("fixture");
+    let mut frames = vec![json!({"protocol":1,"msg_type":"open","editable":false})];
+    for kind in ["document", "section", "paragraph", "text"] {
+        for selector in [kind.to_owned(), format!("//{kind}")] {
+            frames.push(json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":selector}}));
+        }
+    }
+    for selector in [
+        "/document/section[1]/paragraph[1]/text[1]",
+        "/document/missing",
+        "//unknown",
+        "//text[1]",
+        "///text",
+    ] {
+        frames.push(json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":selector}}));
+    }
+    frames.push(json!({"protocol":1,"msg_type":"close"}));
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(frame_lines(&frames)), &mut output).expect("serve");
+    let replies = replies(output);
+    for index in [1, 3, 5, 7] {
+        assert_eq!(replies[index]["result"], replies[index + 1]["result"]);
+        assert!(!replies[index]["result"]
+            .as_array()
+            .expect("nodes")
+            .is_empty());
+    }
+    assert_eq!(replies[9]["result"][0]["text"], "first");
+    assert_eq!(replies[10]["result"], json!([]));
+    for reply in &replies[11..14] {
+        assert_eq!(reply["error"]["code"], "invalid_argument");
+    }
+}
+
 fn frame_lines(frames: &[Value]) -> String {
     frames
         .iter()

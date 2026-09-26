@@ -1,5 +1,8 @@
 # OfficeCLI Hancom plugins
 
+[내부 문서 안내](../../docs/README.md) ·
+[2026-09-08 코드 리뷰와 재개 순서](../../docs/reviews/2026-09-08-code-review.md)
+
 [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 한컴 문서 플러그인 모음이다.
 역할·대상 포맷·쓰기 권한이 다른 네 바이너리를 제공한다.
 
@@ -373,6 +376,8 @@ exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ### 아직 안 되는 것
 
+- 직접 format-handler의 혼합 텍스트 편집: 읽기에서는 `hp:t`의 탭·줄바꿈·CDATA와
+  run 안의 제어문자를 보존하지만, 혼합 노드의 `set`은 `unsupported_feature`로 거부한다.
 - line/polygon/curve/connectLine/container/OLE/textart/arc/video, 회전·flip·group·보호·
   hyperlink·caption 등 검증되지 않은 도형 profile
 - caption/TOP_AND_BOTTOM, 관계·외부 데이터·embedded workbook이 있는 차트와 검증되지

@@ -1,9 +1,35 @@
 # Task Plan: 한컴오피스 통합 호환 플러그인 (HWP·HWPX·한셀·한쇼)
 
-작성 2026-08-28 · 최근 갱신 2026-08-31 · P0 완료 커밋 `e77fb77c`
+작성 2026-08-28 · 최근 갱신 2026-09-08 · P0 완료 커밋 `e77fb77c`
 (`feat/hwpx-plugin`) · spec-kit feature `001-hancom-unified`
 근거 문서: `.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록),
 `docs/spec-sources.md` (한컴 공식 원문 URL·리비전·바이트·SHA-256)
+
+## 2026-09-08 재개 기준
+
+코드 검토 기준은 `3fb8616a`다. 이 커밋은 조사·도구 파일을 추가했으며 제품 코드
+기준은 직전 `17e02a35`와 같다. [내부 문서 안내](../../docs/README.md)와
+[이번 리뷰](../../docs/reviews/2026-09-08-code-review.md)를 현재 진입점으로 사용한다.
+기존 phase 완료 기록은 당시 검증 근거로 유지하고, 새로 확인한 결함은 아래에서
+별도로 추적한다. 아래 세 결함은 로컬 수정·검증을 완료했으며, 현재 실행 입력은
+[plan.md](plan.md)와 [tasks.md](tasks.md)다. 새 CI·corpus·배포 완료를 뜻하지 않는다.
+
+- [x] R-1 · **P1** / DAV-21: 혼합 텍스트 읽기 보존과 쓰기 허용 판단 분리.
+  HWPX 회귀 19개 및 전체 Rust 646개 통과.
+- [x] R-2 · **P2** / DAV-22: 응답 형태·protocol·Unicode·open capability 검증,
+  broken 이후 save/close 차단 및 동시성 상태 재검사. 독립 검토와 host 59개 통과.
+- [x] R-3 · **P2** / DAV-23: 네 가지 `//type` 별칭, 절대 경로, 미지원 selector 회귀 통과.
+- [x] D-1 · 문서 역할 지도, 사양의 현재 지원 범위, 프로토콜의 네 바이너리·여섯 경로,
+  Windows 개발 환경과 실행형 host 테스트 안내를 정리했다.
+
+현재 사용자 설치는 승격 전 dump-reader 네 경로이며 `.hwpx/.owpml`을 계속 소유한다.
+현재 format-handler만 환경변수로 지정해도 dump-reader가 먼저 선택된다. 후속 CLI
+검증은 설치 세대와 실제 resolution을 확인해야 한다. 이번 검토에서는 사용자 설치를
+변경하지 않고 현재 host session에 실제 Rust 바이너리를 지정해 저장·재열기를 확인했다.
+
+로컬 수정 완료 조건(실패 재현 → 수정 → 계약 및 전체 Rust/host 검사)은 충족했다.
+릴리스 전 영향 OS CI 및 변경된 읽기 동작의 실제 corpus 확인은 남아 있다.
+범위 확장 gate는 아래 계획 그대로 유지한다.
 
 ## Goal
 
@@ -560,9 +586,9 @@ Q5는 JVM runtime 미도입으로, Q7은 역할별 바이너리 분리로 각각
 `cargo test --locked --workspace` 22개 바이너리 **0 실패**. 제품 계획 진행률은
 **43/52**이며 남은 9건은 전부 의도적 evidence-gated deferred다. 별도 감사 항목은
 A-1·A-2·A-3·A-5를 완료했고 A-4만 위 조건에 따라 structure-gated로 남겼다.
-라이선스 재검토 결과
-**한셀/한쇼 carrier는 OOXML(ISO 29500)이라 법적 쟁점이 없으며**, 위험은 legacy 세대에만
-남는다(아래 라이선스 절 참조).
+이 기록의 carrier 판단은 관측한 표본의 OOXML 구조와 기술적 지원 경계에 관한 것이다.
+이를 표본의 권리 관계나 배포 조건 전반에 대한 판정으로 확장하지 않는다
+(ADR-0016 및 아래 라이선스 절의 범위 설명 참조).
 
 **P0·P1·P2·P3 완료.** 커밋 `e77fb77c`의 GitHub-hosted Linux/Windows HWPX plugin
 run `33157787880`과 action pin run `33157787944`가 모두 성공해 T0-1~T0-6을 닫았다.
@@ -759,6 +785,9 @@ sibling을 만든다. 이 기술적 사실만으로 모든 표본의 권리 관�
 ---
 
 ## Next Action Plan
+
+> 다음 순서는 2026-08-31 작업 종료 당시 기록이다. 2026-09-08 이후 즉시 작업은
+> 문서 상단의 R-1~R-3을 먼저 따른다.
 
 감사 결과에 따라 순서를 재정렬했다. A-1은 감사 중 이미 수정했다.
 

@@ -650,7 +650,7 @@ impl HwpxSession {
         let root = self.document_tree();
         let mut nodes = Vec::new();
         flatten_nodes(&root, &mut nodes);
-        let selected = if selector.starts_with('/') {
+        let selected = if selector.starts_with('/') && !selector.starts_with("//") {
             nodes
                 .into_iter()
                 .filter(|node| node.path == selector)
@@ -744,11 +744,7 @@ impl HwpxSession {
                 section.paragraphs.iter().map(move |paragraph| {
                     (
                         paragraph_path(section_index, paragraph.ordinal),
-                        paragraph
-                            .texts
-                            .iter()
-                            .map(|text| text.value.as_str())
-                            .collect::<String>(),
+                        paragraph.value.clone(),
                     )
                 })
             })
@@ -1141,6 +1137,8 @@ struct ParagraphIndex {
     editable: bool,
     next_text_ordinal: usize,
     texts: Vec<TextIndex>,
+    // Reading includes mixed text and run-level controls that are not writable targets.
+    value: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1171,18 +1169,13 @@ impl SectionIndex {
 impl ParagraphIndex {
     fn node(&self, section_index: usize) -> DocumentNode {
         let path = paragraph_path(section_index, self.ordinal);
-        let text = self
-            .texts
-            .iter()
-            .map(|text| text.value.as_str())
-            .collect::<String>();
         let children = self
             .texts
             .iter()
             .map(|target| target.node())
             .collect::<Vec<_>>();
         let mut node = DocumentNode::branch(path, "paragraph", children);
-        node.text = Some(text);
+        node.text = Some(self.value.clone());
         node.format
             .insert("editable".to_owned(), Value::Bool(self.editable));
         if let Some(id) = &self.id {
@@ -1363,6 +1356,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                             editable: true,
                             next_text_ordinal: 0,
                             texts: Vec::new(),
+                            value: String::new(),
                         });
                         OpenElement::Paragraph(ordinal)
                     }
@@ -1402,6 +1396,10 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                         }
                         OpenElement::Text
                     }
+                    ParagraphElement::Control(character) => {
+                        append_control(character, &stack, &mut active_text, &mut paragraphs);
+                        OpenElement::Other
+                    }
                     ParagraphElement::Other => OpenElement::Other,
                 };
                 stack.push(open);
@@ -1422,6 +1420,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                             editable: true,
                             next_text_ordinal: 0,
                             texts: Vec::new(),
+                            value: String::new(),
                         });
                     }
                     ParagraphElement::Run => {
@@ -1452,20 +1451,35 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                             }
                         }
                     }
+                    ParagraphElement::Control(character) => {
+                        append_control(character, &stack, &mut active_text, &mut paragraphs);
+                    }
                     ParagraphElement::Other => {}
                 }
             }
             Event::Text(text) => {
                 if let Some(active) = active_text.as_mut() {
-                    active.value.push_str(&text.decode()?);
+                    let value = text.decode()?;
+                    active.value.push_str(&value);
+                    paragraphs[active.paragraph].value.push_str(&value);
                 }
             }
             Event::GeneralRef(reference) => {
                 if let Some(active) = active_text.as_mut() {
-                    active.value.push_str(&resolve_reference(&reference)?);
+                    let value = resolve_reference(&reference)?;
+                    active.value.push_str(&value);
+                    paragraphs[active.paragraph].value.push_str(&value);
                 }
             }
-            Event::CData(_) | Event::Comment(_) | Event::PI(_) if active_text.is_some() => {
+            Event::CData(text) => {
+                if let Some(active) = active_text.as_mut() {
+                    active.plain = false;
+                    let value = text.decode()?;
+                    active.value.push_str(&value);
+                    paragraphs[active.paragraph].value.push_str(&value);
+                }
+            }
+            Event::Comment(_) | Event::PI(_) if active_text.is_some() => {
                 active_text.as_mut().expect("checked").plain = false;
             }
             Event::DocType(_) => {
@@ -1483,7 +1497,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                     .is_some_and(|active| active.open_depth == closing_depth)
                 {
                     let active = active_text.take().expect("active text checked");
-                    if active.plain {
+                    {
                         let paragraph = &mut paragraphs[active.paragraph];
                         let selector = match paragraph.id.as_deref() {
                             Some(id) if !id.is_empty() => TextNodeSelector::at_paragraph_with_id(
@@ -1498,7 +1512,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                             part: part.to_owned(),
                             selector,
                             value: active.value,
-                            editable: true,
+                            editable: active.plain,
                             ordinal: active.ordinal,
                         });
                     }
@@ -1525,7 +1539,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
 
     for paragraph in &mut paragraphs {
         for text in &mut paragraph.texts {
-            text.editable = paragraph.editable;
+            text.editable &= paragraph.editable;
         }
     }
     Ok(SectionIndex {
@@ -1541,11 +1555,26 @@ fn nearest_paragraph(stack: &[OpenElement]) -> Option<usize> {
     })
 }
 
+fn append_control(
+    character: char,
+    stack: &[OpenElement],
+    active_text: &mut Option<ActiveText>,
+    paragraphs: &mut [ParagraphIndex],
+) {
+    if let Some(active) = active_text.as_mut() {
+        active.value.push(character);
+        paragraphs[active.paragraph].value.push(character);
+    } else if let [.., OpenElement::Paragraph(paragraph), OpenElement::Run] = stack {
+        paragraphs[*paragraph].value.push(character);
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ParagraphElement {
     Paragraph,
     Run,
     Text,
+    Control(char),
     Other,
 }
 
@@ -1557,6 +1586,8 @@ fn paragraph_element(reader: &NsReader<&[u8]>, event: &BytesStart<'_>) -> Result
                 b"p" => ParagraphElement::Paragraph,
                 b"run" => ParagraphElement::Run,
                 b"t" => ParagraphElement::Text,
+                b"tab" => ParagraphElement::Control('\t'),
+                b"lineBreak" => ParagraphElement::Control('\u{b}'),
                 _ => ParagraphElement::Other,
             })
         }

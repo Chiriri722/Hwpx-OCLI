@@ -1,5 +1,9 @@
 # Task Plan: HWPX 후속 개발
 
+> 이 문서는 이전 개발 단계의 완료 이력이다. 현재 작업 상태는
+> [통합 task-plan](../../specs/001-hancom-unified/task-plan.md), 새 검토 결과는
+> [2026-09-08 리뷰](../../docs/reviews/2026-09-08-code-review.md)를 따른다.
+
 ## Goal
 기존 HWPX 플러그인 계획의 완료 상태를 재검증하고, 확인된 보안·호환성 위험을 우선순위에 따라 수정하여 회귀 검증까지 마친다.
 

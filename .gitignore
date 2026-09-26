@@ -20,3 +20,6 @@ publish/
 # Local editor and OS files
 .DS_Store
 .idea/
+
+# Local Sentry authentication supplied for development; never commit credentials.
+/조직 토큰.txt

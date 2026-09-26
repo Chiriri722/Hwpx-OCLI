@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "feature_directory": "specs/001-hancom-unified",
+  "linear": {
+    "workspace_url": "https://linear.app/david-lee-722",
+    "team_id": "cbf8d4f2-270d-4ee2-90b8-365997ee0038",
+    "project_id": "30552ff3-7f28-4649-95c8-2bd07a21a513",
+    "project_url": "https://linear.app/david-lee-722/project/hwpx-ocli-c1f60602c6f4",
+    "issues": { "R-1": "DAV-21", "R-2": "DAV-22", "R-3": "DAV-23" }
+  },
+  "sentry": {
+    "organization": "the-voltex-club",
+    "project": "hwpx-ocli",
+    "environment": "prod",
+    "mode": "read-only-issues",
+    "authentication_env": "SENTRY_AUTH_TOKEN"
+  },
+  "security": {
+    "workflow": "codex-security:fix-finding",
+    "finding": "R-2",
+    "tracking_issue": "DAV-22"
+  }
+}

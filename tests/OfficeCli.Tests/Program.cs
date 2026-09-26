@@ -153,8 +153,12 @@ if (args is ["--heartbeat-child"])
 if (args is ["open", _]
     && Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG") is { Length: > 0 } wireLog)
 {
+    Console.InputEncoding = new UTF8Encoding(false);
+    Console.OutputEncoding = new UTF8Encoding(false);
     var advertisedCommands = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS")
         ?? "[\"get\",\"save\"]";
+    var rawReply = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_REPLY");
+    var replyPhase = Environment.GetEnvironmentVariable("OFFICECLI_TEST_FORMAT_HANDLER_REPLY_PHASE") ?? "command";
     using var log = new StreamWriter(wireLog, append: false, new UTF8Encoding(false))
     {
         AutoFlush = true,
@@ -166,7 +170,12 @@ if (args is ["open", _]
         log.WriteLine(line);
         using var frame = JsonDocument.Parse(line);
         var msgType = frame.RootElement.GetProperty("msg_type").GetString();
-        if (msgType == "open")
+        if (rawReply is not null && msgType == replyPhase)
+        {
+            Console.WriteLine(rawReply);
+            rawReply = null;
+        }
+        else if (msgType == "open")
         {
             Console.WriteLine(
                 "{\"protocol\":1,\"msg_type\":\"ok\",\"result\":{" +
@@ -223,6 +232,10 @@ var tests = new (string Name, Action Run)[]
     ("plugin process callback errors remain isolated per concurrent run", PluginProcessCallbackErrorsArePerRun),
     ("plugin process never reports success before output readers drain", PluginProcessWaitsForOutputReaders),
     ("format-handler lifecycle frames match protocol v1", FormatHandlerLifecycleFramesMatchProtocolV1),
+    ("format-handler malformed replies poison every later operation", FormatHandlerMalformedRepliesPoisonSession),
+    ("format-handler valid reply values and errors preserve the session", FormatHandlerValidRepliesPreserveSession),
+    ("format-handler open capabilities fail closed", FormatHandlerOpenCapabilitiesFailClosed),
+    ("format-handler queued save rechecks broken state", FormatHandlerQueuedSaveRechecksBrokenState),
     ("format-handler view uses the protocol max_lines key", FormatHandlerViewUsesProtocolMaxLinesKey),
     ("format-handler save cannot report false durability", FormatHandlerSaveCannotReportFalseDurability),
     ("dump-reader accepts direct native output without a blank warning", DumpReaderDirectNativeOutputIsNotWarned),
@@ -2631,7 +2644,7 @@ static bool InvokeBool(string name, params object[] args)
         ?? throw new InvalidOperationException($"{name} returned no Boolean value");
 }
 
-static IDocumentHandler OpenContractFormatHandler(string filePath)
+static IDocumentHandler OpenContractFormatHandler(string filePath, Action<object>? onStarted = null)
 {
     var assembly = typeof(PluginRegistry).Assembly;
     var sessionType = assembly.GetType("OfficeCli.Core.Plugins.FormatHandlerSession")
@@ -2661,6 +2674,7 @@ static IDocumentHandler OpenContractFormatHandler(string filePath)
         var start = sessionType.GetMethod("Start", BindingFlags.Instance | BindingFlags.Public)
             ?? throw new MissingMethodException(sessionType.FullName, "Start");
         start.Invoke(session, [true]);
+        onStarted?.Invoke(session);
         return Activator.CreateInstance(
             proxyType,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -2674,6 +2688,207 @@ static IDocumentHandler OpenContractFormatHandler(string filePath)
         (session as IDisposable)?.Dispose();
         throw;
     }
+}
+
+static object? SendContractCommand(object session)
+{
+    try
+    {
+        return session.GetType().GetMethod("Send")!.Invoke(session, ["command", "get", null, null]);
+    }
+    catch (TargetInvocationException ex) when (ex.InnerException is not null)
+    {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+        throw;
+    }
+}
+
+static void AssertProtocolError(Action operation, string code)
+{
+    try { operation(); }
+    catch (TargetInvocationException ex) when (ex.InnerException is CliException inner)
+    {
+        Assert(inner.Code == code, $"expected {code}, got {inner.Code}");
+        return;
+    }
+    catch (CliException ex)
+    {
+        Assert(ex.Code == code, $"expected {code}, got {ex.Code}");
+        return;
+    }
+    throw new InvalidOperationException($"expected {code}, but operation succeeded");
+}
+
+static void WithContractReply(string reply, string phase, Action<string, string> test)
+{
+    var path = Path.Combine(Path.GetTempPath(), $"officecli-reply-{Guid.NewGuid():N}.wire");
+    var log = path + ".jsonl";
+    var settings = new Dictionary<string, string?>
+    {
+        ["OFFICECLI_TEST_FORMAT_HANDLER_WIRE_LOG"] = log,
+        ["OFFICECLI_TEST_FORMAT_HANDLER_COMMANDS"] = "[\"get\",\"save\"]",
+        ["OFFICECLI_TEST_FORMAT_HANDLER_REPLY"] = reply,
+        ["OFFICECLI_TEST_FORMAT_HANDLER_REPLY_PHASE"] = phase,
+    };
+    var originals = settings.Keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
+    try
+    {
+        File.WriteAllText(path, "source must remain unchanged");
+        foreach (var (key, value) in settings) Environment.SetEnvironmentVariable(key, value);
+        test(path, log);
+        Assert(File.ReadAllText(path) == "source must remain unchanged", "source changed");
+    }
+    finally
+    {
+        foreach (var (key, value) in originals) Environment.SetEnvironmentVariable(key, value);
+        File.Delete(path);
+        File.Delete(log);
+    }
+}
+
+static void FormatHandlerMalformedRepliesPoisonSession()
+{
+    string[] invalid = [
+        "not json", "[]", "null", "42", "true", "\"text\"", "{}",
+        "{\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":null,\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":\"1\",\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":true,\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":2,\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":1.5,\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":1,\"msg_type\":42}",
+        "{\"protocol\":1,\"msg_type\":null}",
+        "{\"protocol\":1,\"msg_type\":\"unknown\"}",
+        "{\"protocol\":1,\"msg_type\":\"ok\"}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":[]}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":null}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":{}}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":{\"code\":42,\"message\":\"bad\"}}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":{\"code\":\"bad\",\"message\":[]}}",
+        "{\"protocol\":1,\"protocol\":2,\"msg_type\":\"ok\",\"result\":null}",
+        "{\"protocol\":1,\"msg_type\":\"\\uD800\",\"result\":null}",
+        "{\"protocol\":1,\"msg_type\":\"ok\",\"result\":\"\\uDC00\"}",
+        "{\"protocol\":1,\"msg_type\":\"ok\",\"result\":{\"\\uD800\":true}}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":{\"code\":\"\\uD800\",\"message\":\"bad\"}}",
+        "{\"protocol\":1,\"msg_type\":\"error\",\"error\":{\"code\":\"bad\",\"message\":\"\\uDC00\"}}",
+    ];
+    foreach (var reply in invalid)
+    {
+        WithContractReply(reply, "command", (path, log) =>
+        {
+            object? session = null;
+            using (var handler = OpenContractFormatHandler(path, started => session = started))
+            {
+                AssertProtocolError(() => SendContractCommand(session!), "protocol_mismatch");
+                Assert((bool)session!.GetType().GetProperty("IsBroken")!.GetValue(session)!, "session not broken");
+                AssertProtocolError(() => SendContractCommand(session), "plugin_stream_closed");
+                AssertProtocolError(handler.Save, "plugin_stream_closed");
+            }
+            Assert(File.ReadAllLines(log).Length == 2, $"malformed reply allowed later wire traffic: {reply}");
+        });
+        WithContractReply(reply, "open", (path, log) =>
+        {
+            AssertProtocolError(() => { using var handler = OpenContractFormatHandler(path); }, "protocol_mismatch");
+            Assert(File.ReadAllLines(log).Length == 1, "malformed handshake sent close");
+        });
+    }
+}
+
+static void FormatHandlerValidRepliesPreserveSession()
+{
+    foreach (var value in new[] { "null", "\"text\"", "42", "true", "[]", "{}", "\"한글 😀\"" })
+    {
+        WithContractReply("{\"result\":" + value + ",\"future\":true,\"msg_type\":\"ok\",\"protocol\":1}", "command", (path, log) =>
+        {
+            object? session = null;
+            using (var handler = OpenContractFormatHandler(path, started => session = started))
+            {
+                var result = SendContractCommand(session!);
+                using var expected = JsonDocument.Parse(value);
+                var expectedText = expected.RootElement.ValueKind == JsonValueKind.String
+                    ? expected.RootElement.GetString() : value;
+                Assert((result?.ToString() ?? "null") == expectedText, $"result changed: expected {value}, received {result}");
+                handler.Save();
+            }
+            Assert(File.ReadAllLines(log).Length == 4, "valid reply lost save/close");
+        });
+    }
+    WithContractReply("{\"protocol\":1,\"msg_type\":\"error\",\"error\":{\"code\":\"unsupported_command\",\"message\":\"expected\",\"detail\":{\"future\":true}}}", "command", (path, log) =>
+    {
+        object? session = null;
+        using (var handler = OpenContractFormatHandler(path, started => session = started))
+        {
+            AssertProtocolError(() => SendContractCommand(session!), "unsupported_command");
+            handler.Save();
+        }
+        Assert(File.ReadAllLines(log).Length == 4, "valid error poisoned session");
+    });
+}
+
+static void FormatHandlerOpenCapabilitiesFailClosed()
+{
+    foreach (var result in new[] {
+        "null", "[]", "{}", "{\"capabilities\":null,\"vocabulary\":{}}",
+        "{\"capabilities\":{},\"vocabulary\":{}}",
+        "{\"capabilities\":{\"commands\":null},\"vocabulary\":{}}",
+        "{\"capabilities\":{\"commands\":[null]},\"vocabulary\":{}}",
+        "{\"capabilities\":{\"commands\":[42]},\"vocabulary\":{}}",
+        "{\"capabilities\":{\"commands\":[\"get\"]},\"vocabulary\":42}",
+        "{\"capabilities\":{\"commands\":[\"get\"],\"features\":42},\"vocabulary\":{}}",
+    })
+    {
+        WithContractReply("{\"protocol\":1,\"msg_type\":\"ok\",\"result\":" + result + "}", "open", (path, log) =>
+        {
+            AssertProtocolError(() => { using var handler = OpenContractFormatHandler(path); }, "protocol_mismatch");
+            Assert(File.ReadAllLines(log).Length == 1, "invalid capabilities sent close");
+        });
+    }
+    WithContractReply("{\"protocol\":1,\"msg_type\":\"ok\",\"result\":{\"capabilities\":{\"commands\":[]},\"vocabulary\":{}}}", "open", (path, log) =>
+    {
+        object? session = null;
+        using (var handler = OpenContractFormatHandler(path, started => session = started))
+        {
+            AssertProtocolError(() => SendContractCommand(session!), "unsupported_command");
+            AssertProtocolError(handler.Save, "unsupported_command");
+            Assert(!(bool)session!.GetType().GetProperty("IsBroken")!.GetValue(session)!, "capability gate poisoned session");
+        }
+        Assert(File.ReadAllLines(log).Length == 2, "empty capabilities allowed a command or save");
+    });
+}
+
+static void FormatHandlerQueuedSaveRechecksBrokenState()
+{
+    WithContractReply("[]", "command", (path, log) =>
+    {
+        object? session = null;
+        using (var handler = OpenContractFormatHandler(path, started => session = started))
+        {
+            var ioLock = session!.GetType().GetField("_ioLock", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(session)!;
+            Exception? saveError = null;
+            using var started = new ManualResetEventSlim();
+            var worker = new Thread(() =>
+            {
+                started.Set();
+                try { handler.Save(); }
+                catch (Exception ex) { saveError = ex; }
+            }) { IsBackground = true };
+            Monitor.Enter(ioLock);
+            try
+            {
+                worker.Start();
+                Assert(started.Wait(TimeSpan.FromSeconds(5)), "save worker did not start");
+                Assert(SpinWait.SpinUntil(() => (worker.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0,
+                    TimeSpan.FromSeconds(5)), "save worker did not wait for the protocol lock");
+                // Reentrant lock acquisition lets this request poison the session
+                // after the worker's public usability check, before its write.
+                AssertProtocolError(() => SendContractCommand(session), "protocol_mismatch");
+            }
+            finally { Monitor.Exit(ioLock); }
+            Assert(worker.Join(TimeSpan.FromSeconds(5)), "queued save did not finish");
+            Assert(saveError is CliException { Code: "plugin_stream_closed" }, "queued save was not rejected");
+        }
+        Assert(File.ReadAllLines(log).Length == 2, "queued save reached broken plugin");
+    });
 }
 
 static PluginManifest Manifest(string name, string version) => new()

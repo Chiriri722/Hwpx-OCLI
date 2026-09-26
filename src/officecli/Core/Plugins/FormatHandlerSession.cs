@@ -140,7 +140,7 @@ internal sealed class FormatHandlerSession : IDisposable
         }
         catch (JsonException)
         {
-            _sessionCaps = null;
+            throw InvalidReply("open result contains invalid capabilities or vocabulary");
         }
     }
 
@@ -185,8 +185,7 @@ internal sealed class FormatHandlerSession : IDisposable
     {
         // Capability gate: short-circuit verbs the plugin already declared it
         // does not support, avoiding a wasted round-trip and ambiguous errors.
-        if (_sessionCaps?.Capabilities?.Commands is not { Count: > 0 } commands
-            || commands.Contains(verb))
+        if (_sessionCaps?.Capabilities?.Commands is { } commands && commands.Contains(verb))
             return;
 
         throw new CliException(
@@ -225,6 +224,8 @@ internal sealed class FormatHandlerSession : IDisposable
 
         lock (_ioLock)
         {
+            // A caller may have queued behind the reply that broke this session.
+            EnsureUsable();
             try
             {
                 _stdinWriter.WriteLine(request.ToJsonString());
@@ -262,10 +263,10 @@ internal sealed class FormatHandlerSession : IDisposable
                 // value...") is opaque to users — wrap it in a clear
                 // `protocol_mismatch` envelope that names the plugin and
                 // shows a preview of what it actually wrote.
-                JsonObject? reply;
+                JsonDocument document;
                 try
                 {
-                    reply = JsonNode.Parse(line)?.AsObject();
+                    document = JsonDocument.Parse(line);
                 }
                 catch (JsonException ex)
                 {
@@ -276,30 +277,47 @@ internal sealed class FormatHandlerSession : IDisposable
                     { Code = "protocol_mismatch" };
                 }
 
-                if (reply is null)
+                using (document)
                 {
-                    _broken = true;
-                    throw new CliException(
-                        $"Format-handler plugin '{_plugin.Manifest.Name}' reply is not a JSON object. First chars: \"{Truncate(line, 80)}\".")
-                    { Code = "protocol_mismatch" };
-                }
+                    var reply = document.RootElement;
+                    try
+                    {
+                        ValidateJsonStrings(reply);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        throw InvalidReply("JSON contains an invalid Unicode string");
+                    }
+                    if (!IsUnambiguousObject(reply)
+                        || !reply.TryGetProperty("protocol", out var protocol)
+                        || protocol.ValueKind != JsonValueKind.Number
+                        || !protocol.TryGetInt32(out var version) || version != 1
+                        || !reply.TryGetProperty("msg_type", out var type)
+                        || type.ValueKind != JsonValueKind.String)
+                        throw InvalidReply("expected an object with protocol:1 and a string msg_type");
 
-                var replyType = reply["msg_type"]?.GetValue<string>() ?? "";
-                if (replyType == "ok")
-                    return reply["result"];
-                if (replyType == "error")
-                {
-                    var err = reply["error"]?.AsObject();
-                    var code = err?["code"]?.GetValue<string>() ?? "plugin_error";
-                    var msg = err?["message"]?.GetValue<string>() ?? "(no message)";
-                    throw new CliException(
-                        $"Format-handler plugin '{_plugin.Manifest.Name}' reported error on {command ?? msgType}: {msg}")
-                    { Code = code };
+                    if (type.GetString() == "ok")
+                    {
+                        if (!reply.TryGetProperty("result", out var result))
+                            throw InvalidReply("ok reply is missing result");
+                        if (msgType == "open") ValidateOpenResult(result);
+                        return JsonNode.Parse(result.GetRawText());
+                    }
+                    if (type.GetString() == "error")
+                    {
+                        if (!reply.TryGetProperty("error", out var error)
+                            || !IsUnambiguousObject(error)
+                            || !error.TryGetProperty("code", out var code)
+                            || code.ValueKind != JsonValueKind.String
+                            || !error.TryGetProperty("message", out var message)
+                            || message.ValueKind != JsonValueKind.String)
+                            throw InvalidReply("error reply requires an object with string code and message");
+                        throw new CliException(
+                            $"Format-handler plugin '{_plugin.Manifest.Name}' reported error on {command ?? msgType}: {message.GetString()}")
+                        { Code = code.GetString()! };
+                    }
+                    throw InvalidReply("unexpected response msg_type");
                 }
-                _broken = true;
-                throw new CliException(
-                    $"Format-handler plugin '{_plugin.Manifest.Name}' replied with unknown msg_type '{replyType}'.")
-                { Code = "protocol_mismatch" };
             }
             catch (IOException ex)
             {
@@ -309,6 +327,55 @@ internal sealed class FormatHandlerSession : IDisposable
                 { Code = "plugin_stream_closed" };
             }
         }
+    }
+
+    private CliException InvalidReply(string reason)
+    {
+        _broken = true;
+        return new CliException($"Format-handler plugin '{_plugin.Manifest.Name}' sent an invalid reply: {reason}.")
+        { Code = "protocol_mismatch" };
+    }
+
+    private static bool IsUnambiguousObject(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return false;
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        return value.EnumerateObject().All(property => names.Add(property.Name));
+    }
+
+    // JsonDocument parses escaped lone surrogates lazily. Materialize strings
+    // inside the protocol boundary before any typed accessor can throw later.
+    private static void ValidateJsonStrings(JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                _ = value.GetString();
+                break;
+            case JsonValueKind.Object:
+                foreach (var property in value.EnumerateObject())
+                {
+                    _ = property.Name;
+                    ValidateJsonStrings(property.Value);
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in value.EnumerateArray()) ValidateJsonStrings(item);
+                break;
+        }
+    }
+
+    private void ValidateOpenResult(JsonElement result)
+    {
+        if (!IsUnambiguousObject(result)
+            || !result.TryGetProperty("capabilities", out var capabilities)
+            || !IsUnambiguousObject(capabilities)
+            || !capabilities.TryGetProperty("commands", out var commands)
+            || commands.ValueKind != JsonValueKind.Array
+            || commands.EnumerateArray().Any(command => command.ValueKind != JsonValueKind.String)
+            || !result.TryGetProperty("vocabulary", out var vocabulary)
+            || !IsUnambiguousObject(vocabulary))
+            throw InvalidReply("open result requires capabilities.commands (string array) and vocabulary (object)");
     }
 
     /// <summary>
@@ -352,6 +419,12 @@ internal sealed class FormatHandlerSession : IDisposable
     }
 
     public void Dispose()
+    {
+        // Shutdown must not race a pending response and implicitly save a broken session.
+        lock (_ioLock) DisposeCore();
+    }
+
+    private void DisposeCore()
     {
         if (_disposed) return;
         _disposed = true;

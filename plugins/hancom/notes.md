@@ -1,5 +1,9 @@
 # Notes: HWPX 후속 개발
 
+> 날짜별 실험·검증 이력이다. 현재 재개 순서는
+> [통합 task-plan](../../specs/001-hancom-unified/task-plan.md)과
+> [2026-09-08 리뷰](../../docs/reviews/2026-09-08-code-review.md)를 따른다.
+
 ## Sources
 
 ### 기존 작업 계획

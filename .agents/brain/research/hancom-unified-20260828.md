@@ -1,5 +1,12 @@
 # Research memory: unified Hancom format expansion
 
+> Historical research snapshot from 2026-08-28. Its P1/P3 prerequisites and
+> "no Cell/Show samples" statements describe that date, not the current tree.
+> For current decisions, use `docs/README.md`, ADR-0013/0016 and
+> `docs/reviews/2026-09-08-code-review.md`; the canonical task plan tracks new
+> review findings R-1 through R-3. In particular, DVC is a named policy checker,
+> not a general official HWPX conformance validator.
+
 - Date: 2026-08-28
 - Status: P0 complete; P1 workspace expansion unblocked
 - Canonical plan: `specs/001-hancom-unified/task-plan.md`

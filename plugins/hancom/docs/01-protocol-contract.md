@@ -1,6 +1,14 @@
 # 확정 계약 (테스트가 검증하는 대상)
 
-출처: `iOfficeAI/OfficeCLI` `plugins/plugin-protocol.md` v1 (final draft),
+2026-09-08 후속 수정: 직접 HWPX 읽기는 혼합 `hp:t`·CDATA와 run/text 안의
+탭·줄바꿈을 보존하며 혼합 노드 편집은 거부한다. 네 가지 `//type` 별칭은 일반
+타입 조회와 동일하다. 호스트는 잘못된 응답 형태·버전·Unicode를 `protocol_mismatch`로
+차단하고 이후 command/save/close를 보내지 않는다. 정상 error 응답은 세션을 유지한다.
+
+최종 계약 정리: 2026-09-08. 정본은 이 포크의
+[`plugins/plugin-protocol.md`](../../plugin-protocol.md) v1이며, Cell/Show에는
+fork-local `direct-native` / `byte-preserving` 확장이 적용된다.
+기본 계약 출처: `iOfficeAI/OfficeCLI` `plugins/plugin-protocol.md` v1 (final draft),
 `schemas/help/docx/*`, wiki `command-batch.md` / `command-dump.md`.
 매니페스트·dump 계약은 `tests/protocol_contract.rs`, 설치·discovery
 경로는 `tests/install_contract.rs`에서 기계적으로 검증한다.
@@ -17,10 +25,21 @@
 | `version` | string, SemVer | `0.1.0` |
 | `protocol` | integer | `1` (불일치 시 메인이 exit 5로 거부) |
 | `kinds` | array | `["dump-reader"]` |
-| `extensions` | array, 점 포함 | `[".hwpx", ".owpml", ".hml", ".hwp"]` |
+| `extensions` | array, 점 포함 | `[".hwp", ".hml"]` |
 | `idle_timeout_seconds` | object | `{"default":60,"verbs":{"dump":30}}` |
 | `runtime` | string | `"rust"` |
 | `target` | string | `"docx"` — dump-reader는 **필수**, `docx`/`xlsx`/`pptx` 중 하나 |
+
+위 표는 `officecli-hancom-hwp`의 dump-reader 계약이다. 다른 진입점은 다음과 같다.
+
+| 바이너리 | kind | extensions | target / stdout |
+|---|---|---|---|
+| `officecli-hancom-hwpx` | format-handler | `.hwpx`, `.owpml` | target 없음 / 세션 JSONL 응답 |
+| `officecli-hancom-cell` | dump-reader | `.cell` | xlsx / 성공 시 stdout 0바이트 |
+| `officecli-hancom-show` | dump-reader | `.show` | pptx / 성공 시 stdout 0바이트 |
+
+`officecli-dump-reader-hwpx`는 HWP/HML dump-reader의 호환 별칭이다.
+명시적으로 `dump file.hwpx`를 진단할 수 있지만 `.hwpx`를 manifest에 광고하지 않는다.
 
 `idle_timeout_seconds` 규칙 (§4.2):
 - `default`는 필수, 양의 정수
@@ -28,6 +47,9 @@
 - 권장값: `dump-reader.dump` = 30초
 
 ## C2. `dump` 서브커맨드 (§5.1)
+
+이 절과 C3, C6~C8의 BatchItem 설명은 HWP/HML dump-reader에 적용한다.
+Cell/Show의 별도 성공 계약은 C12를 따른다.
 
 ```
 <plugin> dump <source-file> [--media-dir <dir>]
@@ -120,13 +142,20 @@
 | bundled 경로 | `<officecli 디렉터리>/plugins/format-handler/hwpx/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hwp/plugin` | `<officecli 디렉터리>/plugins/format-handler/owpml/plugin` | `<officecli 디렉터리>/plugins/dump-reader/hml/plugin` |
 | PATH | `officecli-format-handler-hwpx` → `officecli-hwpx` | `officecli-dump-reader-hwp` → `officecli-hwp` | `officecli-format-handler-owpml` → `officecli-owpml` | `officecli-dump-reader-hml` → `officecli-hml` |
 
+Cell/Show는 각각 `OFFICECLI_PLUGIN_DUMP_READER_CELL` /
+`OFFICECLI_PLUGIN_DUMP_READER_SHOW`, 사용자·bundled 경로의
+`dump-reader/cell/plugin` / `dump-reader/show/plugin`을 사용한다.
+Windows 실행 파일에는 `.exe`가 붙는다.
+
 `<kind>`는 kebab-case, `<ext>`는 점 없는 확장자다. Unix 설치기는 HWP와 HWPX
 canonical 경로에 역할별 실제 파일을 원자 교체하고, HML은 `../hwp/plugin`,
 OWPML은 `../hwpx/plugin` 상대 심볼릭 링크를 둔다. Windows 설치기는 심볼릭 링크
-권한에 의존하지 않고 역할별 바이너리를 네 경로에 staging·체크섬·`--info` 의미
-검증한 뒤 순차 교체한다. 두 설치기 모두 활성 네 경로와 폐기할
+권한에 의존하지 않고 역할별 바이너리를 네 경로에 복사한다. Cell/Show 전용
+바이너리는 각 한 경로에 설치한다. 총 여섯 활성 경로를 staging·체크섬·`--info` 의미
+검증한 뒤 순차 교체한다. 두 설치기 모두 활성 여섯 경로와 폐기할
 `dump-reader/{hwpx,owpml}` 두 경로의 커밋 상태를 추적해 중간 실패 시 기존 상태를
-역순으로 복원한다. 강제 종료까지 포함한 완전한 다중 경로 원자성은 보장하지 않는다.
+역순으로 conflict-safe best effort 복원한다. 강제 종료까지 포함한 완전한 다중 경로
+원자성은 보장하지 않는다. 세부 설치 계약은 [README](../README.md)의 설치 절을 따른다.
 
 `plugins list`는 실행 경로별로 열거하므로 같은 매니페스트가 여러 행으로
 보일 수 있다. 이는 `(kind, ext)`별 resolution 실패를 의미하지 않는다.
@@ -171,6 +200,19 @@ HWPML은 대소문자가 정확한 비접두 `HWPML` 루트와 `Version`을 요�
 [ADR-0015](../../../docs/adr/0015-hancom-format-handler-open-path-compatibility.md)에 기록한다.
 
 ---
+
+## C12. Cell/Show direct-native 계약
+
+Cell 12.0300과 Show 12.0000의 검증된 OOXML carrier 부분집합만 지원한다.
+매니페스트가 `direct-native`와 `byte-preserving`을 함께 선언하면 호스트는 매번
+플러그인을 호출한다. 성공에는 exit 0, raw stdout 정확히 0바이트, 현재 source와
+byte-identical한 non-reparse native sibling이 모두 필요하다. JSONL·공백·BOM은
+이 모드에서 성공 출력이 아니다. 기존 sibling의 내용이 다르면 덮어쓰지 않는다.
+
+플러그인은 ZIP/XML·관계 closure·허용 profile과 filesystem metadata를 검증한 뒤
+no-clobber로 게시한다. 실패 후 호스트는 소유권을 증명하지 못하는 sibling을 삭제하지
+않는다. 전체 범위와 한계는 [ADR-0016](../../../docs/adr/0016-hancom-v12-ooxml-carrier-bridge.md)을
+따른다. 이는 일반 Cell/Show 변환기나 proprietary parser 계약이 아니다.
 
 ## 결정 기록 (ADR)
 
