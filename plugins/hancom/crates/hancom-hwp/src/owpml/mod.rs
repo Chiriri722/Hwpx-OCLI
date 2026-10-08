@@ -9,6 +9,7 @@ pub mod package;
 pub mod section;
 pub mod styles;
 pub mod xml;
+mod zip_layout;
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};

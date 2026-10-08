@@ -74,6 +74,17 @@ fn target_path(
 }
 
 #[test]
+fn windows_installer_requires_powershell_7_before_any_side_effect() {
+    // Windows PowerShell 5.1 cannot call [IO.Path]::IsPathFullyQualified. The
+    // directive makes it refuse the script before `param` or any file access.
+    assert_eq!(
+        WINDOWS_INSTALLER.lines().next().map(str::trim),
+        Some("#Requires -Version 7.0")
+    );
+    assert!(WINDOWS_INSTALLER.contains("[IO.Path]::IsPathFullyQualified"));
+}
+
+#[test]
 fn windows_installer_exposes_every_environment_override() {
     for target in ACTIVE_TARGETS {
         assert!(

@@ -231,6 +231,205 @@ fn replies(bytes: Vec<u8>) -> Vec<Value> {
         .collect()
 }
 
+#[test]
+fn structured_reads_preserve_sources_empty_cells_and_field_identity() {
+    let xml = section("outer", "tail").replace("<hp:t>outer</hp:t>", r#"<hp:t>outer</hp:t>
+<hp:tbl id="5" rowCnt="1" colCnt="2"><hp:tr><hp:tc name="entry"><hp:subList>
+<hp:p id="7"><hp:run><hp:ctrl><hp:fieldBegin id="11" type="CLICK_HERE" name="same"/></hp:ctrl><hp:t></hp:t><hp:t/><hp:t>split</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="11"/></hp:ctrl></hp:run></hp:p>
+</hp:subList><hp:cellAddr rowAddr="0" colAddr="0"/><hp:cellSpan rowSpan="1" colSpan="2"/></hp:tc></hp:tr></hp:tbl>
+<hp:ctrl><hp:footNote number="1" instId="9"><hp:subList><hp:p id="7"><hp:run><hp:t>note</hp:t></hp:run></hp:p></hp:subList></hp:footNote></hp:ctrl>
+<hp:ctrl><hp:fieldBegin id="12" type="CLICK_HERE" name="same"/><hp:fieldEnd beginIDRef="12"/></hp:ctrl>
+<fake:tbl xmlns:fake="urn:foreign" rowCnt="99"/>"#);
+    for editable in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structure.hwpx");
+        let original = build_package(&xml);
+        std::fs::write(&path, &original).unwrap();
+        let mut frames = vec![json!({"protocol":1,"msg_type":"open","editable":editable})];
+        for kind in ["table", "cell", "note", "field", "paragraph", "text"] {
+            frames.push(json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":format!("//{kind}")}}));
+        }
+        frames.push(json!({"protocol":1,"msg_type":"close"}));
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(frame_lines(&frames)), &mut output).unwrap();
+        let result = replies(output);
+        assert!(result.iter().all(|r| r["msg_type"] == "ok"), "{result:#?}");
+        assert_eq!(result[1]["result"].as_array().unwrap().len(), 1);
+        let cell = &result[2]["result"][0];
+        assert_eq!(cell["format"]["row"], 0);
+        assert_eq!(cell["format"]["col_span"], 2);
+        assert_eq!(
+            cell["format"]["parent_path"],
+            "/document/section[1]/table[1]"
+        );
+        assert_eq!(
+            cell["format"]["paragraph_paths"],
+            json!(["/document/section[1]/paragraph[2]"])
+        );
+        assert_eq!(cell["format"]["editable"], false);
+        assert_eq!(
+            cell["format"]["editability"]["candidate_target_paths"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(result[3]["result"][0]["format"]["note_kind"], "footnote");
+        let fields = result[4]["result"].as_array().unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_ne!(fields[0]["path"], fields[1]["path"]);
+        assert_eq!(fields[0]["format"]["name"], fields[1]["format"]["name"]);
+        assert_eq!(fields[0]["format"]["range_status"], "matched");
+        assert_eq!(
+            fields[0]["format"]["text_paths"].as_array().unwrap().len(),
+            3
+        );
+        let texts = result[6]["result"].as_array().unwrap();
+        assert_eq!(
+            texts.len(),
+            6,
+            "paired and self-closing empty nodes stay visible"
+        );
+        assert_eq!(texts[1]["format"]["editable"], editable);
+        assert_eq!(texts[1]["format"]["editability"]["text_candidate"], true);
+        assert_eq!(texts[2]["format"]["editability"]["text_candidate"], false);
+        assert_eq!(texts[2]["text"], "");
+        assert_eq!(texts[2]["format"]["editable"], false);
+        assert_eq!(
+            texts[3]["path"],
+            "/document/section[1]/paragraph[2]/text[3]"
+        );
+        for row in &result[1..7] {
+            for node in row["result"].as_array().unwrap() {
+                let source = &node["format"]["source"];
+                assert_eq!(source["part"], SECTION_PART);
+                assert!(source["revision"].as_str().unwrap().starts_with("sha256:"));
+                let start = source["byte_start"].as_u64().unwrap() as usize;
+                let end = source["byte_end"].as_u64().unwrap() as usize;
+                assert!(xml[start..end].starts_with("<hp:"));
+                assert!(xml[start..end].ends_with('>'));
+                assert!(node["format"]["editability"]["reason"].is_string());
+            }
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        if editable {
+            let mut output = Vec::new();
+            serve(&path, Cursor::new(frame_lines(&[
+                json!({"protocol":1,"msg_type":"open","editable":true}),
+                json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[2]/text[1]"},"props":{"text":"채움 & 값"}}),
+                json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[2]/text[2]"},"props":{"text":"forbidden"}}),
+                json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[2]/text[3]"},"props":{"text":"separate"}}),
+                json!({"protocol":1,"msg_type":"save"}),
+                json!({"protocol":1,"msg_type":"close"}),
+            ])), &mut output).unwrap();
+            let saved = replies(output);
+            assert_eq!(saved[2]["error"]["code"], "unsupported_feature");
+            for i in [0, 1, 3, 4, 5] {
+                assert_eq!(saved[i]["msg_type"], "ok", "{saved:#?}");
+            }
+            assert_eq!(
+                read_section(&path),
+                xml.replace("<hp:t></hp:t>", "<hp:t>채움 &amp; 값</hp:t>")
+                    .replace("<hp:t>split</hp:t>", "<hp:t>separate</hp:t>")
+            );
+        }
+    }
+}
+
+#[test]
+fn guarded_edits_reject_stale_revision_without_partial_changes() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("guarded.hwpx");
+    let xml = section("", "second");
+    let revision = format!(
+        "sha256:{}",
+        Sha256::digest(xml.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    std::fs::write(&path, build_package(&xml)).unwrap();
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(frame_lines(&[
+        json!({"protocol":1,"msg_type":"open","editable":true}),
+        json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"filled","expected_revision":revision}}),
+        json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[2]/text[1]"},"props":{"text":"wrong","expected_revision":revision}}),
+        json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":"text"}}),
+        json!({"protocol":1,"msg_type":"save"}),
+        json!({"protocol":1,"msg_type":"close"}),
+    ])), &mut output).unwrap();
+    let result = replies(output);
+    assert_eq!(result[1]["result"]["unsupported_properties"], json!([]));
+    assert_eq!(result[2]["error"]["code"], "invalid_argument");
+    assert_eq!(result[3]["result"][1]["text"], "second");
+    assert_ne!(
+        result[3]["result"][0]["format"]["source"]["revision"],
+        revision
+    );
+    assert_eq!(result[4]["msg_type"], "ok", "{result:#?}");
+    assert_eq!(
+        read_section(&path),
+        xml.replace("<hp:t></hp:t>", "<hp:t>filled</hp:t>")
+    );
+}
+
+#[test]
+fn unimplemented_views_are_explicit_and_chunk_reads_report_omissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("views.hwpx");
+    std::fs::write(&path, build_package(&section("first", "second"))).unwrap();
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(frame_lines(&[
+        json!({"protocol":1,"msg_type":"open","editable":false}),
+        json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"outline","format":"json"}}),
+        json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"issues"}}),
+        json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text","format":"json","max_lines":1}}),
+        json!({"protocol":1,"msg_type":"close"}),
+    ])), &mut output).unwrap();
+    let result = replies(output);
+    for row in &result[1..3] {
+        assert_eq!(row["error"]["code"], "unsupported_feature");
+    }
+    assert_eq!(
+        result[3]["result"]["paths"],
+        json!(["/document/section[1]/paragraph[1]"])
+    );
+    assert_eq!(result[3]["result"]["total_lines"], 2);
+    assert_eq!(result[3]["result"]["omitted_before"], 0);
+    assert_eq!(result[3]["result"]["omitted_after"], 1);
+}
+
+#[test]
+fn invalid_edit_preconditions_and_mixed_properties_never_apply_text() {
+    for props in [
+        json!({"text":"wrong","bold":"true"}),
+        json!({"expected_revision":"sha256:missing-text"}),
+        json!({"text":"wrong","expected_revision":42}),
+        json!({"text":"wrong","expected_revision":null}),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid-edit.hwpx");
+        let original = build_package(&section("first", "second"));
+        std::fs::write(&path, &original).unwrap();
+        let mut output = Vec::new();
+        serve(&path, Cursor::new(frame_lines(&[
+            json!({"protocol":1,"msg_type":"open","editable":true}),
+            json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":props}),
+            json!({"protocol":1,"msg_type":"command","command":"view","args":{"mode":"text"}}),
+            json!({"protocol":1,"msg_type":"save"}),
+            json!({"protocol":1,"msg_type":"close"}),
+        ])), &mut output).unwrap();
+        let result = replies(output);
+        assert_eq!(
+            result[1]["error"]["code"], "invalid_argument",
+            "{result:#?}"
+        );
+        assert_eq!(result[2]["result"], "first\nsecond");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+}
+
 struct MutatingInput {
     inner: Cursor<Vec<u8>>,
     trigger_offset: u64,
@@ -277,7 +476,7 @@ fn manifest_is_a_split_format_handler_with_honest_vocabulary() {
     assert_eq!(manifest["vocabulary"]["addable_types"], json!([]));
     assert_eq!(
         manifest["vocabulary"]["settable_props"]["text"],
-        json!(["text"])
+        json!(["text", "expected_revision"])
     );
 }
 
@@ -584,6 +783,208 @@ fn protocol_reads_edits_and_durably_reopens_the_saved_package() {
         1,
         "save left a temporary or accidental backup file"
     );
+}
+
+#[test]
+fn python_writestr_metadata_survives_save_byte_for_byte() {
+    // Python's `ZipFile.writestr(name, data)` on Windows records MS-DOS as the
+    // producer and `0o600 << 16` without a regular-file type nibble. The
+    // previous zip-crate re-synthesis could not reproduce that and rejected
+    // the save; the raw COW writer must now keep every header byte.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("python-writestr.hwpx");
+    let mut package = build_package(&section("before", "second"));
+    for (_, central) in central_entries(&package) {
+        package[central + 4..central + 6].copy_from_slice(&[20, 0]);
+        package[central + 38..central + 42].copy_from_slice(&(0o600u32 << 16).to_le_bytes());
+    }
+    std::fs::write(&path, &package).expect("write fixture");
+    let before = header_bytes(&package);
+
+    let mut output = Vec::new();
+    serve(&path, Cursor::new(frame_lines(&[
+        json!({"protocol":1,"msg_type":"open","editable":true}),
+        json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"after"}}),
+        json!({"protocol":1,"msg_type":"save"}),
+        json!({"protocol":1,"msg_type":"close"}),
+    ])), &mut output).expect("serve protocol");
+    let replies = replies(output);
+    assert!(
+        replies.iter().all(|reply| reply["msg_type"] == "ok"),
+        "{replies:#?}"
+    );
+    let saved = std::fs::read(&path).expect("saved package");
+    assert!(read_section(&path).contains(">after<"));
+    let after = header_bytes(&saved);
+    assert_eq!(before.len(), after.len());
+    for ((name, before), (_, after)) in before.iter().zip(&after) {
+        if name == SECTION_PART {
+            assert_eq!(masked_payload(before), masked_payload(after), "{name}");
+        } else {
+            assert_eq!(before, after, "{name}");
+        }
+    }
+}
+
+/// (local header offset, central record offset) for each entry.
+fn central_entries(package: &[u8]) -> Vec<(usize, usize)> {
+    let mut archive = ZipArchive::new(Cursor::new(package)).expect("open package");
+    (0..archive.len())
+        .map(|index| {
+            let file = archive.by_index(index).expect("entry");
+            (
+                usize::try_from(file.header_start()).expect("offset"),
+                usize::try_from(file.central_header_start()).expect("offset"),
+            )
+        })
+        .collect()
+}
+
+/// Local fixed header and central fixed header (offset masked).
+type RawHeaders = (Vec<u8>, Vec<u8>);
+
+/// Entry name, local fixed header, and central fixed header (offset masked).
+fn header_bytes(package: &[u8]) -> Vec<(String, RawHeaders)> {
+    let names = {
+        let archive = ZipArchive::new(Cursor::new(package)).expect("open package");
+        archive.file_names().map(str::to_owned).collect::<Vec<_>>()
+    };
+    central_entries(package)
+        .into_iter()
+        .zip(names)
+        .map(|((local, central), name)| {
+            let mut central_fixed = package[central..central + 46].to_vec();
+            central_fixed[42..46].fill(0);
+            (name, (package[local..local + 30].to_vec(), central_fixed))
+        })
+        .collect()
+}
+
+fn masked_payload((local, central): &RawHeaders) -> RawHeaders {
+    let mut local = local.clone();
+    let mut central = central.clone();
+    local[14..26].fill(0);
+    central[16..28].fill(0);
+    (local, central)
+}
+
+#[test]
+fn picture_queries_resolve_only_exact_manifest_parts_and_survive_saves() {
+    // Element shape observed in Hancom 2020-2024 packages (rhwp public samples
+    // `test-image.hwpx`, `tb-img-03.hwpx`): `hp:pic` with a direct `hc:img`,
+    // raw HWPUNIT `hp:orgSz`/`hp:curSz`/`hp:sz`, and an `hp:shapeComment`.
+    let png = b"\x89PNG\r\n\x1a\nnot-a-real-image";
+    let picture_section = r#"<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core"><hp:p id="1" paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>caption target</hp:t></hp:run></hp:p><hp:p id="2" paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:pic id="100" zOrder="1"><hp:orgSz width="43440" height="25380"/><hp:curSz width="20304" height="16652"/><hc:img binaryItemIDRef="image1" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:sz width="20305" height="16652"/><hp:shapeComment>그림입니다. 원본 그림의 이름: 예시.png</hp:shapeComment></hp:pic><hp:pic id="101"><hc:img binaryItemIDRef="image9"/></hp:pic></hp:run></hp:p></hs:sec>"#;
+    let hpf = |extra: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><opf:package xmlns:opf="http://www.idpf.org/2007/opf/"><opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/><opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="image1" href="BinData/image1.png" media-type="image/png" isEmbeded="1"/>{extra}</opf:manifest><opf:spine><opf:itemref idref="header"/><opf:itemref idref="section0"/></opf:spine></opf:package>"#
+        )
+    };
+    let build = |hpf_xml: &str| {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = ZipWriter::new(&mut cursor);
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            let deflated =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            writer.start_file("mimetype", stored).unwrap();
+            writer.write_all(b"application/hwp+zip").unwrap();
+            for (name, body) in [
+                ("version.xml", VERSION),
+                ("META-INF/manifest.xml", META_MANIFEST),
+                ("META-INF/container.xml", CONTAINER),
+                ("Contents/content.hpf", hpf_xml),
+                ("Contents/header.xml", HEADER),
+                (SECTION_PART, picture_section),
+            ] {
+                writer.start_file(name, deflated).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.start_file("BinData/image1.png", stored).unwrap();
+            writer.write_all(png).unwrap();
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    };
+    let query = |path: &Path, editable: bool, extra: Vec<Value>| {
+        let mut frames = vec![json!({"protocol":1,"msg_type":"open","editable":editable})];
+        frames.extend(extra);
+        frames.push(json!({"protocol":1,"msg_type":"command","command":"query","args":{"selector":"//picture"}}));
+        frames.push(json!({"protocol":1,"msg_type":"close"}));
+        let mut output = Vec::new();
+        serve(path, Cursor::new(frame_lines(&frames)), &mut output).unwrap();
+        replies(output)
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pictures.hwpx");
+    let original = build(&hpf(""));
+    std::fs::write(&path, &original).unwrap();
+    let result = query(&path, false, Vec::new());
+    assert!(result.iter().all(|r| r["msg_type"] == "ok"), "{result:#?}");
+    let pictures = result[1]["result"].as_array().unwrap();
+    assert_eq!(pictures.len(), 2);
+    let first = &pictures[0]["format"];
+    assert_eq!(pictures[0]["path"], "/document/section[1]/picture[1]");
+    assert_eq!(first["binary_status"], "resolved");
+    assert_eq!(first["binary_item_id"], "image1");
+    assert_eq!(first["binary_part"], "BinData/image1.png");
+    assert_eq!(first["binary_size"], png.len());
+    assert_eq!(first["media_type"], "image/png");
+    assert_eq!(first["embedded"], true);
+    assert_eq!(first["object_id"], "100");
+    assert_eq!(
+        first["original_size"],
+        json!({"width":43440,"height":25380})
+    );
+    assert_eq!(first["current_size"], json!({"width":20304,"height":16652}));
+    assert_eq!(first["size"], json!({"width":20305,"height":16652}));
+    assert_eq!(
+        first["shape_comment"],
+        "그림입니다. 원본 그림의 이름: 예시.png"
+    );
+    assert_eq!(first["parent_path"], "/document/section[1]/paragraph[2]");
+    assert_eq!(first["editable"], false);
+    assert_eq!(first["editability"]["reason"], "read_only_session");
+    let source = &first["source"];
+    let range = source["byte_start"].as_u64().unwrap() as usize
+        ..source["byte_end"].as_u64().unwrap() as usize;
+    assert!(picture_section[range.clone()].starts_with("<hp:pic id=\"100\""));
+    assert!(picture_section[range].ends_with("</hp:pic>"));
+    assert_eq!(pictures[1]["format"]["binary_status"], "missing_item");
+    assert!(pictures[1]["format"].get("binary_part").is_none());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    // An external link (isEmbeded="0", non-portable href) is reported, never resolved.
+    let external = dir.path().join("external.hwpx");
+    std::fs::write(
+        &external,
+        build(&hpf(
+            r#"<opf:item id="image9" href="D:\pictures\" media-type="image/" isEmbeded="0"/>"#,
+        )),
+    )
+    .unwrap();
+    let result = query(&external, false, Vec::new());
+    let linked = &result[1]["result"][1]["format"];
+    assert_eq!(linked["binary_status"], "external", "{result:#?}");
+    assert_eq!(linked["embedded"], false);
+    assert!(linked.get("binary_part").is_none());
+
+    // A text edit and save keep the picture metadata (catalog reloaded from the saved package).
+    let result = query(
+        &path,
+        true,
+        vec![
+            json!({"protocol":1,"msg_type":"command","command":"set","args":{"path":"/document/section[1]/paragraph[1]/text[1]"},"props":{"text":"edited caption"}}),
+            json!({"protocol":1,"msg_type":"save"}),
+        ],
+    );
+    assert!(result.iter().all(|r| r["msg_type"] == "ok"), "{result:#?}");
+    let after = &result[3]["result"][0]["format"];
+    assert_eq!(after["binary_status"], "resolved");
+    assert_eq!(after["binary_size"], png.len());
+    assert_eq!(after["editability"]["reason"], "no_supported_text_targets");
+    assert!(read_section(&path).contains(">edited caption<"));
 }
 
 #[test]

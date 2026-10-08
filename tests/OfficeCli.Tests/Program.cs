@@ -194,6 +194,7 @@ if (args is ["open", _]
 
 var tests = new (string Name, Action Run)[]
 {
+    ("plugin JSON metadata survives get and query output", PluginJsonMetadataSurvivesOutput),
     ("relative environment overrides are rejected", RelativeEnvironmentOverrideIsRejected),
     ("absolute environment overrides keep first priority", AbsoluteEnvironmentOverrideKeepsFirstPriority),
     ("user plugin root rejects unavailable and relative profiles", UserPluginRootRejectsInvalidProfiles),
@@ -271,6 +272,38 @@ foreach (var (name, run) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static void PluginJsonMetadataSurvivesOutput()
+{
+    // Match the plugin proxy's source-generated deserialization, then exercise
+    // the formatter shared by CLI, resident and batch get/query commands.
+    var assembly = typeof(PluginRegistry).Assembly;
+    var pluginContextType = assembly.GetType("OfficeCli.Core.Plugins.PluginJsonContext")!;
+    var context = pluginContextType.GetProperty("Default")!.GetValue(null)!;
+    var metadata = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<DocumentNode>)
+        pluginContextType.GetProperty("DocumentNode")!.GetValue(context)!;
+    var node = JsonSerializer.Deserialize("""
+        {"path":"/document/section[1]/cell[1]","type":"cell","childCount":0,"children":[],
+         "format":{"editable":false,"row":0,"source":{"part":"Contents/section0.xml","revision":"sha256:test"},
+                   "text_paths":["/document/section[1]/paragraph[1]/text[1]"],"absent":null}}
+        """, metadata)!;
+    var formatter = assembly.GetType("OfficeCli.Core.OutputFormatter")!;
+    var json = Enum.Parse(assembly.GetType("OfficeCli.Core.OutputFormat")!, "Json");
+    foreach (var method in new[] {"FormatNode", "FormatNodes"})
+    {
+        object value = method == "FormatNode" ? node : new List<DocumentNode> { node };
+        var output = (string)formatter.GetMethod(method)!.Invoke(null, [value, json])!;
+        using var parsed = JsonDocument.Parse(output);
+        var result = method == "FormatNode" ? parsed.RootElement : parsed.RootElement.GetProperty("results")[0];
+        var format = result.GetProperty("format");
+        if (format.GetProperty("editable").GetBoolean()
+            || format.GetProperty("row").GetInt32() != 0
+            || format.GetProperty("source").GetProperty("part").GetString() != "Contents/section0.xml"
+            || format.GetProperty("text_paths").GetArrayLength() != 1
+            || format.GetProperty("absent").ValueKind != JsonValueKind.Null)
+            throw new InvalidOperationException($"{method} changed plugin metadata: {output}");
+    }
+}
 
 static void PluginProcessCallbackErrorsArePerRun()
 {

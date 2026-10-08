@@ -15,18 +15,26 @@ use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 use sha2::{Digest, Sha256};
-use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, DateTime, ZipArchive};
 
 use super::conformance::validate_output_package;
 use super::model::Document;
 use super::package::{MAX_XML_ENTRY_BYTES, MIMETYPE_ENTRY};
+use super::zip_layout::{
+    RawEntry, RawLayout, CENTRAL_OFFSET_FIELD, CENTRAL_PAYLOAD_FIELDS, EOCD_OFFSET_FIELD,
+    LOCAL_PAYLOAD_FIELDS,
+};
 use crate::error::{PluginError, Result};
 
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
-const CENTRAL_DIRECTORY_SIGNATURE: [u8; 4] = *b"PK\x01\x02";
 const PARAGRAPH_NAMESPACE: &[u8] = b"http://www.hancom.co.kr/hwpml/2011/paragraph";
 
 /// Immutable fingerprint of one source ZIP entry.
+///
+/// Besides decoded metadata, the snapshot keeps the exact local header, data
+/// descriptor, and central-directory record bytes. Only the central-directory
+/// local-header offset is masked because placement legitimately moves when an
+/// earlier entry changes length.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EntrySnapshot {
     name: String,
@@ -40,9 +48,11 @@ pub struct EntrySnapshot {
     compressed_size: u64,
     last_modified: Option<DateTime>,
     unix_mode: Option<u32>,
-    version_made_by: [u8; 2],
     comment: String,
     extra_data: Option<Vec<u8>>,
+    local_header: Vec<u8>,
+    descriptor: Vec<u8>,
+    central_record: Vec<u8>,
 }
 
 impl EntrySnapshot {
@@ -54,21 +64,42 @@ impl EntrySnapshot {
         &self.content_sha256
     }
 
+    /// Everything except the replaced payload and the fields that describe it.
     fn has_same_preserved_metadata(&self, candidate: &Self) -> bool {
         self.directory == candidate.directory
             && self.compression == candidate.compression
             && self.last_modified == candidate.last_modified
             && self.unix_mode == candidate.unix_mode
-            && self.version_made_by == candidate.version_made_by
             && self.comment == candidate.comment
             && self.extra_data == candidate.extra_data
+            && masked(&self.local_header, LOCAL_PAYLOAD_FIELDS)
+                == masked(&candidate.local_header, LOCAL_PAYLOAD_FIELDS)
+            && masked(&self.central_record, CENTRAL_PAYLOAD_FIELDS)
+                == masked(&candidate.central_record, CENTRAL_PAYLOAD_FIELDS)
+            && masked(
+                &self.descriptor,
+                RawEntry::descriptor_payload_fields(&self.descriptor),
+            ) == masked(
+                &candidate.descriptor,
+                RawEntry::descriptor_payload_fields(&candidate.descriptor),
+            )
     }
+}
+
+fn masked(bytes: &[u8], range: std::ops::Range<usize>) -> Vec<u8> {
+    let mut bytes = bytes.to_vec();
+    if let Some(field) = bytes.get_mut(range) {
+        field.fill(0);
+    }
+    bytes
 }
 
 /// Ordered immutable view of the package at session-open time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageSnapshot {
     archive_comment: Vec<u8>,
+    /// End-of-central-directory bytes with only the directory offset masked.
+    end_record: Vec<u8>,
     entries: Vec<EntrySnapshot>,
 }
 
@@ -84,7 +115,6 @@ impl PackageSnapshot {
         let mut archive = ZipArchive::new(reader)?;
         let archive_comment = archive.comment().to_vec();
         let mut entries = Vec::with_capacity(archive.len());
-        let mut central_header_starts = Vec::with_capacity(archive.len());
 
         for index in 0..archive.len() {
             let (
@@ -100,7 +130,6 @@ impl PackageSnapshot {
                 comment,
                 extra_data,
                 compressed_sha256,
-                central_header_start,
             ) = {
                 let file = archive.by_index_raw(index)?;
                 let name = file.name().to_owned();
@@ -114,7 +143,6 @@ impl PackageSnapshot {
                 let unix_mode = file.unix_mode();
                 let comment = file.comment().to_owned();
                 let extra_data = file.extra_data().map(<[u8]>::to_vec);
-                let central_header_start = file.central_header_start();
                 let compressed_sha256 = hash_reader(file, &name)?;
                 (
                     name,
@@ -129,7 +157,6 @@ impl PackageSnapshot {
                     comment,
                     extra_data,
                     compressed_sha256,
-                    central_header_start,
                 )
             };
 
@@ -149,20 +176,38 @@ impl PackageSnapshot {
                 compressed_size,
                 last_modified,
                 unix_mode,
-                version_made_by: [0; 2],
                 comment,
                 extra_data,
+                local_header: Vec::new(),
+                descriptor: Vec::new(),
+                central_record: Vec::new(),
             });
-            central_header_starts.push(central_header_start);
         }
 
-        let reader = archive.into_inner();
-        for (entry, central_header_start) in entries.iter_mut().zip(central_header_starts) {
-            entry.version_made_by = read_central_version_made_by(reader, central_header_start)?;
+        // The editable profile is limited to layouts the COW writer can
+        // reproduce byte-for-byte. Checking it here rejects an unsupported
+        // package at editable open instead of after the user's edits.
+        let layout = RawLayout::parse(archive.into_inner())?;
+        if layout.entries.len() != entries.len() {
+            return Err(PluginError::corrupt(
+                "ZIP central directory disagrees with the decoded archive entry count",
+            ));
+        }
+        for (entry, raw) in entries.iter_mut().zip(layout.entries) {
+            if raw.name != entry.raw_name {
+                return Err(PluginError::corrupt(format!(
+                    "ZIP central directory order disagrees with decoded entry {:?}",
+                    entry.name
+                )));
+            }
+            entry.local_header = raw.local_header;
+            entry.descriptor = raw.descriptor;
+            entry.central_record = masked(&raw.central_record, CENTRAL_OFFSET_FIELD);
         }
 
         Ok(Self {
             archive_comment,
+            end_record: masked(&layout.eocd, EOCD_OFFSET_FIELD),
             entries,
         })
     }
@@ -179,6 +224,11 @@ impl PackageSnapshot {
         if self.archive_comment != candidate.archive_comment {
             return Err(verification_error(
                 "candidate changed the ZIP archive comment outside the mutation plan",
+            ));
+        }
+        if self.end_record != candidate.end_record {
+            return Err(verification_error(
+                "candidate changed ZIP end-record metadata outside the mutation plan",
             ));
         }
         if self.entries.len() != candidate.entries.len() {
@@ -949,20 +999,17 @@ impl VerifiedCandidate {
     }
 }
 
-/// Copy a strict HWPX package with raw compressed payloads and entry order intact.
-pub fn copy_package<R, W>(mut source: R, destination: W) -> Result<W>
+/// Copy a strict HWPX package byte-for-byte through the raw COW layout.
+pub fn copy_package<R, W>(mut source: R, mut destination: W) -> Result<W>
 where
     R: Read + Seek,
     W: Write + Seek,
 {
     validate_output_package(&mut source)?;
     source.rewind()?;
-    let archive = ZipArchive::new(source)?;
-    let comment = archive.comment().to_vec();
-    let mut writer = ZipWriter::new(destination);
-    writer.set_raw_comment(comment.into_boxed_slice())?;
-    writer.merge_archive(archive)?;
-    Ok(writer.finish()?)
+    let layout = RawLayout::parse(&mut source)?;
+    layout.rewrite(&mut source, &mut destination, &BTreeMap::new())?;
+    Ok(destination)
 }
 
 /// Build a raw-entry COW candidate and return it only after source TOCTOU,
@@ -1006,82 +1053,19 @@ where
     let mut output = if plan.changed_parts.is_empty() {
         copy_package(source, destination)?
     } else {
-        let mut archive = ZipArchive::new(source)?;
-        let archive_comment = archive.comment().to_vec();
-        let mut writer = ZipWriter::new(destination);
-        writer.set_raw_comment(archive_comment.into_boxed_slice())?;
-
-        for index in 0..archive.len() {
-            let file = archive.by_index(index)?;
-            if file.extra_data().is_some_and(|extra| !extra.is_empty()) {
-                return Err(PluginError::unsupported_feature(format!(
-                    "raw-entry COW cannot yet preserve ZIP extra fields on part {:?}",
-                    file.name()
-                )));
-            }
-            if let Some(replacement) = replacements.get(file.name()) {
-                let name = file.name().to_owned();
-                let comment = file.comment().to_owned();
-                let mut options = file.options().into_full_options();
-                if !comment.is_empty() {
-                    options = options.with_file_comment(comment);
-                }
-                writer.start_file(name, options)?;
-                writer.write_all(replacement)?;
-            } else {
-                writer.raw_copy_file(file)?;
-            }
-        }
-
-        let mut output = writer.finish()?;
-        restore_central_version_made_by(&mut output, baseline.snapshot())?;
-        output
+        // Unchanged entries, their data descriptors, and all central-directory
+        // metadata are copied verbatim. Replaced entries keep every header byte
+        // except CRC-32 and sizes; `zip_layout` rejects the layouts for which
+        // that cannot hold.
+        let layout = RawLayout::parse(&mut source)?;
+        layout.rewrite(&mut source, &mut destination, replacements)?;
+        destination
     };
 
     output.rewind()?;
     let verified = baseline.verify_candidate(&mut output, plan, semantic_expectation)?;
     output.rewind()?;
     Ok((output, verified))
-}
-
-fn restore_central_version_made_by<W: Read + Write + Seek>(
-    output: &mut W,
-    source: &PackageSnapshot,
-) -> Result<()> {
-    output.rewind()?;
-    let offsets = {
-        let mut archive = ZipArchive::new(&mut *output)?;
-        if archive.len() != source.entries.len() {
-            return Err(verification_error(
-                "candidate entry count changed before metadata restoration",
-            ));
-        }
-        let mut offsets = Vec::with_capacity(archive.len());
-        for (index, source_entry) in source.entries.iter().enumerate() {
-            let file = archive.by_index(index)?;
-            if file.name() != source_entry.name || file.name_raw() != source_entry.raw_name {
-                return Err(verification_error(
-                    "candidate entry identity/order changed before metadata restoration",
-                ));
-            }
-            offsets.push(file.central_header_start());
-        }
-        offsets
-    };
-
-    for (offset, source_entry) in offsets.into_iter().zip(&source.entries) {
-        output.seek(SeekFrom::Start(offset))?;
-        let mut signature = [0u8; 4];
-        output.read_exact(&mut signature)?;
-        if signature != CENTRAL_DIRECTORY_SIGNATURE {
-            return Err(PluginError::corrupt(format!(
-                "candidate central-directory entry at offset {offset} has an invalid signature"
-            )));
-        }
-        output.write_all(&source_entry.version_made_by)?;
-    }
-    output.rewind()?;
-    Ok(())
 }
 
 fn read_text_target_from_package<R: Read + Seek>(
@@ -1129,22 +1113,6 @@ fn hash_reader<R: Read>(mut reader: R, part: &str) -> Result<[u8; 32]> {
 
 fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
-}
-
-fn read_central_version_made_by<R: Read + Seek>(reader: &mut R, offset: u64) -> Result<[u8; 2]> {
-    reader.seek(SeekFrom::Start(offset))?;
-    let mut header = [0u8; 6];
-    reader.read_exact(&mut header).map_err(|error| {
-        PluginError::corrupt(format!(
-            "cannot read central-directory metadata at offset {offset}: {error}"
-        ))
-    })?;
-    if header[..4] != CENTRAL_DIRECTORY_SIGNATURE {
-        return Err(PluginError::corrupt(format!(
-            "central-directory entry at offset {offset} has an invalid signature"
-        )));
-    }
-    Ok([header[4], header[5]])
 }
 
 fn verification_error(message: impl Into<String>) -> PluginError {

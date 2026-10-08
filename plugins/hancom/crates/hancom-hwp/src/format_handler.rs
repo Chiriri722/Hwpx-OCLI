@@ -26,6 +26,11 @@ use crate::owpml::editor::{
 };
 use crate::owpml::package::{Package, MAX_XML_ENTRY_BYTES};
 
+mod binary_catalog;
+mod source_index;
+use binary_catalog::BinaryCatalog;
+use source_index::SourceIndex;
+
 const PROTOCOL_VERSION: u64 = 1;
 const FORMAT_HANDLER_NAME: &str = "officecli-hancom-hwpx";
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -56,7 +61,9 @@ pub fn format_handler_manifest() -> Value {
         "supports": [
             "package-preserving",
             "strict-g0-g3",
-            "text-node-edit"
+            "text-node-edit",
+            "structured-read",
+            "source-references"
         ],
         "vocabulary": vocabulary()
     })
@@ -69,8 +76,8 @@ pub fn format_handler_manifest_line() -> String {
 fn vocabulary() -> Value {
     json!({
         "addable_types": [],
-        "settable_props": { "text": ["text"] },
-        "path_segments": ["document", "section", "paragraph", "text"]
+        "settable_props": { "text": ["text", "expected_revision"] },
+        "path_segments": ["document", "section", "paragraph", "text", "table", "cell", "note", "field", "picture"]
     })
 }
 
@@ -487,6 +494,7 @@ struct HwpxSession {
     source_parts: BTreeMap<String, Vec<u8>>,
     replacements: BTreeMap<String, Vec<u8>>,
     pending: BTreeMap<String, PendingText>,
+    catalog: BinaryCatalog,
     index: Vec<SectionIndex>,
 }
 
@@ -516,7 +524,8 @@ impl HwpxSession {
             return Err(PluginError::corrupt("HWPX package has no section parts"));
         }
         let source_parts = load_section_parts(&path, &section_paths)?;
-        let index = build_index(&section_paths, &source_parts)?;
+        let catalog = BinaryCatalog::load(&path)?;
+        let index = build_index(&section_paths, &source_parts, &catalog)?;
         Ok(Self {
             path,
             editable,
@@ -525,6 +534,7 @@ impl HwpxSession {
             source_parts,
             replacements: BTreeMap::new(),
             pending: BTreeMap::new(),
+            catalog,
             index,
         })
     }
@@ -535,7 +545,7 @@ impl HwpxSession {
 
     fn open_result(&self) -> Value {
         let mut commands = vec!["view", "get", "query", "validate", "raw"];
-        let mut features = vec!["package-preserving"];
+        let mut features = vec!["package-preserving", "structured-read", "source-references"];
         if self.editable {
             commands.extend(["set", "save"]);
             features.extend(["strict-g0-g3", "save", "text-node-edit"]);
@@ -628,7 +638,7 @@ impl HwpxSession {
             .index
             .iter()
             .enumerate()
-            .map(|(section_index, section)| section.node(section_index))
+            .map(|(section_index, section)| section.node(section_index, self.editable))
             .collect::<Vec<_>>();
         DocumentNode::branch("/document", "document", sections)
     }
@@ -656,7 +666,19 @@ impl HwpxSession {
                 .filter(|node| node.path == selector)
                 .cloned()
                 .collect::<Vec<_>>()
-        } else if ["document", "section", "paragraph", "text"].contains(&normalized) {
+        } else if [
+            "document",
+            "section",
+            "paragraph",
+            "text",
+            "table",
+            "cell",
+            "note",
+            "field",
+            "picture",
+        ]
+        .contains(&normalized)
+        {
             nodes
                 .into_iter()
                 .filter(|node| node.kind == normalized)
@@ -664,7 +686,7 @@ impl HwpxSession {
                 .collect::<Vec<_>>()
         } else {
             return Err(WireError::invalid_argument(format!(
-                "unsupported HWPX selector {selector:?}; use a path or document/section/paragraph/text"
+                "unsupported HWPX selector {selector:?}; use a path or document/section/paragraph/text/table/cell/note/field/picture"
             )));
         };
         serde_json::to_value(selected)
@@ -676,6 +698,7 @@ impl HwpxSession {
         let paragraphs = self.paragraph_summaries();
         match mode {
             "text" => {
+                let total_lines = paragraphs.len();
                 let lines = slice_lines(paragraphs, args)?;
                 let text = lines
                     .iter()
@@ -683,9 +706,15 @@ impl HwpxSession {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if args.get("format").and_then(Value::as_str) == Some("json") {
-                    Ok(
-                        json!({"text": text, "lines": lines.iter().map(|(_, line)| line).collect::<Vec<_>>() }),
-                    )
+                    let omitted_before = map_usize_or(args, "start", 1)?.saturating_sub(1).min(total_lines);
+                    Ok(json!({
+                        "text": text,
+                        "lines": lines.iter().map(|(_, line)| line).collect::<Vec<_>>(),
+                        "paths": lines.iter().map(|(path, _)| path).collect::<Vec<_>>(),
+                        "total_lines": total_lines,
+                        "omitted_before": omitted_before,
+                        "omitted_after": total_lines - omitted_before - lines.len()
+                    }))
                 } else {
                     Ok(Value::String(text))
                 }
@@ -700,13 +729,8 @@ impl HwpxSession {
                         .join("\n"),
                 ))
             }
-            "outline" => {
-                if args.get("format").and_then(Value::as_str) == Some("json") {
-                    Ok(json!({"items": []}))
-                } else {
-                    Ok(Value::String(String::new()))
-                }
-            }
+            "outline" | "issues" => Err(WireError::new("unsupported_feature",
+                format!("HWPX view {mode} is not implemented; validate checks package integrity, not layout or headings"))),
             "stats" => {
                 let paragraph_count = paragraphs.len();
                 let text_count = self
@@ -729,7 +753,6 @@ impl HwpxSession {
                     )))
                 }
             }
-            "issues" => Ok(json!([])),
             _ => Err(WireError::unsupported_command(format!(
                 "HWPX view mode {mode:?} is not implemented"
             ))),
@@ -801,11 +824,16 @@ impl HwpxSession {
         let path = map_string(args, "path")?;
         let unsupported = props
             .keys()
-            .filter(|key| key.as_str() != "text")
+            .filter(|key| !matches!(key.as_str(), "text" | "expected_revision"))
             .cloned()
             .collect::<Vec<_>>();
         let replacement = props.get("text").and_then(Value::as_str);
         let Some(replacement) = replacement else {
+            if props.contains_key("expected_revision") && !props.contains_key("text") {
+                return Err(WireError::invalid_argument(
+                    "expected_revision requires a text replacement",
+                ));
+            }
             if props.contains_key("text") {
                 return Err(WireError::invalid_argument(
                     "text property must be a string",
@@ -827,12 +855,41 @@ impl HwpxSession {
                 "target paragraph is outside the direct plain hp:p/hp:run/hp:t subset",
             ));
         }
+        if !unsupported.is_empty() {
+            return Err(WireError::invalid_argument(
+                "HWPX set cannot combine text with unsupported properties",
+            ));
+        }
+        if let Some(revision) = props.get("expected_revision") {
+            let revision = revision
+                .as_str()
+                .ok_or_else(|| WireError::invalid_argument("expected_revision must be a string"))?;
+            let current = self
+                .index
+                .iter()
+                .find(|section| section.part == target.part)
+                .ok_or_else(|| {
+                    WireError::new("internal_error", "text target section is missing")
+                })?;
+            if revision != current.source.revision {
+                return Err(WireError::invalid_argument(
+                    "HWPX source revision changed; query the target again before editing",
+                ));
+            }
+        }
+        self.verify_source_unchanged().map_err(WireError::from)?;
         let current_part = self
             .read_part_current(&target.part)
             .map_err(WireError::from)?;
         let patched =
             replace_text_node(&current_part, &target.selector, &target.value, replacement)
                 .map_err(WireError::from)?;
+
+        // Build the next read model before publishing any pending mutation.
+        let mut next_parts = self.current_section_parts();
+        next_parts.insert(target.part.clone(), patched.clone());
+        let next_index = build_index(&self.section_paths, &next_parts, &self.catalog)
+            .map_err(WireError::from)?;
 
         let source_part = self.source_parts.get(&target.part).ok_or_else(|| {
             WireError::new(
@@ -855,8 +912,7 @@ impl HwpxSession {
                 },
             );
         }
-        self.index = build_index(&self.section_paths, &self.current_section_parts())
-            .map_err(WireError::from)?;
+        self.index = next_index;
         Ok(json!({"unsupported_properties": unsupported}))
     }
 
@@ -983,7 +1039,8 @@ impl HwpxSession {
                 PluginError::internal(format!("cannot inspect save candidate: {error}"))
             })?))?;
         let next_source_parts = load_section_parts(temporary.path(), &self.section_paths)?;
-        let next_index = build_index(&self.section_paths, &next_source_parts)?;
+        let next_catalog = BinaryCatalog::load(temporary.path())?;
+        let next_index = build_index(&self.section_paths, &next_source_parts, &next_catalog)?;
 
         copy_source_permissions(&self.path, &temporary)?;
         temporary.as_file().sync_all().map_err(|error| {
@@ -999,6 +1056,7 @@ impl HwpxSession {
         self.source_parts = next_source_parts;
         self.replacements.clear();
         self.pending.clear();
+        self.catalog = next_catalog;
         self.index = next_index;
         Ok(())
     }
@@ -1050,7 +1108,7 @@ fn slice_lines(
         Some(_) => map_usize_or(args, "end", lines.len())?,
         None => lines.len(),
     };
-    if end == 0 {
+    if end == 0 && args.contains_key("end") {
         return Err(WireError::invalid_argument("view end is one-based"));
     }
     if end < start.saturating_sub(1) {
@@ -1128,6 +1186,7 @@ fn read_zip_part(path: &Path, part: &str) -> Result<Vec<u8>> {
 struct SectionIndex {
     part: String,
     paragraphs: Vec<ParagraphIndex>,
+    source: SourceIndex,
 }
 
 #[derive(Clone, Debug)]
@@ -1152,21 +1211,39 @@ struct TextIndex {
 }
 
 impl SectionIndex {
-    fn node(&self, section_index: usize) -> DocumentNode {
+    fn node(&self, section_index: usize, editable: bool) -> DocumentNode {
         let path = section_path(section_index);
-        let children = self
+        let mut children = self
             .paragraphs
             .iter()
             .map(|paragraph| paragraph.node(section_index))
             .collect::<Vec<_>>();
+        children.extend(self.source.structural_nodes());
         let mut node = DocumentNode::branch(path, "section", children);
         node.format
             .insert("part".to_owned(), Value::String(self.part.clone()));
+        let targets = self
+            .paragraphs
+            .iter()
+            .flat_map(|p| &p.texts)
+            .filter(|t| t.editable)
+            .map(|t| t.path.clone())
+            .collect();
+        self.source.decorate(&mut node, editable, &targets);
         node
     }
 }
 
 impl ParagraphIndex {
+    fn selector(&self, ordinal: usize) -> Result<TextNodeSelector> {
+        match self.id.as_deref() {
+            Some(id) if !id.is_empty() => {
+                TextNodeSelector::at_paragraph_with_id(self.ordinal, id, ordinal)
+            }
+            _ => Ok(TextNodeSelector::at_paragraph(self.ordinal, ordinal)),
+        }
+    }
+
     fn node(&self, section_index: usize) -> DocumentNode {
         let path = paragraph_path(section_index, self.ordinal);
         let children = self
@@ -1296,6 +1373,7 @@ fn text_path(section: usize, paragraph: usize, text: usize) -> String {
 fn build_index(
     section_paths: &[String],
     parts: &BTreeMap<String, Vec<u8>>,
+    catalog: &BinaryCatalog,
 ) -> Result<Vec<SectionIndex>> {
     section_paths
         .iter()
@@ -1304,7 +1382,7 @@ fn build_index(
             let xml = parts.get(part).ok_or_else(|| {
                 PluginError::internal(format!("section bytes are missing for {part:?}"))
             })?;
-            scan_section(section_index, part, xml)
+            scan_section(section_index, part, xml, catalog)
         })
         .collect()
 }
@@ -1325,16 +1403,25 @@ struct ActiveText {
     plain: bool,
 }
 
-fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionIndex> {
+fn scan_section(
+    section_index: usize,
+    part: &str,
+    xml: &[u8],
+    catalog: &BinaryCatalog,
+) -> Result<SectionIndex> {
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut stack = Vec::new();
     let mut paragraphs = Vec::<ParagraphIndex>::new();
     let mut active_text: Option<ActiveText> = None;
+    let mut source = SourceIndex::new(section_index, part, xml);
 
     loop {
-        match reader.read_event_into(&mut buffer)? {
+        let start = reader.buffer_position();
+        let event = reader.read_event_into(&mut buffer)?;
+        source.observe(&reader, &event, start)?;
+        match event {
             Event::Start(event) => {
                 if let Some(active) = active_text.as_mut() {
                     active.plain = false;
@@ -1440,6 +1527,16 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                             if !direct {
                                 paragraphs[paragraph].editable = false;
                             } else {
+                                let ordinal = paragraphs[paragraph].next_text_ordinal;
+                                let selector = paragraphs[paragraph].selector(ordinal)?;
+                                paragraphs[paragraph].texts.push(TextIndex {
+                                    path: text_path(section_index, paragraph, ordinal),
+                                    part: part.to_owned(),
+                                    selector,
+                                    value: String::new(),
+                                    editable: false,
+                                    ordinal,
+                                });
                                 paragraphs[paragraph].next_text_ordinal = paragraphs[paragraph]
                                     .next_text_ordinal
                                     .checked_add(1)
@@ -1499,14 +1596,7 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
                     let active = active_text.take().expect("active text checked");
                     {
                         let paragraph = &mut paragraphs[active.paragraph];
-                        let selector = match paragraph.id.as_deref() {
-                            Some(id) if !id.is_empty() => TextNodeSelector::at_paragraph_with_id(
-                                paragraph.ordinal,
-                                id,
-                                active.ordinal,
-                            )?,
-                            _ => TextNodeSelector::at_paragraph(paragraph.ordinal, active.ordinal),
-                        };
+                        let selector = paragraph.selector(active.ordinal)?;
                         paragraph.texts.push(TextIndex {
                             path: text_path(section_index, paragraph.ordinal, active.ordinal),
                             part: part.to_owned(),
@@ -1542,9 +1632,11 @@ fn scan_section(section_index: usize, part: &str, xml: &[u8]) -> Result<SectionI
             text.editable &= paragraph.editable;
         }
     }
+    source.finish(catalog)?;
     Ok(SectionIndex {
         part: part.to_owned(),
         paragraphs,
+        source,
     })
 }
 
@@ -1796,7 +1888,8 @@ mod tests {
     #[test]
     fn section_scan_rejects_unclosed_xml() {
         let xml = br#"<hp:section xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"><hp:p><hp:run><hp:t>x</hp:t>"#;
-        let error = scan_section(0, "Contents/section0.xml", xml).expect_err("unclosed XML");
+        let error = scan_section(0, "Contents/section0.xml", xml, &BinaryCatalog::default())
+            .expect_err("unclosed XML");
         assert_eq!(error.code.as_str(), "corrupt_input");
     }
 

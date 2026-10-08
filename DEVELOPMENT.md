@@ -6,7 +6,7 @@ workspace at `plugins/hancom` builds an HWP/HML dump-reader, a separate editable
 HWPX/OWPML format-handler, and bounded Cell/Show OOXML carrier dump-readers.
 
 Start with the [internal documentation index](docs/README.md) and the
-[latest review](docs/reviews/2026-09-08-code-review.md) before resuming work.
+[latest review](docs/reviews/2026-09-29-pro-comparison.md) before resuming work.
 
 ## Repository layout
 

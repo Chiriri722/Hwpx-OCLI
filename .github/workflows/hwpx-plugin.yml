@@ -76,7 +76,12 @@ jobs:
         uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # branch: 1.88.0 (Rust 1.88.0)
 
       - name: Check all targets on the declared MSRV
-        run: cargo check --workspace --locked --all-targets
+        # plugins/hancom/rust-toolchain.toml selects `stable`, and a toolchain
+        # file takes precedence over `rustup default`. Name the MSRV toolchain
+        # explicitly so this job cannot silently check with the latest stable.
+        run: |
+          cargo +1.88.0 --version
+          cargo +1.88.0 check --workspace --locked --all-targets
 
   test:
     name: ${{ matrix.name }}

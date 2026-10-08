@@ -2,9 +2,11 @@
 
 **Feature ID**: `001-hancom-unified` · **Working Branch**: `feat/hwpx-plugin`
 **Created**: 2026-08-28
-**Status**: 2026-09-08 재검토 — P0~P3 구현과 검증된 Cell/Show carrier slice 완료.
+**Status**: 2026-09-30 재검토 — P0~P3 구현과 검증된 Cell/Show carrier slice,
+HWPX 구조·그림·원본 위치 조회, 호스트 JSON 출력 수정, ZIP header 바이트 보존 저장의
+로컬 검증 완료.
 새 리뷰 결함 R-1~R-3은 로컬 수정·회귀 검증 완료이며, legacy/다세대/외부 변환기는 evidence-gated deferred.
-**Latest Review**: [코드 리뷰·검증·재개 순서](../../docs/reviews/2026-09-08-code-review.md)
+**Latest Review**: [2026-09-29 비교 검토와 직접 읽기 개선](../../docs/reviews/2026-09-29-pro-comparison.md)
 **Task Plan**: `./task-plan.md` (정본 작업 목록)
 **Research**: `../../.agents/brain/research/hancom-unified-20260828.md` (정제된 조사·결정 기록)
 **Official Sources**: `../../docs/spec-sources.md` (한컴 원문 URL·리비전·바이트·SHA-256)
@@ -39,12 +41,18 @@ OfficeCLI는 `.docx`/`.xlsx`/`.pptx`만 네이티브로 다룬다. 한국 공공
 조회 능력은 동일하지 않다. 직접 조회는 `hp:t`의 혼합 텍스트·CDATA와 `hp:tab` /
 `hp:lineBreak`를 보존한다. 혼합 텍스트 노드는 읽기 전용이며 plain text 쓰기 경계를
 확장하지 않는다. `//document`, `//section`, `//paragraph`, `//text`는 타입 조회 별칭이다.
+2026-09-29 확장에서는 표·셀·각주/미주·필드 마커와 XML 원본 위치·해시·편집 가능
+텍스트 경로를 추가한다. `//table`, `//cell`, `//note`, `//field`도 동일하게 조회한다.
+2026-09-30에는 `//picture`로 그림의 binary 참조와 원문 크기를 읽기 전용으로 공개한다.
+기존 문단 경로를 재배치하지 않으며 중복 이름과 누락 좌표를 추측하지 않는다.
+상세 계약은 [C13](../../plugins/hancom/docs/01-protocol-contract.md#c13-hwpx-구조-조회와-원본-참조)이다.
 
 **Why P1**: 한컴오피스 사용량의 대부분이 한글이다. 이미 부분 구현되어 있어 완성까지가
 가장 짧고, 공개 스펙(R1)과 오픈소스 선행 기술이 풍부해 확실히 달성 가능하다.
 
-**Independent Test**: `officecli view 문서.hwpx text` / `outline` 이 실제 내용을 반환하고,
-`view issues`·`validate`가 통과하며, 편집 후 재열기에서 변경이 유지된다.
+**Independent Test**: `officecli view 문서.hwpx text`와 구조 `query`가 원본 연결을
+반환한다. 미구현 `outline`/`issues`는 명시적으로 실패하고 `validate`와 구분된다.
+명시적 텍스트 편집·저장·재열기에서 변경이 유지되며 오래된 revision은 적용되지 않는다.
 
 **Acceptance Scenarios**:
 

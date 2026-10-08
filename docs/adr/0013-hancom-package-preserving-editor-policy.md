@@ -2,6 +2,10 @@
 
 - Status: Accepted
 - Decision date: 2026-08-30
+- Amended: 2026-09-30 by [ADR-0018](0018-hwpx-byte-preserving-zip-cow.md) — saves copy
+  unchanged ZIP entries and header bytes verbatim; G3 compares raw header bytes.
+  The `version made by` restoration and extra-field notes below describe the
+  superseded writer.
 - Scope: HWPX/OWPML editing and format-handler promotion in `plugins/hancom`
 - Plan: [`../../specs/001-hancom-unified/task-plan.md`](../../specs/001-hancom-unified/task-plan.md)
 

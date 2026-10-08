@@ -5,7 +5,7 @@
 타입 조회와 동일하다. 호스트는 잘못된 응답 형태·버전·Unicode를 `protocol_mismatch`로
 차단하고 이후 command/save/close를 보내지 않는다. 정상 error 응답은 세션을 유지한다.
 
-최종 계약 정리: 2026-09-08. 정본은 이 포크의
+최종 계약 정리: 2026-09-29. 정본은 이 포크의
 [`plugins/plugin-protocol.md`](../../plugin-protocol.md) v1이며, Cell/Show에는
 fork-local `direct-native` / `byte-preserving` 확장이 적용된다.
 기본 계약 출처: `iOfficeAI/OfficeCLI` `plugins/plugin-protocol.md` v1 (final draft),
@@ -213,6 +213,77 @@ byte-identical한 non-reparse native sibling이 모두 필요하다. JSONL·공�
 no-clobber로 게시한다. 실패 후 호스트는 소유권을 증명하지 못하는 sibling을 삭제하지
 않는다. 전체 범위와 한계는 [ADR-0016](../../../docs/adr/0016-hancom-v12-ooxml-carrier-bridge.md)을
 따른다. 이는 일반 Cell/Show 변환기나 proprietary parser 계약이 아니다.
+
+## C13. HWPX 구조 조회와 원본 참조
+
+`structured-read`/`source-references` feature가 있는 format-handler는 `get`과
+`query`에서 `table`, `cell`, `note`, `field`, `picture` 및 `//type` 별칭을 추가 지원한다.
+기존 문단/텍스트 주소는 유지한다. 구조 주소의 숫자는 구역 내 종류별 XML 출현
+순서(1부터)이며 셀의 행/열 번호가 아니다. 구조 노드와 문단은 구역의 평탄한
+조회 목록이고, 실제 포함 관계는 아래 metadata를 따른다. `children`를 재배치하거나
+같은 문단을 복제하지 않으므로 모든 반환 경로는 유일하다.
+
+| `format` 항목 | 계약 |
+|---|---|
+| `parent_path` | 가장 가까운 인덱싱된 XML 조상. 없으면 구역 |
+| `paragraph_paths`, `text_paths` | 포함된 문단/텍스트의 기존 경로. 필드는 검증된 범위만 연결 |
+| `source` | `part`, `revision` (`sha256:` + 소문자 64자리), `byte_start`, `byte_end` |
+| `self_closing` | 원본이 self-closing 요소인지 여부 |
+| 표 `rows`, `cols` | 원문에 선언된 값만 공개 |
+| 셀 `row`, `col`, `row_span`, `col_span` | 원문의 0부터 시작하는 주소 및 병합 값. 누락은 필드 생략; 추정·격자 확장 없음 |
+| 주석 `note_kind`, `number`, `instance_id` | 각주/미주 종류와 존재하는 원문 속성 |
+| 필드 `field_id`, `field_type`, `name`, `declared_editable` | 원문 마커 속성. 이름/선언은 쓰기 권한이나 유일성 보장이 아님 |
+| 필드 `range_status`, `content_range` | 시작/끝 ID가 각각 유일하고 순서·subList 영역이 맞으면 `matched` 및 내용 반개구간. 그 외 `ambiguous`, `missing_id`, `missing_end`, `reversed`, `scope_mismatch` |
+| 그림 `object_id`, `original_size`, `current_size`, `size`, `shape_comment` | `hp:pic`의 `id`와 직접 자식 `hp:orgSz`/`hp:curSz`/`hp:sz`의 원문 HWPUNIT `width`/`height` 객체. 같은 크기 요소가 반복되거나 값이 정수가 아니면 그 필드만 생략한다. `shape_comment`는 직접 `hp:shapeComment`가 정확히 하나이고 해석 가능할 때만. 단위 변환 없음. 중복 속성처럼 XML 자체가 잘못된 경우는 다른 구조 노드와 같이 거부한다 |
+| 그림 `binary_item_id`, `binary_status` | 직접 core `hc:img`의 `binaryItemIDRef`. 상태는 `resolved`, `external`(`isEmbeded="0"`), `missing_manifest`, `unreadable_manifest`, `missing_item`, `ambiguous_item`, `missing_part`, `missing_reference`, `ambiguous_reference` |
+| 그림 `binary_part`, `binary_size`, `media_type`, `embedded` | OPF `opf:manifest/opf:item` id가 유일하고 `href`가 실제 part일 때만 part와 선언된 압축 해제 크기. `media_type`/`embedded`는 원문 선언. 파일명 추측 없음 |
+| `editable` | 현재 세션에서 이 노드 자체의 `set text`가 가능한지. 컨테이너는 항상 false |
+| `editability` | `mode` (`text`, `text-targets`, `locked`), `reason`, 현재 세션의 편집 가능한 `target_paths`; 읽기 단계의 구조상 후보는 `text_candidate`/`candidate_target_paths` |
+
+소스 범위는 압축 해제한 해당 XML part의 바이트 단위 `[start, end)`이며 요소
+태그까지 포함한다. 필드의 `source`는 시작 마커 자체, `content_range`는 마커
+사이 범위다. part revision은 현재 세션의 staged 편집도 반영한다. ZIP 전체의
+revision이나 영구 식별자가 아니므로 `set` 후 다시 조회한다. 스냅샷 이후 외부
+파일 변경은 기존 쓰기/저장 검증에서 거부한다.
+
+쓰기 속성은 `text`와 선택적 문자열 `expected_revision`이다. 후자가 해당
+part의 현재 revision과 다르면 `invalid_argument`이고 pending 변경은 생기지
+않는다. revision만 보내거나 타입이 잘못된 경우도 거부한다. `text`와 미지원
+속성을 섞으면 부분 적용 없이 거부한다. 미지원 속성만 보낸 기존 요청은
+`unsupported_properties`를 반환한다. 여러 개의 `set`을 하나의 트랜잭션으로
+만드는 계약은 아니며, 앞서 성공한 변경을 나중의 실패가 취소하지 않는다.
+
+paired 빈 `hp:t`는 기존 writer로 채울 수 있다. `<hp:t/>`는 읽기 목록과 ordinal에
+포함하지만 확장은 미지원이다. 혼합/중첩 내용의 잠금과 G0~G3 쓰기 경계는 유지한다.
+원문 `declared_editable`은 정보를 표시할 뿐 기존 writer 권한을 확장하지 않는다.
+호스트 resident는 읽기 전용으로 시작하고 첫 수정에서 editable로 승격하므로,
+사전 조회에서는 `candidate_target_paths`로 후보를 조사할 수 있다. 후보는 XML
+구조상 허용 범위를 뜻하며 strict editable 패키지 검증이나 쓰기 권한의 보증이 아니다.
+
+`view outline`/`view issues`는 `unsupported_feature`를 반환한다. `validate`는
+패키지 검증이며 제목 분석·레이아웃 검사를 대신하지 않는다. `view text` JSON의
+기존 `text`/`lines`에 `paths`, `total_lines`, `omitted_before`, `omitted_after`를
+추가해 범위 조회에서 생략한 분량과 원본 연결을 확인한다.
+
+구역별 XML 요소 100,000개, 깊이 128, 관계 링크 200,000개를 넘으면
+`unsupported_feature`로 실패한다. 기존 ZIP/XML 바이트 예산도 계속 적용한다.
+이 계약은 레이아웃/자동 필드명 치환/표 구조 편집 지원을 뜻하지 않는다.
+설계 근거는 [ADR-0017](../../../docs/adr/0017-hwpx-source-aware-read-model.md)이다.
+
+## C14. HWPX 저장의 ZIP 바이트 보존
+
+편집 저장은 바뀌지 않은 ZIP entry의 local header·payload·data descriptor와 central
+record를 바이트 그대로 복사한다. 교체 entry는 CRC-32와 두 크기 필드만 바뀌고 나머지
+header 바이트(생산자 `version made by`, `version needed`, flag, 시간, 내부/외부 속성,
+이름, 주석)는 원본과 같다. 달라질 수 있는 것은 local header 위치와 end record의 central
+directory 위치뿐이다. no-op 저장 후보는 원본과 바이트가 같다. G3와 저장 직전 TOCTOU
+검사는 이 raw header 바이트까지 비교한다.
+
+ZIP64, 다중 디스크, entry 사이나 end record 뒤의 여분 바이트, 물리/central directory 순서
+불일치, 암호화, stored/deflate 외 압축, local/central 불일치, 인식하지 못한 data
+descriptor가 있으면 editable open이 `unsupported_feature`로 실패한다. 교체할 part에
+ZIP extra field가 있으면 저장이 `unsupported_feature`로 실패한다. G0~G2 판정은 바뀌지
+않는다. 근거는 [ADR-0018](../../../docs/adr/0018-hwpx-byte-preserving-zip-cow.md)이다.
 
 ## 결정 기록 (ADR)
 

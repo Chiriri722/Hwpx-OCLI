@@ -1,6 +1,6 @@
 # 내부 문서 안내
 
-최종 정리: 2026-09-08 · 검토 기준: `feat/hwpx-plugin` / `3fb8616a`
+최종 정리: 2026-09-30 · 검토 기준: `feat/hwpx-plugin` / `5431668a` 이후 작업
 
 이 저장소는 OfficeCLI .NET 호스트와 Rust Hancom 플러그인을 함께 개발하는 포크다.
 작업을 재개할 때는 아래 순서로 읽는다. 과거 검증 기록의 날짜·커밋을 현재 실행
@@ -8,8 +8,9 @@
 
 ## 먼저 읽을 문서
 
-1. [최신 코드 리뷰와 재개 순서](reviews/2026-09-08-code-review.md): 재현한 결함,
-   이번 검증 결과와 남은 검증 범위.
+1. [최신 비교 검토와 적용 결과](reviews/2026-09-29-pro-comparison.md): 구조/원본 위치
+   조회, 호스트 JSON 출력 수정, 설치 승격, 검증과 남은 범위.
+   [9월 8일 리뷰](reviews/2026-09-08-code-review.md)는 이전 수정의 근거다.
 2. [개발 환경](../DEVELOPMENT.md): 도구 버전, Windows/Unix 실행법, 테스트 명령.
 3. [Hancom 사용 안내](../plugins/hancom/README.md): 실제 지원 포맷과 설치·명령.
 4. [통합 사양](../specs/001-hancom-unified/spec.md)과
@@ -51,6 +52,8 @@ Cargo 디렉터리 `hancom-hwp`의 package 이름은 `officecli-hwpx`다. 공식
 | [ADR-0013](adr/0013-hancom-package-preserving-editor-policy.md) | HWPX의 제한된 텍스트 편집과 G0~G3 |
 | [ADR-0014](adr/0014-hancom-format-handler-install-promotion.md), [0015](adr/0015-hancom-format-handler-open-path-compatibility.md) | 설치 승격과 과거 호스트 lifecycle 호환 |
 | [ADR-0016](adr/0016-hancom-v12-ooxml-carrier-bridge.md) | Cell 12.0300 / Show 12.0000 검증·복사 경로 |
+| [ADR-0017](adr/0017-hwpx-source-aware-read-model.md) | HWPX 구조·그림·원본 위치·편집 가능성·revision 검증 |
+| [ADR-0018](adr/0018-hwpx-byte-preserving-zip-cow.md) | HWPX 저장의 ZIP header 바이트 보존과 raw layout 경계 |
 | [프로토콜 제안](proposals/plugin-multi-target-routing-and-export.md) | 아직 구현하지 않은 multi-target/export 제안 및 fork 확장 관계 |
 | [공개 규격 출처](spec-sources.md) | 원문 리비전·URL·크기·SHA-256 |
 

@@ -1,7 +1,7 @@
 # OfficeCLI Hancom plugins
 
 [내부 문서 안내](../../docs/README.md) ·
-[2026-09-08 코드 리뷰와 재개 순서](../../docs/reviews/2026-09-08-code-review.md)
+[2026-09-29 비교 검토와 적용 결과](../../docs/reviews/2026-09-29-pro-comparison.md)
 
 [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)용 한컴 문서 플러그인 모음이다.
 역할·대상 포맷·쓰기 권한이 다른 네 바이너리를 제공한다.
@@ -112,7 +112,9 @@ OfficeCLI는 정규화된 실행 경로별로 플러그인을 열거하므로 �
 합계 16MiB, probe 합계 30초를 넘으면 부분 목록 없이 실패한다. 실제 확장자
 해석은 아래의 `officecli view`로 검증한다.
 
-Windows PowerShell에서는 네이티브 `.exe`를 사용자 플러그인 경로에 설치한다.
+Windows에서는 PowerShell 7(`pwsh`) 세션에서 네이티브 `.exe`를 사용자 플러그인 경로에
+설치한다. Windows PowerShell 5.1은 스크립트의 `#Requires -Version 7.0`에서 아무것도
+바꾸기 전에 거부된다.
 
 ```powershell
 .\scripts\install.ps1
@@ -177,7 +179,9 @@ RHWP를 PATH에 두거나 절대 실행파일 경로를 지정한다. RHWP가 �
 Linux/Windows 테스트·clippy·release·MSRV 1.88·host 계약을 통과했다. 네 확장자의
 실제 설치·조회·제거는
 [`33172696561`](https://github.com/Chiriri722/Hwpx-OCLI/actions/runs/33172696561)에서
-모두 통과했다.
+모두 통과했다. 단, 2026-09-30 확인 결과 이 원격 MSRV job은 `rust-toolchain.toml`의
+`stable`로 검사하고 있었다. job은 `cargo +1.88.0`으로 고쳤고, 로컬 Linux/Windows
+1.88.0 check는 통과했다. 고친 job의 원격 결과는 아직 없다.
 
 ```bash
 rhwp --version  # v0.8.4 이상
@@ -226,6 +230,9 @@ officecli-hancom-hwp dump 문서.hwpx --quiet
 # 설치된 format-handler를 통한 직접 조회·텍스트 편집
 officecli view 문서.hwpx text
 officecli get 문서.hwpx '/document/section[1]/paragraph[1]/text[1]'
+officecli query 문서.hwpx '//cell'
+officecli query 문서.hwpx '//field'
+officecli query 문서.hwpx '//picture'
 officecli set 문서.hwpx '/document/section[1]/paragraph[1]/text[1]' --prop 'text=새 텍스트'
 officecli save 문서.hwpx
 officecli close 문서.hwpx
@@ -234,6 +241,27 @@ officecli validate 문서.hwpx
 
 `set`은 자동 resident 세션에 반영될 수 있다. 다른 프로그램이 디스크 파일을 즉시 읽어야
 하면 `save`로 flush하고, 새 세션 재열기까지 확인하려면 위처럼 `close`한 뒤 다시 `view`한다.
+
+구조 조회는 표·셀·각주/미주·필드·그림의 원본 위치, 셀 좌표/병합 값, 문단·텍스트 경로를
+반환한다. `format.editability.candidate_target_paths`로 구조상 수정 후보를 조사하고,
+`format.editable`과 `target_paths`로 현재 세션의 권한을 확인한다. resident는 첫
+수정에서 strict editable 검사를 수행한다. `format.source.revision`을 읽은 뒤
+그 값을 `revision` 변수에 담아 `set ... --prop 'text=새 값' --prop "expected_revision=$revision"`으로
+오래된 조회 결과를 거부할 수 있다. 변경 후에는 같은 part의 revision을 다시 조회한다.
+필드 이름이 같아도 자동으로 대상을 고르지 않으며 셀/필드 자체의 `set`은 지원하지 않는다.
+JSON text 범위 조회에는 원본 `paths`와 앞뒤 생략 줄 수가 포함된다.
+그림 조회는 `hc:img` 참조, 원문 HWPUNIT 크기, 설명과 함께 manifest id가 유일하고
+실제 part가 있을 때만 `binary_part`를 반환한다. 외부 연결·누락·중복은
+`binary_status`로 구분하며 파일명으로 추측하지 않는다. 그림 자체는 읽기 전용이다.
+정확한 metadata·제한은 [C13 계약](docs/01-protocol-contract.md#c13-hwpx-구조-조회와-원본-참조)을 따른다.
+
+저장은 바뀌지 않은 ZIP entry와 header 바이트를 그대로 복사하고, 교체한 part도
+CRC·크기만 바꾼다. Python `zipfile`로 만든 패키지와 관측한 Hancom 패키지의 header
+metadata도 저장 뒤 그대로다. 모든 ZIP writer와의 호환을 뜻하지는 않는다.
+ZIP64·여분 바이트·비표준 압축처럼 바이트 보존을 증명할 수 없는 layout은 편집 세션을
+열 때 거부한다([C14](docs/01-protocol-contract.md#c14-hwpx-저장의-zip-바이트-보존)).
+텍스트를 길게 바꿔도 `hp:linesegarray` 조판 캐시는 그대로 둔다. 한글이 이를 어떻게
+다시 배치하는지는 아직 검증하지 않았으므로 긴 치환 뒤에는 한글에서 결과를 확인한다.
 
 네 플러그인의 표준출력은 각 프로토콜 전용이다. HWP/HML은 JSONL을 내보내고,
 Cell/Show는 성공 시 stdout에 바이트를 하나도 쓰지 않고 native 형제를 직접
@@ -375,6 +403,9 @@ HWPML은 공식 2.8 문법의 공통 경로(`HWPML/BODY/SECTION/P/TEXT/CHAR`)와
 exit 2이며 DTD는 엔티티를 확장하지 않고 exit 3이다.
 
 ### 아직 안 되는 것
+
+- 직접 format-handler의 `outline`/`issues`: 빈 성공 대신 `unsupported_feature`를 반환한다.
+  `validate`는 패키지 검증이며 한글 렌더링이나 레이아웃 검사를 뜻하지 않는다.
 
 - 직접 format-handler의 혼합 텍스트 편집: 읽기에서는 `hp:t`의 탭·줄바꿈·CDATA와
   run 안의 제어문자를 보존하지만, 혼합 노드의 `set`은 `unsupported_feature`로 거부한다.

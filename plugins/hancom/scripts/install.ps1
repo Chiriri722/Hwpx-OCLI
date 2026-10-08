@@ -1,3 +1,6 @@
+#Requires -Version 7.0
+# The installer uses .NET Core APIs such as [IO.Path]::IsPathFullyQualified,
+# which Windows PowerShell 5.1 lacks; run it with PowerShell 7 (`pwsh`).
 param(
     [switch]$NoBuild,
     [switch]$Uninstall,

@@ -22,16 +22,25 @@ fn section(text: &str) -> String {
 }
 
 fn build_package(section_xml: &str) -> Vec<u8> {
-    build_package_with_extra_field(section_xml, false)
+    build_package_with_extra_field_on(section_xml, None)
 }
 
-fn build_package_with_extra_field(section_xml: &str, add_extra_field: bool) -> Vec<u8> {
+fn build_package_with_extra_field_on(section_xml: &str, extra_part: Option<&str>) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut writer = ZipWriter::new(&mut cursor);
         writer.set_comment("cow-fixture").expect("set ZIP comment");
         let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let options_for = |name: &str| {
+            let mut options = deflated.into_full_options();
+            if extra_part == Some(name) {
+                options
+                    .add_extra_data(0xbeef, b"opaque-extra", false)
+                    .expect("add vendor extra field");
+            }
+            options
+        };
 
         writer
             .start_file("mimetype", stored)
@@ -40,14 +49,8 @@ fn build_package_with_extra_field(section_xml: &str, add_extra_field: bool) -> V
             .write_all(b"application/hwp+zip")
             .expect("write mimetype");
 
-        let mut version_options = deflated.into_full_options();
-        if add_extra_field {
-            version_options
-                .add_extra_data(0xbeef, b"opaque-extra", false)
-                .expect("add vendor extra field");
-        }
         writer
-            .start_file("version.xml", version_options)
+            .start_file("version.xml", options_for("version.xml"))
             .expect("start version");
         writer.write_all(VERSION.as_bytes()).expect("write version");
 
@@ -63,7 +66,7 @@ fn build_package_with_extra_field(section_xml: &str, add_extra_field: bool) -> V
             writer.write_all(contents).expect("write fixture entry");
         }
         writer
-            .start_file(SECTION_PART, deflated)
+            .start_file(SECTION_PART, options_for(SECTION_PART))
             .expect("start section");
         writer
             .write_all(section_xml.as_bytes())
@@ -363,7 +366,7 @@ fn g3_rejects_semantically_matching_but_byte_tampered_replacements() {
 #[test]
 fn cow_fails_closed_when_zip_extra_fields_cannot_be_preserved() {
     let source_section = section("alpha");
-    let source = build_package_with_extra_field(&source_section, true);
+    let source = build_package_with_extra_field_on(&source_section, Some(SECTION_PART));
     let baseline = PackageBaseline::capture(Cursor::new(source.clone())).expect("strict baseline");
     let selector = TextNodeSelector::new("7", 0).expect("valid selector");
     let replacement = replace_text_node(source_section.as_bytes(), &selector, "alpha", "beta")
@@ -384,9 +387,212 @@ fn cow_fails_closed_when_zip_extra_fields_cannot_be_preserved() {
             expected: "beta",
         },
     )
-    .expect_err("unpreservable extra fields must fail before save verification");
+    .expect_err("unpreservable extra fields on a replaced part must fail before save verification");
 
     assert!(error.message.contains("ZIP extra fields"), "{error:?}");
+}
+
+#[test]
+fn cow_preserves_extra_fields_on_unchanged_parts_byte_for_byte() {
+    let source_section = section("alpha");
+    let source = build_package_with_extra_field_on(&source_section, Some("version.xml"));
+    let (candidate, replacement) = edit_section(&source, &source_section);
+
+    assert_eq!(read_part(&candidate, SECTION_PART), replacement);
+    assert_eq!(
+        raw_headers(&candidate, "version.xml"),
+        raw_headers(&source, "version.xml")
+    );
+}
+
+/// Replace the fixture paragraph text and return the verified candidate bytes.
+fn edit_section(source: &[u8], source_section: &str) -> (Vec<u8>, Vec<u8>) {
+    let baseline = PackageBaseline::capture(Cursor::new(source.to_vec())).expect("strict baseline");
+    let selector = TextNodeSelector::new("7", 0).expect("valid selector");
+    let replacement = replace_text_node(source_section.as_bytes(), &selector, "alpha", "beta")
+        .expect("surgical replacement");
+    let replacements = BTreeMap::from([(SECTION_PART.to_owned(), replacement.clone())]);
+    let plan = MutationPlan::replace_exact(baseline.snapshot(), &replacements)
+        .expect("exact replacement plan");
+    let (candidate, _) = rewrite_and_verify(
+        &baseline,
+        Cursor::new(source.to_vec()),
+        Cursor::new(Vec::new()),
+        &plan,
+        &replacements,
+        SemanticExpectation::ExactText {
+            part: SECTION_PART,
+            selector: &selector,
+            expected: "beta",
+        },
+    )
+    .expect("verified COW candidate");
+    (candidate.into_inner(), replacement)
+}
+
+/// Local header (fixed part, name, extra) and central record with the offset
+/// and, when requested, CRC-32/sizes masked.
+fn raw_headers(package: &[u8], name: &str) -> (Vec<u8>, Vec<u8>) {
+    raw_headers_masking_payload(package, name, false)
+}
+
+fn raw_headers_masking_payload(
+    package: &[u8],
+    name: &str,
+    mask_payload: bool,
+) -> (Vec<u8>, Vec<u8>) {
+    let (local_start, central_start) = header_offsets(package, name);
+    let local_len =
+        30 + usize::from(u16::from_le_bytes([
+            package[local_start + 26],
+            package[local_start + 27],
+        ])) + usize::from(u16::from_le_bytes([
+            package[local_start + 28],
+            package[local_start + 29],
+        ]));
+    let central_len = 46
+        + [28, 30, 32]
+            .into_iter()
+            .map(|field| {
+                usize::from(u16::from_le_bytes([
+                    package[central_start + field],
+                    package[central_start + field + 1],
+                ]))
+            })
+            .sum::<usize>();
+    let mut local = package[local_start..local_start + local_len].to_vec();
+    let mut central = package[central_start..central_start + central_len].to_vec();
+    central[42..46].fill(0);
+    if mask_payload {
+        local[14..26].fill(0);
+        central[16..28].fill(0);
+    }
+    (local, central)
+}
+
+fn header_offsets(package: &[u8], name: &str) -> (usize, usize) {
+    let mut archive = ZipArchive::new(Cursor::new(package)).expect("open package");
+    let file = archive.by_name(name).expect("find part");
+    (
+        usize::try_from(file.header_start()).expect("offset"),
+        usize::try_from(file.central_header_start()).expect("offset"),
+    )
+}
+
+/// Rewrite header metadata that the `zip` writer cannot reproduce itself.
+fn set_producer_metadata(package: &mut [u8], name: &str, external: u32, flags: Option<u16>) {
+    let (local, central) = header_offsets(package, name);
+    // version made by: MS-DOS/FAT, 2.0 (as Python's zipfile writes on Windows).
+    package[central + 4..central + 6].copy_from_slice(&[20, 0]);
+    package[central + 38..central + 42].copy_from_slice(&external.to_le_bytes());
+    if let Some(flags) = flags {
+        package[local + 6..local + 8].copy_from_slice(&flags.to_le_bytes());
+        package[central + 8..central + 10].copy_from_slice(&flags.to_le_bytes());
+    }
+}
+
+#[test]
+fn cow_preserves_producer_zip_metadata_that_the_zip_writer_normalizes() {
+    let source_section = section("alpha");
+    let mut source = build_package(&source_section);
+    let names = [
+        "mimetype",
+        "version.xml",
+        "META-INF/manifest.xml",
+        "META-INF/container.xml",
+        "Contents/content.hpf",
+        "Contents/header.xml",
+        SECTION_PART,
+        "BinData/blob.bin",
+    ];
+    for name in names {
+        // Python's default `0o600 << 16` lacks the regular-file type nibble;
+        // Hancom 2020 sets the DOS archive bit (0x20) and deflate option flag 0x4.
+        let (external, flags) = match name {
+            "mimetype" => (0o600 << 16, None),
+            "BinData/blob.bin" => ((0o100600 << 16) | 0x20, None),
+            _ => ((0o100600 << 16) | 0x20, Some(0x0004)),
+        };
+        set_producer_metadata(&mut source, name, external, flags);
+    }
+    let before = names.map(|name| raw_headers_masking_payload(&source, name, name == SECTION_PART));
+
+    let (candidate, replacement) = edit_section(&source, &source_section);
+
+    assert_eq!(read_part(&candidate, SECTION_PART), replacement);
+    let after =
+        names.map(|name| raw_headers_masking_payload(&candidate, name, name == SECTION_PART));
+    for ((name, before), after) in names.iter().zip(before).zip(after) {
+        assert_eq!(before, after, "{name} header metadata changed");
+    }
+    for name in names.iter().filter(|name| **name != SECTION_PART) {
+        assert_eq!(read_part(&candidate, name), read_part(&source, name));
+    }
+}
+
+#[test]
+fn cow_preserves_data_descriptor_layouts() {
+    let source_section = section("alpha");
+    let archive = ZipArchive::new(Cursor::new(build_package(&source_section))).expect("fixture");
+    let mut stream = ZipWriter::new_stream(Vec::new());
+    stream.set_comment("cow-fixture").expect("set ZIP comment");
+    let mut archive = archive;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).expect("fixture entry");
+        let options = SimpleFileOptions::default().compression_method(file.compression());
+        let name = file.name().to_owned();
+        let mut body = Vec::new();
+        file.read_to_end(&mut body).expect("fixture body");
+        stream
+            .start_file(name, options)
+            .expect("start streamed entry");
+        stream.write_all(&body).expect("write streamed entry");
+    }
+    let source = stream.finish().expect("finish stream").into_inner();
+    let (local, _) = header_offsets(&source, SECTION_PART);
+    let section_flags = u16::from_le_bytes([source[local + 6], source[local + 7]]);
+    assert_ne!(
+        section_flags & 0x0008,
+        0,
+        "fixture must use data descriptors"
+    );
+
+    let (candidate, replacement) = edit_section(&source, &source_section);
+
+    assert_eq!(read_part(&candidate, SECTION_PART), replacement);
+    assert_eq!(
+        raw_headers(&candidate, "BinData/blob.bin"),
+        raw_headers(&source, "BinData/blob.bin")
+    );
+    let (candidate_local, _) = raw_headers(&candidate, SECTION_PART);
+    let (source_local, _) = raw_headers(&source, SECTION_PART);
+    assert_eq!(
+        candidate_local, source_local,
+        "descriptor-mode local header must keep its zero placeholders"
+    );
+}
+
+#[test]
+fn g3_rejects_raw_metadata_changes_that_decoded_fields_cannot_see() {
+    let source = build_package(&section("alpha"));
+    let baseline = PackageBaseline::capture(Cursor::new(source.clone())).expect("strict baseline");
+    for (label, patch) in [
+        ("DOS attribute bit", (38usize, 0x20u8)),
+        ("general-purpose option flag", (8, 0x04)),
+        ("internal attributes", (36, 0x01)),
+    ] {
+        let mut candidate = source.clone();
+        let (_, central) = header_offsets(&candidate, "version.xml");
+        candidate[central + patch.0] ^= patch.1;
+        let error = baseline
+            .verify_candidate(
+                Cursor::new(candidate),
+                &MutationPlan::no_op(),
+                SemanticExpectation::Unchanged,
+            )
+            .expect_err(label);
+        assert!(error.message.contains("version.xml"), "{label}: {error:?}");
+    }
 }
 
 #[test]
